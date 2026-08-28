@@ -4,4 +4,6 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('clipperAPI', {
   selectVideo: () => ipcRenderer.invoke('select-video'),
   getServerUrl: () => ipcRenderer.invoke('server-url'),
+  selectCameraClip: () => ipcRenderer.invoke('select-camera-file'),
+  revealInFolder: (filePath) => ipcRenderer.invoke('reveal-in-folder', filePath),
 });

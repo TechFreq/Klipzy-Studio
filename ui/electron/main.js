@@ -15,10 +15,13 @@ let serverProcess = null;
 // Python server management
 // ------------------------------------------------------------------
 function findPython() {
-  // Look for a venv python first, then system python
+  // Dev: venv at repo root (same location as `npm run dev` uses).
+  // Packaged: venv + server copied to resourcesPath via electron-builder extraResources.
   const candidates = [
-    path.join(__dirname, '..', '..', 'venv', 'Scripts', 'python.exe'),   // Windows venv
-    path.join(__dirname, '..', '..', 'venv', 'bin', 'python'),           // macOS/Linux venv
+    path.join(__dirname, '..', '..', 'venv', 'Scripts', 'python.exe'),   // Windows dev venv
+    path.join(__dirname, '..', '..', 'venv', 'bin', 'python'),           // macOS/Linux dev venv
+    path.join(process.resourcesPath, 'venv', 'Scripts', 'python.exe'),   // Windows packaged
+    path.join(process.resourcesPath, 'venv', 'bin', 'python'),           // macOS/Linux packaged
     'python',
     'python3',
   ];
@@ -41,7 +44,7 @@ async function startServer() {
     return;
   }
 
-  const serverDir = path.join(__dirname, '..', '..');
+  const serverDir = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', '..');
   const pythons = findPython();
 
   for (const py of pythons) {
@@ -124,6 +127,26 @@ ipcMain.handle('select-video', async () => {
 });
 
 ipcMain.handle('server-url', () => `http://127.0.0.1:${SERVER_PORT}`);
+
+ipcMain.handle('select-camera-file', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select your camera / face-cam recording',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Videos', extensions: ['mp4', 'mov', 'mkv', 'webm'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
+});
+
+ipcMain.handle('reveal-in-folder', async (_event, filePath) => {
+  if (!filePath || typeof filePath !== 'string') return '/';
+  const { shell } = require('electron');
+  shell.showItemInFolder(filePath);
+  return filePath;
+});
 
 // ------------------------------------------------------------------
 // App lifecycle

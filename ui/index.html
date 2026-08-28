@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src http://127.0.0.1:8765; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src http://127.0.0.1:8765; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: file:;">
   <title>AI Video Clipper</title>
   <link rel="stylesheet" href="src/styles.css" />
 </head>
@@ -17,6 +17,7 @@
       <nav class="nav">
         <button class="nav-item active" data-view="clipper">✂️ Clipper</button>
         <button class="nav-item" data-view="chat">💬 AI Edit Chat</button>
+        <button class="nav-item" data-view="setup">⚙️ Setup</button>
       </nav>
       <div class="sidebar-footer">
         <div id="health-status" class="health-status">
@@ -46,6 +47,75 @@
         <div id="file-info" class="file-info hidden">
           <span id="file-name"></span>
           <button class="btn btn-small" id="change-file">Change</button>
+        </div>
+
+        <!-- Manual Clip Trimmer -->
+        <div id="trim-panel" class="card trim-panel hidden">
+          <div class="trim-header">
+            <h3>✂️ Manual Clip Trimmer</h3>
+            <p class="muted">Pick your exact in/out points, choose a layout, then add the clip.</p>
+          </div>
+
+          <div class="trim-body">
+            <div class="trim-preview-col">
+              <video id="trim-video" class="trim-video" controls></video>
+              <div id="trim-timeline" class="trim-timeline">
+                <div id="trim-playhead" class="trim-playhead"></div>
+                <div id="trim-selection" class="trim-selection"></div>
+                <div id="trim-handle-in" class="trim-handle trim-handle-in" title="Drag to set start"></div>
+                <div id="trim-handle-out" class="trim-handle trim-handle-out" title="Drag to set end"></div>
+              </div>
+              <div class="trim-times">
+                <span class="muted" id="trim-start-label">Start: 00:00.0</span>
+                <span class="muted" id="trim-end-label">End: 00:00.0</span>
+                <span class="muted" id="trim-duration-label">0.0s</span>
+              </div>
+            </div>
+
+            <div class="trim-controls-col">
+              <label class="option">
+                <span>Output layout</span>
+                <select id="trim-layout">
+                  <option value="vertical" selected>🎬 Vertical 9:16 (Shorts/TikTok)</option>
+                  <option value="full">🏞️ Full frame (16:9)</option>
+                  <option value="game_reaction">🎮 Gaming Reaction (PiP camera over gameplay)</option>
+                </select>
+              </label>
+
+              <div id="cam-options" class="cam-options hidden">
+                <label class="option">
+                  <span>Reaction camera clip</span>
+                  <div class="cam-row">
+                    <input type="text" id="cam-path" placeholder="No camera clip selected" readonly />
+                    <button class="btn btn-small" id="pick-cam-btn">📹 Choose</button>
+                  </div>
+                </label>
+                <label class="option">
+                  <span>Camera position</span>
+                  <select id="cam-position">
+                    <option value="bottom-right" selected>Bottom Right</option>
+                    <option value="bottom-left">Bottom Left</option>
+                    <option value="top-right">Top Right</option>
+                    <option value="top-left">Top Left</option>
+                  </select>
+                </label>
+                <label class="option">
+                  <span>Camera size</span>
+                  <select id="cam-scale">
+                    <option value="0.2">Small (20%)</option>
+                    <option value="0.3" selected>Medium (30%)</option>
+                    <option value="0.4">Large (40%)</option>
+                  </select>
+                </label>
+                <p class="muted small">Pick a webcam or face-cam recording that plays alongside your gameplay for a classic reaction layout.</p>
+              </div>
+
+              <div class="trim-actions">
+                <button class="btn btn-primary" id="add-trim-btn">➕ Add Trimmed Clip</button>
+                <button class="btn btn-secondary" id="trim-preview-btn">▶ Preview Selection</button>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div class="card options-card">
@@ -158,6 +228,78 @@
             <button class="btn btn-primary" id="chat-send">Send</button>
           </div>
           <p class="muted small">Powered by local Ollama (Gemma) with smart fallback.</p>
+        </div>
+      </section>
+
+      <!-- Setup View -->
+      <section id="view-setup" class="view">
+        <header class="view-header">
+          <h1>⚙️ Setup & System</h1>
+          <p class="subtitle">Check dependencies, install what's missing, and see the best models for your hardware.</p>
+        </header>
+
+        <!-- Hardware card -->
+        <div class="card">
+          <h3>🖥️ Your Hardware</h3>
+          <div id="setup-hardware" class="setup-hardware">
+            <span class="muted">Detecting...</span>
+          </div>
+        </div>
+
+        <!-- Recommended models card -->
+        <div class="card">
+          <div class="card-head-row">
+            <h3>🎯 Recommended Models for Your Setup</h3>
+            <span class="muted small">Based on your GPU / RAM</span>
+          </div>
+          <div id="setup-recommendations" class="setup-rec-grid">
+            <span class="muted">Loading...</span>
+          </div>
+        </div>
+
+        <!-- Dependency checklist card -->
+        <div class="card">
+          <h3>🔧 Dependency Checker</h3>
+          <p class="muted">Missing something? Click <strong>Install</strong> and the app will install it for you (winget / Homebrew / pip).</p>
+          <div id="setup-deps" class="setup-deps">
+            <span class="muted">Checking...</span>
+          </div>
+        </div>
+
+        <!-- Render time estimator -->
+        <div class="card">
+          <div class="card-head-row">
+            <h3>⏱️ Render Time Estimator</h3>
+            <span class="muted small">Rough estimate for x264 / hardware encoding</span>
+          </div>
+          <div class="estimate-row">
+            <label class="option">
+              <span>Clip duration (seconds)</span>
+              <input type="number" id="estimate-duration" value="30" min="1" max="3600" />
+            </label>
+            <label class="option">
+              <span>Layout</span>
+              <select id="estimate-layout">
+                <option value="vertical">Vertical 9:16</option>
+                <option value="full">Full frame</option>
+                <option value="game_reaction">Gaming Reaction (PiP)</option>
+              </select>
+            </label>
+            <button class="btn btn-secondary" id="estimate-btn">Estimate</button>
+          </div>
+          <div id="estimate-result" class="estimate-result hidden"></div>
+        </div>
+
+        <!-- Support card -->
+        <div class="card">
+          <h3>💙 Support & Share</h3>
+          <p class="muted">Enjoying Clippy Studio? Here's how to keep it going:</p>
+          <div class="support-links">
+            <a id="support-paypal" class="support-link" href="#" target="_blank" rel="noopener">💸 Buy me a coffee (PayPal)</a>
+            <a id="support-beacons" class="support-link" href="#" target="_blank" rel="noopener">🌐 My links (Beacons)</a>
+            <a id="support-star" class="support-link" href="#" target="_blank" rel="noopener">🐙 GitHub Profile</a>
+            <a id="support-issues" class="support-link" href="#" target="_blank" rel="noopener">🐛 Report a bug / request a feature</a>
+          </div>
         </div>
       </section>
     </main>

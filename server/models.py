@@ -94,6 +94,12 @@ class ExportProjectResponse(BaseModel):
     message: str
 
 
+class SubtitleRegenRequest(BaseModel):
+    output_path: str
+    words: List[dict] = Field(default_factory=list)
+    style_preset: str = "opus_yellow"
+
+
 class ChatRequest(BaseModel):
     message: str
     conversation_history: List[dict] = Field(default_factory=list)
@@ -103,3 +109,35 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
     source: str = "ollama"  # 'ollama' | 'fallback'
+class TrimRequest(BaseModel):
+    """Manual clip trim geometry: a single in/out selection from the source video."""
+    video_path: str
+    start_seconds: float
+    end_seconds: float
+    title: str = ""
+    burn_captions: bool = False
+    subtitle_path: Optional[str] = None
+
+
+class TrimResponse(BaseModel):
+    clip_path: str
+    title: str
+    start_seconds: float
+    end_seconds: float
+    duration: float
+
+
+class CustomRenderRequest(BaseModel):
+    """Custom re-render of a saved selection with a chosen output aspect layout."""
+    video_path: str
+    start_seconds: float
+    end_seconds: float
+    output_path: Optional[str] = None
+    layout: str = "vertical"       # "vertical" | "full" | "game_reaction"
+    aspect_ratio: Optional[str] = "9:16"
+    crop_x_offset: Optional[float] = None
+    burn_captions: bool = False
+    subtitle_path: Optional[str] = None
+    cam_video: Optional[str] = None
+    cam_scale: float = 0.3
+    cam_position: str = "bottom-right"

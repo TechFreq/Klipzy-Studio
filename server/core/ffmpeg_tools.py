@@ -96,22 +96,83 @@ def render_clip(
     crop_x_offset: Optional[float] = None,
     burn_captions: bool = False,
     subtitle_path: Optional[str] = None,
+    layout: str = "",
+    cam_video: Optional[str] = None,
+    cam_scale: float = 0.3,
+    cam_position: str = "bottom-right",
 ) -> str:
-    """Render a clip segment with optional vertical crop and hardware-accelerated encoding."""
+    """
+    Render a clip segment with optional vertical crop and hardware-accelerated encoding.
+
+    layout:
+      '' | 'vertical'   -> 9:16 crop (legacy behaviour)
+      'full'            -> no crop, full-frame passthrough
+      'game_reaction'   -> full-frame gameplay + webcam reaction in a corner overlay
+    """
     Path(output_video).parent.mkdir(parents=True, exist_ok=True)
     duration = end_time - start_time
 
+    has_cam = bool(cam_video and os.path.exists(cam_video))
     filters: List[str] = []
+    use_complex = False
 
-    if aspect_ratio == "9:16":
+    if layout == "game_reaction":
+        if has_cam:
+            use_complex = True
+            base_w, base_h = 1920, 1080
+            pad = 6
+            cam_w = int(base_w * max(0.1, min(cam_scale, 0.5)))
+            cam_h = int(cam_w * 9 / 16)
+            box_w, box_h = cam_w + pad * 2, cam_h + pad * 2
+            if cam_position == "bottom-left":
+                x, y = pad, base_h - box_h - pad
+            elif cam_position == "top-right":
+                x, y = base_w - box_w - pad, pad
+            elif cam_position == "top-left":
+                x, y = pad, pad
+            else:
+                x, y = base_w - box_w - pad, base_h - box_h - pad
+
+            # Camera PiP: scale + letterbox in a 16:9 box, white border, overlay
+            # in the chosen corner over the full-frame gameplay.
+            # Output is threaded to label [v] so later chain steps can consume it.
+            base_chain = (
+                f"[1:v]scale={cam_w}:{cam_h}:force_original_aspect_ratio=decrease,"
+                f"pad={cam_w}:{cam_h}:(ow-iw)/2:(oh-ih)/2:color=0x000000,"
+                f"pad={box_w}:{box_h}:{pad}:{pad}:color=0xFFFFFF,setsar=1[cf];"
+                f"[0:v][cf]overlay={x}:{y}:eof_action=repeat[v]"
+            )
+            filters.append(base_chain)
+    elif aspect_ratio == "9:16":
         if crop_x_offset is not None:
-            filters.append(f"crop=ih*9/16:ih:{crop_x_offset}:0")
+            filters.append(f"[0:v]crop=ih*9/16:ih:{crop_x_offset}:0[v]")
         else:
-            filters.append("crop=ih*9/16:ih:(iw-ow)/2:0")
+            filters.append("[0:v]crop=ih*9/16:ih:(iw-ow)/2:0[v]")
 
+    burn_cwd = None
     if burn_captions and subtitle_path and os.path.exists(subtitle_path):
-        clean_sub = subtitle_path.replace("\\", "/").replace(":", "\\:")
-        filters.append(f"subtitles='{clean_sub}'")
+        # On Windows, ffmpeg's subtitles filter cannot parse a drive-letter path
+        # (the "C:" colon is treated as an option separator and backslashes as
+        # unknown options). The robust fix is to run ffmpeg with cwd = subtitle dir
+        # and reference the subtitle by its bare relative filename. Any embedded
+        # single quote in a filename is escaped with ffmpeg's '\\'' sequence.
+        sub_dir = os.path.dirname(os.path.abspath(subtitle_path))
+        sub_rel = os.path.basename(subtitle_path).replace("'", "'\\''")
+        burn_cwd = sub_dir
+        if filters:
+            # Consume [v] and emit a final [out] via a null passthrough so the
+            # graph terminates cleanly with a single label.
+            filters.append(f"[v]subtitles={sub_rel},null[out]")
+        else:
+            # Burn captions on a plain passthrough and label it [out].
+            filters.append(f"[0:v]subtitles={sub_rel},null[out]")
+
+    # If filters were built, ensure the graph terminates with a single [out] label.
+    if filters:
+        has_out = any(part.endswith("[out]") for part in filters)
+        if not has_out:
+            filters.append("[v]null[out]")
+        use_complex = True
 
     encoder, enc_args = detect_hw_encoder()
 
@@ -119,12 +180,14 @@ def render_clip(
         "ffmpeg", "-y",
         "-ss", str(start_time),
         "-i", input_video,
-        "-t", str(duration),
     ]
+    if has_cam:
+        cmd += ["-i", cam_video]
+    cmd += ["-t", str(duration)]
 
-    if filters:
-        cmd += ["-vf", ",".join(filters)]
-
+    if use_complex:
+        cmd += ["-filter_complex", ";".join(filters)]
+        cmd += ["-map", "[out]", "-map", "0:a:0?"]
     cmd += [
         "-c:v", encoder,
         *enc_args,
@@ -132,23 +195,15 @@ def render_clip(
         output_video
     ]
 
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=burn_cwd)
     if result.returncode != 0:
         # Fallback to software encoding libx264
-        cmd_fb = [
-            "ffmpeg", "-y",
-            "-ss", str(start_time),
-            "-i", input_video,
-            "-t", str(duration),
-        ]
-        if filters:
-            cmd_fb += ["-vf", ",".join(filters)]
-        cmd_fb += [
-            "-c:v", "libx264", "-preset", "fast", "-crf", "22",
-            "-c:a", "aac", "-b:a", "192k",
-            output_video
-        ]
-        res_fb = subprocess.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        cmd_fb = [c for c in cmd]
+        enc_i = cmd_fb.index("-c:v")
+        enc_args_i = enc_i + 2
+        cmd_fb[enc_i + 1] = "libx264"
+        cmd_fb[enc_args_i:enc_args_i + len(enc_args)] = ["-preset", "fast", "-crf", "22"]
+        res_fb = subprocess.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=burn_cwd)
         if res_fb.returncode != 0:
             raise RuntimeError(f"Clip rendering failed: {res_fb.stderr[-500:]}")
 

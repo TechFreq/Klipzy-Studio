@@ -10,20 +10,36 @@
     "dist:mac": "electron-builder --mac",
     "dist:linux": "electron-builder --linux"
   },
-  "author": "Your Name",
+  "author": "TechFreq",
   "license": "MIT",
   "devDependencies": {
     "electron": "^28.0.0",
     "electron-builder": "^24.9.1"
   },
   "build": {
-    "appId": "com.yourname.ai-video-clipper",
-    "productName": "AI Video Clipper",
+    "appId": "com.techfreq.clippy-studio",
+    "productName": "Clippy Studio",
     "files": [
       "electron/**/*",
       "src/**/*",
       "index.html",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../server",
+        "to": "server",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../main.py",
+        "to": "main.py"
+      },
+      {
+        "from": "../.venv",
+        "to": "venv",
+        "filter": ["**/*"]
+      }
     ],
     "win": {
       "target": "nsis",

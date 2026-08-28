@@ -97,11 +97,12 @@ def export_edl(
     """
     Exports an EDL (Edit Decision List) for DaVinci Resolve and Adobe Premiere.
     """
-    def frames_to_tc(frames: int, fps_rate: float) -> str:
-        h = frames // int(fps_rate * 3600)
-        m = (frames % int(fps_rate * 3600)) // int(fps_rate * 60)
-        s = (frames % int(fps_rate * 60)) // int(fps_rate)
-        f = frames % int(fps_rate)
+    def frames_to_tc(frames: float, fps_rate: float) -> str:
+        fps_int = int(round(fps_rate))
+        h = int(frames // (fps_int * 3600))
+        m = int((frames % (fps_int * 3600)) // (fps_int * 60))
+        s = int((frames % (fps_int * 60)) // fps_int)
+        f = int(frames % fps_int)
         return f"{h:02d}:{m:02d}:{s:02d}:{f:02d}"
 
     reel = "AX"

@@ -20,5 +20,8 @@ output/
 .DS_Store
 Thumbs.db
 
+# IDE
+.vscode/
+
 # Temp
 gitstatus.txt
