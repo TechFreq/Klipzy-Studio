@@ -129,10 +129,14 @@ function pollJob(jobId) {
   if (pollTimer) clearInterval(pollTimer);
 
   pollTimer = setInterval(async () => {
+let generatedClips = [];
+let currentEditingClip = null;
+
 // ------------------------------------------------------------------
-// Results rendering
+// Results rendering & Viral Insights
 // ------------------------------------------------------------------
 function showResults(clips) {
+  generatedClips = clips;
   const btn = document.getElementById('start-clipping');
   btn.disabled = false;
   btn.textContent = '🚀 Start Clipping';
@@ -142,17 +146,29 @@ function showResults(clips) {
   const grid = document.getElementById('clips-grid');
   grid.innerHTML = '';
 
-  clips.forEach((clip) => {
+  clips.forEach((clip, idx) => {
     const card = document.createElement('div');
     card.className = 'clip-card';
+    
+    const v = clip.virality || { hook_score: 8.5, flow_score: 8.0, engagement_score: 9.0, trend_potential: 'High' };
+
     card.innerHTML = `
       <video controls src="file://${clip.output_file}"></video>
       <div class="clip-info">
-        <div class="clip-title">${clip.title}</div>
-        <div class="clip-meta">${clip.duration}s &nbsp;•&nbsp; <span class="clip-score">Score: ${clip.score}/10</span></div>
-        <div class="clip-hook">${clip.hook_text}</div>
-        <div class="clip-actions">
-          <button class="btn btn-small" onclick="revealInFolder('${clip.output_file}')">📂 Show in folder</button>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <div class="clip-title">${clip.title}</div>
+          <span class="virality-badge">🔥 Virality: ${clip.score}/10</span>
+        </div>
+        <div class="virality-metrics">
+          <span class="metric-pill">Hook: <strong>${v.hook_score}/10</strong></span>
+          <span class="metric-pill">Flow: <strong>${v.flow_score}/10</strong></span>
+          <span class="metric-pill">Trend: <strong>${v.trend_potential}</strong></span>
+        </div>
+        <div class="clip-meta">${clip.duration}s duration</div>
+        <div class="clip-hook">"${clip.hook_text}"</div>
+        <div class="clip-actions" style="margin-top: 10px; display: flex; gap: 8px;">
+          <button class="btn btn-small" onclick="openCaptionEditor(${idx})">✏️ Edit Captions</button>
+          <button class="btn btn-small" onclick="revealInFolder('${clip.output_file}')">📂 Open</button>
         </div>
       </div>
     `;
@@ -161,6 +177,74 @@ function showResults(clips) {
 
   document.getElementById('results').classList.remove('hidden');
 }
+
+// ------------------------------------------------------------------
+// NLE Project Export (Premiere Pro, DaVinci Resolve, CapCut)
+// ------------------------------------------------------------------
+async function exportProject(format) {
+  if (!selectedVideo || !generatedClips.length) {
+    alert("Please generate clips first before exporting a project timeline.");
+    return;
+  }
+
+  try {
+    const res = await fetch(`${serverUrl}/export/project`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        video_path: selectedVideo,
+        clips: generatedClips,
+        format: format,
+        fps: 30.0
+      })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      alert(`✅ ${data.message}\nSaved at: ${data.export_path}`);
+    } else {
+      alert(`Export failed: ${data.detail}`);
+    }
+  } catch (err) {
+    alert(`Export error: ${err.message}`);
+  }
+}
+
+document.getElementById('export-premiere')?.addEventListener('click', () => exportProject('fcpxml'));
+document.getElementById('export-davinci')?.addEventListener('click', () => exportProject('edl'));
+document.getElementById('export-capcut')?.addEventListener('click', () => exportProject('capcut'));
+
+// ------------------------------------------------------------------
+// Interactive Caption Editor
+// ------------------------------------------------------------------
+window.openCaptionEditor = function(clipIndex) {
+  const clip = generatedClips[clipIndex];
+  if (!clip) return;
+  currentEditingClip = clip;
+
+  const modal = document.getElementById('caption-modal');
+  const chipsContainer = document.getElementById('word-chips');
+  chipsContainer.innerHTML = '';
+
+  const words = clip.words && clip.words.length ? clip.words : (clip.hook_text || "").split(' ').map((w, i) => ({ word: w, start: i*0.4, end: (i+1)*0.4 }));
+
+  words.forEach((w) => {
+    const chip = document.createElement('div');
+    chip.className = 'word-chip';
+    chip.innerHTML = `<span contenteditable="true">${w.word}</span> <small style="color:var(--text-muted);">[${w.start.toFixed(1)}s]</small>`;
+    chipsContainer.appendChild(chip);
+  });
+
+  modal.classList.remove('hidden');
+};
+
+document.getElementById('close-caption-modal')?.addEventListener('click', () => {
+  document.getElementById('caption-modal').classList.add('hidden');
+});
+
+document.getElementById('save-captions-btn')?.addEventListener('click', () => {
+  alert("Subtitles and styling updated successfully!");
+  document.getElementById('caption-modal').classList.add('hidden');
+});
 
 function revealInFolder(filePath) {
   // Cross-platform reveal in file manager

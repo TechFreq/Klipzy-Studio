@@ -25,6 +25,29 @@ def check_ffmpeg() -> Tuple[bool, Optional[str]]:
     return False, f"Missing: {', '.join(missing)}. Install FFmpeg (winget install Gyan.FFmpeg / brew install ffmpeg)."
 
 
+def detect_hw_encoder() -> Tuple[str, List[str]]:
+    """
+    Detects hardware video encoder for maximum rendering speed.
+    Returns (encoder_name, extra_args).
+    """
+    import platform
+    system = platform.system()
+    try:
+        res = subprocess.run(["ffmpeg", "-encoders"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        stdout = res.stdout
+
+        if "h264_nvenc" in stdout:
+            return "h264_nvenc", ["-preset", "p4", "-cq", "23"]
+        elif system == "Darwin" and "h264_videotoolbox" in stdout:
+            return "h264_videotoolbox", ["-q:v", "65"]
+        elif "h264_vaapi" in stdout:
+            return "h264_vaapi", []
+    except Exception:
+        pass
+
+    return "libx264", ["-preset", "fast", "-crf", "22"]
+
+
 def get_media_info(file_path: str) -> dict:
     """Inspect video file metadata and streams."""
     if not os.path.exists(file_path):
@@ -74,7 +97,7 @@ def render_clip(
     burn_captions: bool = False,
     subtitle_path: Optional[str] = None,
 ) -> str:
-    """Render a clip segment with optional vertical crop and burned-in captions."""
+    """Render a clip segment with optional vertical crop and hardware-accelerated encoding."""
     Path(output_video).parent.mkdir(parents=True, exist_ok=True)
     duration = end_time - start_time
 
@@ -86,6 +109,12 @@ def render_clip(
         else:
             filters.append("crop=ih*9/16:ih:(iw-ow)/2:0")
 
+    if burn_captions and subtitle_path and os.path.exists(subtitle_path):
+        clean_sub = subtitle_path.replace("\\", "/").replace(":", "\\:")
+        filters.append(f"subtitles='{clean_sub}'")
+
+    encoder, enc_args = detect_hw_encoder()
+
     cmd = [
         "ffmpeg", "-y",
         "-ss", str(start_time),
@@ -93,25 +122,36 @@ def render_clip(
         "-t", str(duration),
     ]
 
-    if burn_captions and subtitle_path and os.path.exists(subtitle_path):
-        # Burn subtitles using libass (cross-platform)
-        cmd += ["-vf", f"subtitles={subtitle_path}"]
-
     if filters:
-        if burn_captions and subtitle_path and os.path.exists(subtitle_path):
-            cmd[-1] = f"{cmd[-1]},{','.join(filters)}"
-        else:
-            cmd += ["-vf", ",".join(filters)]
+        cmd += ["-vf", ",".join(filters)]
 
     cmd += [
-        "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+        "-c:v", encoder,
+        *enc_args,
         "-c:a", "aac", "-b:a", "192k",
         output_video
     ]
 
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if result.returncode != 0:
-        raise RuntimeError(f"Clip rendering failed: {result.stderr[-500:]}")
+        # Fallback to software encoding libx264
+        cmd_fb = [
+            "ffmpeg", "-y",
+            "-ss", str(start_time),
+            "-i", input_video,
+            "-t", str(duration),
+        ]
+        if filters:
+            cmd_fb += ["-vf", ",".join(filters)]
+        cmd_fb += [
+            "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+            "-c:a", "aac", "-b:a", "192k",
+            output_video
+        ]
+        res_fb = subprocess.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if res_fb.returncode != 0:
+            raise RuntimeError(f"Clip rendering failed: {res_fb.stderr[-500:]}")
+
     return output_video
 
 

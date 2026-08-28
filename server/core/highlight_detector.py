@@ -1,11 +1,10 @@
 """
 Highlight & viral moment detection.
-Combines heuristic scoring, audio energy analysis, and optional LLM-based discovery.
+Combines heuristic virality scoring, audio energy analysis, and optional LLM-based discovery.
 """
 
 from typing import List
-
-from server.models import ClipCandidate, TranscriptSegment
+from server.models import ClipCandidate, TranscriptSegment, ViralityBreakdown, WordTimestamp
 
 
 class HighlightDetector:
@@ -26,10 +25,13 @@ class HighlightDetector:
         for i in range(n):
             current_start = segments[i].start
             accumulated_text: List[str] = []
+            accumulated_words: List[WordTimestamp] = []
 
             for j in range(i, n):
                 seg = segments[j]
                 accumulated_text.append(seg.text)
+                for w in (seg.words or []):
+                    accumulated_words.append(w)
                 current_duration = seg.end - current_start
 
                 if current_duration >= self.min_duration:
@@ -37,6 +39,14 @@ class HighlightDetector:
                         full_txt = " ".join(accumulated_text)
                         score = self._compute_virality_score(full_txt)
                         if score >= 5.0:
+                            # Calculate detailed virality breakdown
+                            hook_score = round(min(10.0, score * 1.05), 1)
+                            flow_score = round(min(10.0, max(6.0, 10.0 - abs(current_duration - 35.0) * 0.15)), 1)
+                            eng_score = round(min(10.0, hook_score * 0.6 + flow_score * 0.4), 1)
+                            trend = "Very High" if score >= 8.5 else ("High" if score >= 7.0 else "Good")
+                            
+                            found_hooks = [h for h in ["secret", "never", "always", "why", "how to", "mistake", "truth", "crazy", "insane", "stop", "unbelievable", "wait", "actually"] if h in full_txt.lower()]
+
                             candidates.append(
                                 ClipCandidate(
                                     id=f"clip_{len(candidates) + 1}",
@@ -45,9 +55,17 @@ class HighlightDetector:
                                     end_time=seg.end,
                                     duration=round(current_duration, 2),
                                     score=score,
-                                    hook_text=accumulated_text[0][:60] + "...",
+                                    hook_text=accumulated_text[0][:80] + ("..." if len(accumulated_text[0]) > 80 else ""),
                                     full_text=full_txt,
-                                    reason="High conversational engagement / hook keywords",
+                                    reason=f"Virality Score: {score}/10 | Hook: {found_hooks[0] if found_hooks else 'High Engagement Flow'}",
+                                    virality=ViralityBreakdown(
+                                        hook_score=hook_score,
+                                        flow_score=flow_score,
+                                        engagement_score=eng_score,
+                                        trend_potential=trend,
+                                        hook_keywords=found_hooks
+                                    ),
+                                    words=accumulated_words
                                 )
                             )
                             break

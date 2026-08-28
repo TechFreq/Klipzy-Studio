@@ -102,10 +102,44 @@
 
         <!-- Results -->
         <div id="results" class="results hidden">
-          <h2>Generated Clips</h2>
+          <div class="results-header">
+            <div>
+              <h2>🔥 Viral Clips Generated</h2>
+              <p class="muted">AI-scored and cropped ready for TikTok, Reels & YouTube Shorts</p>
+            </div>
+            <div class="export-actions">
+              <button class="btn btn-secondary" id="export-premiere">🎬 Export to Premiere Pro (XML)</button>
+              <button class="btn btn-secondary" id="export-davinci">🎞️ Export to DaVinci (EDL)</button>
+              <button class="btn btn-secondary" id="export-capcut">✂️ Export to CapCut</button>
+            </div>
+          </div>
           <div id="clips-grid" class="clips-grid"></div>
         </div>
       </section>
+
+      <!-- Caption Editor Modal -->
+      <div id="caption-modal" class="modal hidden">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>📝 Interactive Caption & Subtitle Editor</h3>
+            <button class="modal-close" id="close-caption-modal">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p class="muted">Edit word timings and styling before final export:</p>
+            <div id="word-chips" class="word-chips-container"></div>
+            <div class="caption-style-bar">
+              <label>Style: 
+                <select id="caption-preset">
+                  <option value="opus_yellow">Opus Yellow Highlight</option>
+                  <option value="neon_green">Neon Green Pop</option>
+                  <option value="bold_white">Bold Clean White</option>
+                </select>
+              </label>
+              <button class="btn btn-primary" id="save-captions-btn">💾 Save & Apply Subtitles</button>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <!-- Chat View -->
       <section id="view-chat" class="view">

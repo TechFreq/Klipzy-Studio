@@ -81,3 +81,53 @@ def test_vtt_generation(tmp_path):
     assert os.path.exists(out)
     content = open(out, encoding="utf-8").read()
     assert content.startswith("WEBVTT")
+
+
+def test_fcpxml_export(tmp_path):
+    from server.core.export_tools import export_fcpxml
+    clips = [
+        {"title": "Hook 1", "start_time": 10.0, "end_time": 30.0},
+        {"title": "Hook 2", "start_time": 45.0, "end_time": 65.0}
+    ]
+    xml_out = tmp_path / "test.xml"
+    export_fcpxml("dummy_video.mp4", clips, str(xml_out), fps=30.0)
+    assert xml_out.exists()
+    content = xml_out.read_text(encoding="utf-8")
+    assert "<xmeml" in content
+    assert "Hook 1" in content
+
+
+def test_capcut_draft_export(tmp_path):
+    from server.core.export_tools import export_capcut_draft
+    clips = [
+        {"title": "Opus Clip 1", "start_time": 0.0, "end_time": 25.0, "hook_text": "Secret tips"}
+    ]
+    capcut_out = tmp_path / "capcut.json"
+    export_capcut_draft("dummy_video.mp4", clips, str(capcut_out))
+    assert capcut_out.exists()
+    content = capcut_out.read_text(encoding="utf-8")
+    assert "CapCut" in content
+    assert "9:16" in content
+
+
+def test_animated_ass_generation(tmp_path):
+    from server.core.caption_styler import generate_animated_ass
+    from server.models import TranscriptSegment, WordTimestamp
+    
+    seg = TranscriptSegment(
+        id=1,
+        start=0.0,
+        end=2.0,
+        text="This is amazing",
+        words=[
+            WordTimestamp(word="This", start=0.0, end=0.5),
+            WordTimestamp(word="is", start=0.5, end=1.0),
+            WordTimestamp(word="amazing", start=1.0, end=2.0)
+        ]
+    )
+    ass_out = tmp_path / "test.ass"
+    generate_animated_ass([seg], str(ass_out))
+    assert ass_out.exists()
+    content = ass_out.read_text(encoding="utf-8")
+    assert "[Script Info]" in content
+    assert "\\k" in content

@@ -92,8 +92,14 @@ class VideoClipperEngine:
         # Generate subtitle files
         srt_path = str(job_dir / "captions.srt")
         vtt_path = str(job_dir / "captions.vtt")
+        ass_path = str(job_dir / "captions.ass")
         generate_srt(segments, srt_path)
         generate_vtt(segments, vtt_path)
+        try:
+            from server.core.caption_styler import generate_animated_ass
+            generate_animated_ass(segments, ass_path)
+        except Exception:
+            ass_path = None
 
         results: List[ClipResult] = []
         total = len(candidates)
@@ -108,7 +114,24 @@ class VideoClipperEngine:
                     video_path, clip.start_time, clip.end_time
                 )
 
+            # Generate clip-specific animated karaoke subtitle
+            clip_ass = str(job_dir / f"clip_{idx}.ass")
+            clip_srt = str(job_dir / f"clip_{idx}.srt")
+            clip_segs = [s for s in segments if s.start >= clip.start_time and s.end <= clip.end_time]
+            if clip_segs:
+                generate_srt(clip_segs, clip_srt)
+                try:
+                    from server.core.caption_styler import generate_animated_ass
+                    generate_animated_ass(clip_segs, clip_ass)
+                except Exception:
+                    clip_ass = None
+            else:
+                clip_srt = srt_path
+                clip_ass = ass_path
+
             report(f"Rendering clip {idx}/{total}...", 55 + int(35 * idx / max(1, total)))
+            sub_to_burn = clip_ass if (clip_ass and os.path.exists(clip_ass)) else (clip_srt if os.path.exists(clip_srt) else None)
+            
             render_clip(
                 input_video=video_path,
                 output_video=output_clip_path,
@@ -117,7 +140,7 @@ class VideoClipperEngine:
                 aspect_ratio="9:16" if vertical_crop else None,
                 crop_x_offset=crop_offset,
                 burn_captions=burn_captions,
-                subtitle_path=srt_path,
+                subtitle_path=sub_to_burn,
             )
 
             results.append(
@@ -130,6 +153,11 @@ class VideoClipperEngine:
                     duration=clip.duration,
                     hook_text=clip.hook_text,
                     output_file=output_clip_path,
+                    virality=clip.virality,
+                    words=clip.words,
+                    srt_path=clip_srt if os.path.exists(clip_srt) else None,
+                    vtt_path=vtt_path if os.path.exists(vtt_path) else None,
+                    ass_path=clip_ass if (clip_ass and os.path.exists(clip_ass)) else None,
                 )
             )
 

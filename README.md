@@ -10,14 +10,16 @@ A **local-first, open-source AI video clipper** for Windows and macOS. Turn long
 
 | Feature | Description |
 |---------|-------------|
-| 🎯 **AI Highlight Detection** | Finds the most engaging 20–60s moments using transcript hooks, question detection, and virality keywords |
-| 🔊 **Audio Energy Detection** | Detects excitement spikes (loudness peaks) to find dramatic moments |
+| 🎯 **AI Virality & Hook Detection** | Finds the most engaging moments with Virality Scores, Hook strength, and Trend breakdowns |
+| ⚡ **Hardware Acceleration** | Auto GPU video encoding acceleration (NVIDIA NVENC, Apple Silicon VideoToolbox, CPU x264 fallback) |
+| 🎨 **OpusClip-Style Captions** | Word-by-word active karaoke highlights (`.ass` format) with dynamic color styling |
+| ✏️ **Interactive Caption Editor** | Live word timestamp adjusting and subtitle customization |
+| 🎬 **NLE Project Exports** | Export timeline directly to **Adobe Premiere Pro** (XML), **DaVinci Resolve** (EDL), or **CapCut** (Draft) |
+| 🔊 **Audio Energy Detection** | Detects excitement spikes and loudness peaks to catch dramatic moments |
 | 🤖 **Optional LLM Discovery** | Uses local Ollama (Gemma) to pick viral moments from the transcript |
-| 🗣️ **Speaker-Aware Face Tracking** | YOLOv8 + OpenCV tracks the speaker so 9:16 vertical crops stay framed on them |
-| 💬 **Editable Captions** | Word-level timestamps; SRT/VTT export and burned-in captions |
-| ✍️ **AI Edit Chat** | Chat with a local AI for hook ideas, captions, hashtags, and editing advice |
-| 📦 **Local-First** | Everything runs on your machine — Whisper, YOLO, Ollama, FFmpeg |
-| 🖥️ **Cross-Platform** | Native Windows (CUDA/CPU) and macOS (Apple Silicon MPS/CPU) support |
+| 🗣️ **Speaker-Aware Face Tracking** | Tracks the active speaker so 9:16 vertical crops stay centered on them |
+| 💬 **AI Edit Chat** | Chat with local AI for hook ideas, captions, hashtags, and edit adjustments |
+| 📦 **100% Local & Private** | Everything runs on your machine — Whisper, YOLO, Ollama, FFmpeg — no cloud fees |
 
 ---
 

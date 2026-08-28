@@ -22,6 +22,14 @@ class TranscriptSegment(BaseModel):
     words: List[WordTimestamp] = Field(default_factory=list)
 
 
+class ViralityBreakdown(BaseModel):
+    hook_score: float = 8.5
+    flow_score: float = 8.0
+    engagement_score: float = 9.0
+    trend_potential: str = "High"
+    hook_keywords: List[str] = Field(default_factory=list)
+
+
 class ClipCandidate(BaseModel):
     id: str
     title: str
@@ -32,6 +40,8 @@ class ClipCandidate(BaseModel):
     hook_text: str
     full_text: str
     reason: str
+    virality: Optional[ViralityBreakdown] = None
+    words: List[WordTimestamp] = Field(default_factory=list)
 
 
 class ClipResult(BaseModel):
@@ -43,6 +53,11 @@ class ClipResult(BaseModel):
     duration: float
     hook_text: str
     output_file: str
+    virality: Optional[ViralityBreakdown] = None
+    words: List[WordTimestamp] = Field(default_factory=list)
+    srt_path: Optional[str] = None
+    vtt_path: Optional[str] = None
+    ass_path: Optional[str] = None
 
 
 class ProcessRequest(BaseModel):
@@ -55,6 +70,8 @@ class ProcessRequest(BaseModel):
     language: Optional[str] = None
     use_audio_energy: bool = True
     use_llm: bool = False
+    burn_captions: bool = True
+    caption_style: Optional[str] = "karaoke"
 
 
 class ProcessResponse(BaseModel):
@@ -62,6 +79,19 @@ class ProcessResponse(BaseModel):
     status: str = "queued"
     clips: List[ClipResult] = Field(default_factory=list)
     error: Optional[str] = None
+
+
+class ExportProjectRequest(BaseModel):
+    video_path: str
+    clips: List[dict] = Field(default_factory=list)
+    format: str = "fcpxml"  # "fcpxml" | "edl" | "capcut"
+    fps: float = 30.0
+
+
+class ExportProjectResponse(BaseModel):
+    export_path: str
+    format: str
+    message: str
 
 
 class ChatRequest(BaseModel):
