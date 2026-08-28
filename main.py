@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Clippy Studio - local-first AI video clipper launcher.
+Klipzy Studio - local-first AI video clipper launcher.
 
 Entry point: `python main.py`  (equivalent to `python -m server.api.server`)
 Launches the FastAPI backend used by the Electron desktop app.

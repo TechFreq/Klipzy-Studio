@@ -1,5 +1,5 @@
 """
-System & dependency check for the Clippy Studio desktop app.
+System & dependency check for the Klipzy Studio desktop app.
 
 Detects what's installed, recommends hardware-appropriate models,
 and provides click-to-install commands (winget / Homebrew / pip).
@@ -163,9 +163,10 @@ def detect_cpu() -> Dict[str, str]:
 def detect_torch() -> Dict[str, bool]:
     try:
         import torch
+        cuda_ok = torch.cuda.is_available() or bool(getattr(torch.version, "cuda", None))
         return {
             "installed": True,
-            "cuda": torch.cuda.is_available(),
+            "cuda": cuda_ok,
             "mps": getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available(),
         }
     except ImportError:
@@ -187,7 +188,14 @@ def get_install_commands() -> Dict[str, List[str]]:
         commands["ffmpeg"] = ["sudo", "apt", "install", "-y", "ffmpeg"]
         commands["ollama"] = ["curl", "-fsSL", "https://ollama.com/install.sh", "|", "sh"]
 
-    commands["pytorch"] = ["pip", "install", "torch", "torchvision"]
+    # PyTorch: install the accelerated build for this machine so Whisper & YOLO use the GPU.
+    # CUDA 12.6 wheels cover NVIDIA GPUs (RTX 3060 etc) — falls back to CPU for non-NVIDIA.
+    if os_name == "windows":
+        commands["pytorch"] = ["pip", "install", "--index-url", "https://download.pytorch.org/whl/cu126", "torch", "torchvision"]
+    elif os_name == "macos":
+        commands["pytorch"] = ["pip", "install", "torch", "torchvision"]
+    else:
+        commands["pytorch"] = ["pip", "install", "--index-url", "https://download.pytorch.org/whl/cu126", "torch", "torchvision"]
     commands["whisper"] = ["pip", "install", "openai-whisper"]
     commands["librosa"] = ["pip", "install", "librosa", "soundfile"]
     commands["ultralytics"] = ["pip", "install", "ultralytics"]
@@ -231,6 +239,10 @@ def recommend_models() -> Dict[str, Dict]:
         ollama = {"model": "gemma2:2b", "note": "2B — runs comfortably on CPU/RAM"}
     else:
         ollama = {"model": "gemma2:2b", "note": "2B — smallest reliable option"}
+
+    whisper["engine"] = "GPU (CUDA)" if vram else ("GPU (MPS)" if torch_info.get("mps") else "CPU")
+    yolo["engine"] = "GPU (CUDA)" if vram else ("GPU (MPS)" if torch_info.get("mps") else "CPU")
+    ollama["engine"] = "GPU (CUDA)" if (vram and vram >= 8) else "CPU"
 
     return {
         "whisper": whisper,

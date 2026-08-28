@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src http://127.0.0.1:8765; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: file:;">
-  <title>AI Video Clipper</title>
+  <title>Klipzy Studio</title>
   <link rel="stylesheet" href="src/styles.css" />
 </head>
 <body>
@@ -31,8 +31,8 @@
       <!-- Clipper View -->
       <section id="view-clipper" class="view active">
         <header class="view-header">
-          <h1>AI Video Clipper</h1>
-          <p class="subtitle">Turn long videos into viral vertical shorts — 100% locally.</p>
+          <h1>Klipzy Studio</h1>
+          <p class="subtitle">Local AI video clipper by TechFreq — turn long videos into viral vertical shorts, 100% on your machine.</p>
         </header>
 
         <div class="card drop-zone" id="drop-zone">
@@ -178,9 +178,29 @@
               <p class="muted">AI-scored and cropped ready for TikTok, Reels & YouTube Shorts</p>
             </div>
             <div class="export-actions">
-              <button class="btn btn-secondary" id="export-premiere">🎬 Export to Premiere Pro (XML)</button>
-              <button class="btn btn-secondary" id="export-davinci">🎞️ Export to DaVinci (EDL)</button>
-              <button class="btn btn-secondary" id="export-capcut">✂️ Export to CapCut</button>
+              <button class="btn btn-secondary" id="export-premiere">🎬 Premiere Pro (XML)</button>
+              <button class="btn btn-secondary" id="export-davinci">🎞️ DaVinci (EDL)</button>
+              <button class="btn btn-secondary" id="export-capcut">✂️ CapCut</button>
+              <span class="export-sep">|</span>
+              <select id="standalone-asset" class="export-format-select" title="Standalone asset export">
+                <option value="audio_mp3">🎵 Audio Only (MP3 320k)</option>
+                <option value="audio_wav">🎵 Audio Only (WAV 44.1k)</option>
+                <option value="audio_flac">🎵 Audio Only (FLAC Lossless)</option>
+                <option value="audio_aac">🎵 Audio Only (AAC 256k)</option>
+                <option value="audio_m4a">🎵 Audio Only (M4A)</option>
+                <option value="sub_srt">📝 Subtitles (SRT)</option>
+                <option value="sub_vtt">📝 Subtitles (VTT)</option>
+              </select>
+              <button class="btn btn-secondary btn-small" id="export-standalone-btn">💾 Export Asset</button>
+              <span class="export-sep">|</span>
+              <select id="compile-format" class="export-format-select" title="Reel output format">
+                <option value="mp4">Export All as MP4 Reel</option>
+                <option value="mov">Export All as MOV Reel</option>
+                <option value="mkv">Export All as MKV Reel</option>
+                <option value="webm">Export All as WebM Reel</option>
+                <option value="gif">Export All as GIF Reel</option>
+              </select>
+              <button class="btn btn-primary btn-small" id="export-compile">🎬 Export All as Reel</button>
             </div>
           </div>
           <div id="clips-grid" class="clips-grid"></div>
@@ -293,7 +313,7 @@
         <!-- Support card -->
         <div class="card">
           <h3>💙 Support & Share</h3>
-          <p class="muted">Enjoying Clippy Studio? Here's how to keep it going:</p>
+          <p class="muted">Enjoying Klipzy Studio? Here's how to keep it going:</p>
           <div class="support-links">
             <a id="support-paypal" class="support-link" href="#" target="_blank" rel="noopener">💸 Buy me a coffee (PayPal)</a>
             <a id="support-beacons" class="support-link" href="#" target="_blank" rel="noopener">🌐 My links (Beacons)</a>

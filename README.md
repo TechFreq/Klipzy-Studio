@@ -1,6 +1,6 @@
-# 🎬 AI Video Clipper
+# 🎬 Klipzy Studio
 
-A **local-first, open-source AI video clipper** for Windows and macOS. Turn long videos, podcasts, and streams into ready-to-post vertical Shorts — entirely on your own PC. **No cloud AI, no fees.**
+A **local-first, open-source AI video clipper by TechFreq** for Windows and macOS. Turn long videos, podcasts, and streams into ready-to-post vertical Shorts — entirely on your own PC. **No cloud AI, no fees.**
 
 > ⚖️ **100% original code.** This project is inspired by the *features* of similar open-source tools but is built from scratch with its own architecture, UI, and implementation. It is licensed under **MIT** (you can use, modify, and distribute it freely).
 

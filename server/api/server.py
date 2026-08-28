@@ -1,9 +1,10 @@
 """
-FastAPI server exposing the AI Video Clipper as a local API.
+FastAPI server exposing Klipzy Studio as a local API.
 The Electron UI talks to this server over HTTP on localhost.
 """
 
 import os
+import shutil
 import subprocess
 import threading
 import uuid
@@ -17,14 +18,19 @@ from pydantic import BaseModel
 from server.models import (
     ChatRequest, ChatResponse, ProcessRequest, ProcessResponse, ClipResult,
     ExportProjectRequest, ExportProjectResponse, SubtitleRegenRequest,
-    TrimRequest, TrimResponse, CustomRenderRequest
+    TrimRequest, TrimResponse, CustomRenderRequest,
+    ExportMediaRequest, ExportMediaResponse, ExportCompileRequest, ExportCompileResponse,
+    ExportStandaloneRequest, ExportStandaloneResponse,
 )
 from server.core.pipeline import VideoClipperEngine
 from server.core.edit_chat import EditChat
-from server.core.ffmpeg_tools import check_ffmpeg, get_media_info, detect_hw_encoder, render_clip
 from server.core.export_tools import export_fcpxml, export_edl, export_capcut_draft
+from server.core.ffmpeg_tools import (
+    check_ffmpeg, get_media_info, detect_hw_encoder, render_clip,
+    export_clip_as, concat_clips, export_standalone_audio,
+)
 
-app = FastAPI(title="AI Video Clipper Server", version="1.0.0")
+app = FastAPI(title="Klipzy Studio Server", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -161,6 +167,134 @@ def export_project(req: ExportProjectRequest):
         raise HTTPException(status_code=400, detail=f"Unsupported format: {req.format}")
 
     return ExportProjectResponse(export_path=out_path, format=req.format, message=msg)
+
+
+@app.post("/export/media", response_model=ExportMediaResponse)
+def export_media(req: ExportMediaRequest):
+    """
+    Re-encode an existing rendered clip to a chosen container/codec:
+      mp4 / mov / mkv / webm / gif (animated).
+    Writes the new file beside the source (or to req.output_path if given).
+    """
+    if not os.path.exists(req.video_path):
+        raise HTTPException(status_code=400, detail=f"Clip file not found: {req.video_path}")
+
+    fmt = req.format.lower().lstrip(".")
+    if fmt not in ("mp4", "mov", "mkv", "webm", "gif"):
+        raise HTTPException(status_code=400, detail=f"Unsupported export format: {fmt}")
+
+    video_dir = os.path.dirname(os.path.abspath(req.video_path))
+    stem = os.path.splitext(os.path.basename(req.video_path))[0]
+    out_path = req.output_path or os.path.join(video_dir, f"{stem}_export.{fmt}")
+
+    try:
+        exported_path, msg = export_clip_as(req.video_path, out_path, fmt)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return ExportMediaResponse(
+        export_path=exported_path,
+        format=fmt,
+        duration=round(float(get_media_info(exported_path).get("format", {}).get("duration", 0.0)), 3),
+        message=msg,
+    )
+
+
+@app.post("/export/compile", response_model=ExportCompileResponse)
+def export_compile(req: ExportCompileRequest):
+    """
+    Concatenate all generated clips into one highlights-reel media file
+    (mp4 / mov / mkv / webm / gif animated).
+    """
+    if not req.clip_paths:
+        raise HTTPException(status_code=400, detail="No clip paths provided for compile")
+
+    fmt = req.format.lower().lstrip(".")
+    if fmt not in ("mp4", "mov", "mkv", "webm", "gif"):
+        raise HTTPException(status_code=400, detail=f"Unsupported export format: {fmt}")
+
+    stem = "".join(c for c in req.title if c.isalnum() or c in "-_" ).strip() or "highlights_reel"
+    out_path = req.output_path or os.path.join(
+        os.path.dirname(os.path.abspath(req.clip_paths[0])),
+        f"{stem}_reel.{fmt}",
+    )
+
+    try:
+        compiled_path, msg, total_dur = concat_clips(req.clip_paths, out_path, fmt)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return ExportCompileResponse(
+        export_path=compiled_path,
+        format=fmt,
+        clip_count=len(req.clip_paths),
+        duration=round(total_dur, 3),
+        message=msg,
+    )
+
+
+@app.post("/export/standalone", response_model=ExportStandaloneResponse)
+def export_standalone(req: ExportStandaloneRequest):
+    """
+    Export standalone companion assets from the video or clips:
+    - Audio only: audio_mp3, audio_wav, audio_flac, audio_aac, audio_m4a
+    - Subtitles / Transcripts: sub_srt, sub_vtt, transcript_txt, transcript_json
+    """
+    if not req.video_path or not os.path.exists(req.video_path):
+        raise HTTPException(status_code=400, detail=f"Source video not found: {req.video_path}")
+
+    video_dir = os.path.dirname(os.path.abspath(req.video_path))
+    stem = os.path.splitext(os.path.basename(req.video_path))[0]
+    asset = req.asset_type.lower()
+
+    if asset.startswith("audio_"):
+        fmt = asset.split("_", 1)[1]
+        out_path = req.output_path or os.path.join(video_dir, f"{stem}_audio.{fmt}")
+        try:
+            saved = export_standalone_audio(req.video_path, out_path, fmt)
+            return ExportStandaloneResponse(
+                export_path=saved,
+                asset_type=asset,
+                message=f"Exported standalone {fmt.upper()} audio track successfully",
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    elif asset in ("sub_srt", "sub_vtt", "transcript_txt", "transcript_json"):
+        # Look for companion caption/transcript files in the video's folder or extract
+        ext_map = {
+            "sub_srt": ".srt",
+            "sub_vtt": ".vtt",
+            "transcript_txt": ".txt",
+            "transcript_json": ".json",
+        }
+        target_ext = ext_map[asset]
+        out_path = req.output_path or os.path.join(video_dir, f"{stem}_standalone{target_ext}")
+
+        # Check if already generated in folder
+        existing_candidate = os.path.join(video_dir, f"captions{target_ext}")
+        if not os.path.exists(existing_candidate):
+            existing_candidate = os.path.join(video_dir, f"{stem}{target_ext}")
+
+        if os.path.exists(existing_candidate) and existing_candidate != out_path:
+            import shutil
+            shutil.copy2(existing_candidate, out_path)
+            return ExportStandaloneResponse(
+                export_path=out_path,
+                asset_type=asset,
+                message=f"Exported standalone {target_ext.upper().lstrip('.')} subtitle/transcript file",
+            )
+        elif os.path.exists(out_path):
+            return ExportStandaloneResponse(
+                export_path=out_path,
+                asset_type=asset,
+                message=f"Standalone {target_ext.upper().lstrip('.')} file ready at destination",
+            )
+        else:
+            raise HTTPException(status_code=404, detail=f"No transcript/subtitle file generated yet for this project. Please run clipping first.")
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported asset type: {req.asset_type}")
 
 
 @app.post("/export/subtitles", response_model=ExportProjectResponse)
@@ -347,6 +481,22 @@ def setup_install(req: SetupInstallRequest):
         return {"component": req.component, "error": "Install timed out after 10 minutes"}
     except Exception as e:
         return {"component": req.component, "error": str(e)}
+
+
+@app.post("/api/setup/ollama/pull")
+def ollama_pull(model: str = "gemma2:2b"):
+    """One-click download of an Ollama GGUF model (e.g. gemma2:2b for clip suggestions)."""
+    ollama_exe = shutil.which("ollama") or "ollama"
+    try:
+        result = subprocess.run(
+            [ollama_exe, "pull", model], capture_output=True, text=True, timeout=1800,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        return {"model": model, "returncode": result.returncode, "stdout": result.stdout[-1500:], "stderr": result.stderr[-1500:]}
+    except subprocess.TimeoutExpired:
+        return {"model": model, "error": "Model download timed out after 30 minutes"}
+    except Exception as e:
+        return {"model": model, "error": str(e)}
 
 
 @app.get("/api/setup/estimate")

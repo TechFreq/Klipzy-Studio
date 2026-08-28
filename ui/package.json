@@ -1,7 +1,7 @@
 {
-  "name": "ai-video-clipper",
+  "name": "klipzy-studio",
   "version": "1.0.0",
-  "description": "Local-first AI video clipper - turn long videos into vertical shorts",
+  "description": "Klipzy Studio - local-first AI video clipper by TechFreq",
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
@@ -17,8 +17,8 @@
     "electron-builder": "^24.13.3"
   },
   "build": {
-    "appId": "com.techfreq.clippy-studio",
-    "productName": "Clippy Studio",
+    "appId": "com.techfreq.klipzy-studio",
+    "productName": "Klipzy Studio",
     "files": [
       "electron/**/*",
       "src/**/*",
@@ -48,6 +48,13 @@
     "win": {
       "target": "nsis",
       "icon": "../assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Klipzy Studio"
     },
     "mac": {
       "target": "dmg",

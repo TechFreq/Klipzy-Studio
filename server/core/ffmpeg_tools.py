@@ -87,6 +87,36 @@ def extract_audio(video_path: str, output_audio_path: str, sample_rate: int = 16
     return output_audio_path
 
 
+def export_standalone_audio(video_path: str, output_path: str, fmt: str = "mp3") -> str:
+    """
+    Extract high quality standalone audio (mp3, wav, aac, m4a, flac) from video.
+    """
+    fmt = fmt.lower().lstrip(".")
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    if not Path(output_path).suffix:
+        output_path = f"{output_path}.{fmt}"
+
+    cmd = ["ffmpeg", "-y", "-i", video_path, "-vn"]
+    if fmt == "mp3":
+        cmd += ["-c:a", "libmp3lame", "-b:a", "320k"]
+    elif fmt == "wav":
+        cmd += ["-c:a", "pcm_s16le", "-ar", "44100"]
+    elif fmt == "aac":
+        cmd += ["-c:a", "aac", "-b:a", "256k"]
+    elif fmt == "m4a":
+        cmd += ["-c:a", "aac", "-b:a", "256k", "-movflags", "+faststart"]
+    elif fmt == "flac":
+        cmd += ["-c:a", "flac"]
+    else:
+        cmd += ["-c:a", "libmp3lame", "-b:a", "320k"]
+    cmd.append(output_path)
+
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Audio export failed: {result.stderr[-500:]}")
+    return output_path
+
+
 def render_clip(
     input_video: str,
     output_video: str,
@@ -208,6 +238,137 @@ def render_clip(
             raise RuntimeError(f"Clip rendering failed: {res_fb.stderr[-500:]}")
 
     return output_video
+
+
+def export_clip_as(
+    src_path: str,
+    out_path: str,
+    fmt: str = "mp4",
+) -> Tuple[str, str]:
+    """
+    Re-encode an existing rendered clip to a chosen container/codec:
+      mp4  -> H.264/AAC (web-ready, GPU-accelerated if available)
+      mov  -> H.264/AAC in QuickTime container
+      mkv  -> H.264/AAC in Matroska container
+      webm -> VP9/Opus (web-standard)
+      gif  -> animated GIF from the video frames (palette-based, 15fps, max 720px wide)
+    Returns (output_path, human-message).
+    """
+    fmt = fmt.lower().lstrip(".")
+    if fmt not in ("mp4", "mov", "mkv", "webm", "gif"):
+        raise ValueError(f"Unsupported export format: {fmt}")
+
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    out_suffix = Path(out_path).suffix.lower()
+    if not out_suffix:
+        out_path = f"{out_path}.{fmt}"
+
+    if fmt == "gif":
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", src_path,
+            "-vf", "fps=15,scale=w=min(iw\\,720):h=-2:force_original_aspect_ratio=decrease:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
+            "-loop", "0",
+            out_path,
+        ]
+    else:
+        encoder, enc_args = detect_hw_encoder()
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", src_path,
+            "-map", "0:v:0?", "-map", "0:a:0?",
+            "-c:v", encoder,
+            *enc_args,
+        ]
+        if fmt == "webm":
+            cmd += [
+                "-c:v", "libvpx-vp9", "-b:v", "2M", "-crf", "32", "-deadline", "realtime",
+                "-c:a", "libopus", "-b:a", "96k",
+            ]
+        else:
+            cmd += ["-c:a", "aac", "-b:a", "192k"]
+        if fmt == "mov":
+            cmd += ["-movflags", "+faststart"]
+        if fmt == "mkv":
+            cmd += ["-movflags", "+faststart"]
+        cmd += [out_path]
+
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Export to {fmt} failed: {result.stderr[-500:]}")
+
+    return out_path, f"Exported as {fmt.upper()} successfully"
+
+
+def concat_clips(
+    clip_paths: List[str],
+    out_path: str,
+    fmt: str = "mp4",
+) -> Tuple[str, str, float]:
+    """
+    Concatenate existing rendered clips into one highlights-reel media file
+    using the safe concat demuxer (no re-encode of the clips themselves except
+    format conversion when needed).
+    Returns (out_path, message, total_duration).
+    """
+    fmt = fmt.lower().lstrip(".")
+    if fmt not in ("mp4", "mov", "mkv", "webm", "gif"):
+        raise ValueError(f"Unsupported export format: {fmt}")
+
+    existing = [p for p in clip_paths if os.path.exists(p)]
+    if not existing:
+        raise FileNotFoundError("No existing clip files to concatenate")
+
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    if not Path(out_path).suffix:
+        out_path = f"{out_path}.{fmt}"
+
+    total_duration = sum(get_video_duration(p) for p in existing)
+
+    # Build the concat list file (absolute POSIX-style paths, demuxer-safe).
+    list_path = Path(out_path).with_suffix(".concat-list.txt")
+    with open(list_path, "w", encoding="utf-8") as f:
+        for p in existing:
+            # ffmpeg concat demuxer wants paths escaped: single-quote-wrapped,
+            # internal quotes doubled. Convert to forward slashes to be Windows-safe.
+            p_safe = os.path.abspath(p).replace(os.sep, "/")
+            f.write(f"file '{p_safe}'\n")
+
+    try:
+        if fmt == "gif":
+            cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat", "-safe", "0", "-i", str(list_path),
+                "-vf", "fps=15,scale=w=min(iw\\,720):h=-2:force_original_aspect_ratio=decrease:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
+                "-loop", "0",
+                out_path,
+            ]
+        else:
+            encoder, enc_args = detect_hw_encoder()
+            cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat", "-safe", "0", "-i", str(list_path),
+                "-map", "0:v:0?", "-map", "0:a:0?",
+                "-c:v", encoder,
+                *enc_args,
+            ]
+            if fmt == "webm":
+                cmd += [
+                    "-c:v", "libvpx-vp9", "-b:v", "2M", "-crf", "32", "-deadline", "realtime",
+                    "-c:a", "libopus", "-b:a", "96k",
+                ]
+            else:
+                cmd += ["-c:a", "aac", "-b:a", "192k"]
+            cmd += [out_path]
+
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    finally:
+        list_path.unlink(missing_ok=True)
+
+    if result.returncode != 0:
+        raise RuntimeError(f"Reel export to {fmt} failed: {result.stderr[-500:]}")
+
+    return out_path, f"Compiled {len(existing)} clips into a {fmt.upper()} reel successfully", total_duration
 
 
 def generate_srt(segments: list, output_path: str) -> str:

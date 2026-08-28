@@ -141,3 +141,47 @@ class CustomRenderRequest(BaseModel):
     cam_video: Optional[str] = None
     cam_scale: float = 0.3
     cam_position: str = "bottom-right"
+
+
+class ExportMediaRequest(BaseModel):
+    """Export a single existing rendered clip to a chosen container/codec format."""
+    video_path: str
+    format: str = "mp4"   # "mp4" | "mov" | "mkv" | "webm" | "gif"
+    output_path: Optional[str] = None
+
+
+class ExportMediaResponse(BaseModel):
+    export_path: str
+    format: str
+    duration: float
+    message: str
+
+
+class ExportCompileRequest(BaseModel):
+    """Concatenate existing rendered clips into one highlights-reel media file."""
+    clip_paths: List[str] = Field(default_factory=list)
+    format: str = "mp4"   # "mp4" | "mov" | "mkv" | "webm" | "gif"
+    output_path: Optional[str] = None
+    title: str = "highlights_reel"
+
+
+class ExportCompileResponse(BaseModel):
+    export_path: str
+    format: str
+    clip_count: int
+    duration: float
+    message: str
+
+
+class ExportStandaloneRequest(BaseModel):
+    """Export standalone assets: separate audio track (mp3/wav/flac) or standalone transcript/subtitles (txt/srt/vtt/json)."""
+    video_path: Optional[str] = None
+    clip_index: Optional[int] = None
+    asset_type: str = "audio_mp3" # "audio_mp3", "audio_wav", "audio_flac", "audio_aac", "audio_m4a", "sub_srt", "sub_vtt", "transcript_txt", "transcript_json"
+    output_path: Optional[str] = None
+
+
+class ExportStandaloneResponse(BaseModel):
+    export_path: str
+    asset_type: str
+    message: str

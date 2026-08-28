@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AI Video Clipper - macOS/Linux launcher
+# Klipzy Studio - macOS/Linux launcher
 cd "$(dirname "$0")"
 
 echo "[1/3] Checking Python..."
@@ -18,5 +18,5 @@ else
     source venv/bin/activate
 fi
 
-echo "[3/3] Starting AI Video Clipper..."
+echo "[3/3] Starting Klipzy Studio..."
 python -m server.api.server

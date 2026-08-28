@@ -95,7 +95,7 @@ function createWindow() {
     height: 900,
     minWidth: 1100,
     minHeight: 700,
-    title: 'AI Video Clipper',
+    title: 'Klipzy Studio',
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,

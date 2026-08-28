@@ -1,4 +1,4 @@
-// Renderer - UI logic for the AI Video Clipper
+// Renderer - UI logic for Klipzy Studio (client)
 // Talks to the local Python FastAPI server
 
 let serverUrl = 'http://127.0.0.1:8765';
@@ -86,6 +86,9 @@ function bindEvents() {
   document.getElementById('chat-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') sendChat();
   });
+
+  // Export-as format actions
+  document.getElementById('export-compile')?.addEventListener('click', exportCompileReel);
 }
 
 // ------------------------------------------------------------------
@@ -307,8 +310,10 @@ async function addTrimmedClip() {
     generatedClips.push(clip);
     appendClipCard(clip, generatedClips.length - 1);
     document.getElementById('results').classList.remove('hidden');
+    playSuccessSound();
     alert('✅ Trimmed clip rendered!');
   } catch (err) {
+    playErrorSound();
     alert(`Trim failed: ${err.message || err}`);
   } finally {
     btn.disabled = false;
@@ -386,6 +391,7 @@ function pollJob(jobId) {
 // Results rendering & Viral Insights
 // ------------------------------------------------------------------
 function showResults(clips) {
+  playSuccessSound();
   generatedClips = clips;
   const btn = document.getElementById('start-clipping');
   btn.disabled = false;
@@ -423,9 +429,17 @@ function buildClipCard(clip, idx) {
       </div>
       <div class="clip-meta">${clip.duration}s duration</div>
       <div class="clip-hook">"${clip.hook_text}"</div>
-      <div class="clip-actions" style="margin-top: 10px; display: flex; gap: 8px;">
+      <div class="clip-actions" style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
         <button class="btn btn-small" onclick="openCaptionEditor(${idx})">✏️ Edit Captions</button>
         <button class="btn btn-small" onclick="revealInFolder('${clip.output_file}')">📂 Open</button>
+        <select class="export-format-select clip-export-fmt" data-clip-idx="${idx}" title="Clip output format">
+          <option value="mp4">📦 Export as MP4</option>
+          <option value="mov">📦 Export as MOV</option>
+          <option value="mkv">📦 Export as MKV</option>
+          <option value="webm">📦 Export as WebM</option>
+          <option value="gif">📦 Export as GIF</option>
+        </select>
+        <button class="btn btn-small btn-export" data-clip-idx="${idx}" onclick="exportSingleClip(${idx})">🚀 Export</button>
       </div>
     </div>
   `;
@@ -442,6 +456,7 @@ function appendClipCard(clip, idx) {
 // ------------------------------------------------------------------
 async function exportProject(format) {
   if (!selectedVideo || !generatedClips.length) {
+    playErrorSound();
     alert("Please generate clips first before exporting a project timeline.");
     return;
   }
@@ -459,11 +474,14 @@ async function exportProject(format) {
     });
     const data = await res.json();
     if (res.ok) {
+      playSuccessSound();
       alert(`✅ ${data.message}\nSaved at: ${data.export_path}`);
     } else {
+      playErrorSound();
       alert(`Export failed: ${data.detail}`);
     }
   } catch (err) {
+    playErrorSound();
     alert(`Export error: ${err.message}`);
   }
 }
@@ -471,6 +489,143 @@ async function exportProject(format) {
 document.getElementById('export-premiere')?.addEventListener('click', () => exportProject('fcpxml'));
 document.getElementById('export-davinci')?.addEventListener('click', () => exportProject('edl'));
 document.getElementById('export-capcut')?.addEventListener('click', () => exportProject('capcut'));
+
+// ------------------------------------------------------------------
+// Export Standalone Assets (Audio Only MP3/WAV/FLAC/AAC/M4A, Subtitles SRT/VTT)
+// ------------------------------------------------------------------
+async function exportStandaloneAsset() {
+  if (!selectedVideo) {
+    playErrorSound();
+    alert("Please select and load a video file first.");
+    return;
+  }
+  const sel = document.getElementById('standalone-asset');
+  const assetType = sel ? sel.value : 'audio_mp3';
+  const btn = document.getElementById('export-standalone-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Exporting…';
+  }
+
+  try {
+    const res = await fetch(`${serverUrl}/export/standalone`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        video_path: selectedVideo,
+        asset_type: assetType,
+      })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      playSuccessSound();
+      alert(`✅ ${data.message}\nSaved at: ${data.export_path}`);
+    } else {
+      playErrorSound();
+      alert(`Standalone export failed: ${data.detail}`);
+    }
+  } catch (err) {
+    playErrorSound();
+    alert(`Export error: ${err.message}`);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '💾 Export Asset';
+    }
+  }
+}
+
+document.getElementById('export-standalone-btn')?.addEventListener('click', exportStandaloneAsset);
+
+// ------------------------------------------------------------------
+// Export-As Media (single clip -> mp4/mov/mkv/webm/gif)
+// ------------------------------------------------------------------
+window.exportSingleClip = async function (clipIndex) {
+  const clip = generatedClips[clipIndex];
+  if (!clip || !clip.output_file) {
+    playErrorSound();
+    alert('No rendered clip to export yet.');
+    return;
+  }
+  const sel = document.querySelector(`.clip-export-fmt[data-clip-idx="${clipIndex}"]`);
+  const fmt = sel ? sel.value : 'mp4';
+  const btn = document.querySelector(`.btn-export[data-clip-idx="${clipIndex}"]`);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Exporting…';
+  }
+  try {
+    const res = await fetch(`${serverUrl}/export/media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        video_path: clip.output_file,
+        format: fmt,
+      })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      playSuccessSound();
+      alert(`✅ ${data.message}\nSaved at: ${data.export_path}`);
+    } else {
+      playErrorSound();
+      alert(`Export failed: ${data.detail}`);
+    }
+  } catch (err) {
+    playErrorSound();
+    alert(`Export error: ${err.message}`);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '🚀 Export';
+    }
+  }
+};
+
+// ------------------------------------------------------------------
+// Export-All-as-Reel (compile all clips into one media file)
+// ------------------------------------------------------------------
+async function exportCompileReel() {
+  if (!generatedClips.length) {
+    playErrorSound();
+    alert('Please generate clips first before compiling a reel.');
+    return;
+  }
+  const fmt = document.getElementById('compile-format') ? document.getElementById('compile-format').value : 'mp4';
+  const btn = document.getElementById('export-compile');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Compiling reel…';
+  }
+  try {
+    const clipPaths = generatedClips.map((c) => c.output_file).filter(Boolean);
+    const res = await fetch(`${serverUrl}/export/compile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clip_paths: clipPaths,
+        format: fmt,
+        title: 'highlights_reel',
+      })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      playSuccessSound();
+      alert(`✅ ${data.message}\nSaved at: ${data.export_path}`);
+    } else {
+      playErrorSound();
+      alert(`Compile failed: ${data.detail}`);
+    }
+  } catch (err) {
+    playErrorSound();
+    alert(`Compile error: ${err.message}`);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '🎬 Export All as Reel';
+    }
+  }
+}
 
 // ------------------------------------------------------------------
 // Interactive Caption Editor
@@ -567,6 +722,7 @@ function revealInFolder(filePath) {
 }
 
 function showError(message) {
+  playErrorSound();
   const btn = document.getElementById('start-clipping');
   btn.disabled = false;
   btn.textContent = '🚀 Start Clipping';
@@ -649,7 +805,10 @@ function renderHardware(data) {
   const torch = data.torch || {};
   const py = data.python || {};
   const gpuName = gpu.name ? `${gpu.name}${gpu.vram_gb ? ` (${gpu.vram_gb} GB VRAM)` : ''}` : 'No discrete GPU detected';
-  const accel = torch.cuda ? 'CUDA ✓' : (torch.mps ? 'Apple Silicon (MPS) ✓' : 'CPU only');
+  const accel = torch.cuda ? 'CUDA ✓' : (torch.mps ? 'Apple Silicon (MPS) ✓' : 'CPU only — GPU build of PyTorch not installed');
+  const accelHint = torch.cuda ? '(RTX-class GPU — full GPU speed)'
+    : (torch.mps ? '(Apple Silicon Metal)'
+    : (gpu.name ? `Detected ${escapeHtml(gpu.name)} — install CUDA PyTorch to unlock` : 'Install PyTorch to enable GPU'));
   document.getElementById('setup-hardware').innerHTML = `
     <div class="hw-grid">
       <div class="hw-item"><span class="hw-label">OS</span><strong>${escapeHtml(data.os || 'unknown')}</strong></div>
@@ -658,7 +817,8 @@ function renderHardware(data) {
       <div class="hw-item"><span class="hw-label">RAM</span><strong>${escapeHtml(String(cpu.ram_gb || '?'))} GB</strong></div>
       <div class="hw-item"><span class="hw-label">GPU</span><strong>${escapeHtml(gpuName)}</strong></div>
       <div class="hw-item"><span class="hw-label">Acceleration</span><strong>${escapeHtml(accel)}</strong></div>
-    </div>`;
+    </div>
+    <div class="hw-note">${escapeHtml(accelHint)}</div>`;
 }
 
 function renderRecommendations(recs) {
@@ -672,7 +832,10 @@ function renderRecommendations(recs) {
     <div class="rec-card">
       <div class="rec-name">${escapeHtml(it.name)}</div>
       <div class="rec-model">${escapeHtml(it.model)}</div>
-      <div class="rec-meta">${escapeHtml(it.realtime_factor || '')}</div>
+      <div class="rec-meta">
+        ${it.engine ? `<span class="rec-chip">⚡ ${escapeHtml(it.engine)}</span>` : ''}
+        ${it.realtime_factor ? `<span class="rec-chip">${escapeHtml(it.realtime_factor)}</span>` : ''}
+      </div>
       <div class="rec-note muted">${escapeHtml(it.note || '')}</div>
     </div>`).join('');
 }
@@ -691,16 +854,16 @@ const DEP_DEF = {
     statusText: (d) => (d.whisper && d.whisper.installed ? 'Installed' : 'Missing'),
   },
   ollama: {
-    label: 'Ollama',
-    desc: 'Local AI engine for clip suggestions (port 11434)',
+    label: 'Ollama (Required)',
+    desc: 'Local LLM engine — auto-pulls the model on first use (or via Pull button below)',
     check: (d) => d.ollama && d.ollama.installed,
     statusText: (d) => {
-      if (!d.ollama || !d.ollama.installed) return 'Missing';
+      if (!d.ollama || !d.ollama.installed) return 'Missing - required';
       return d.ollama.running ? '✅ Running' : 'Installed (offline · launch app)';
     },
   },
   lmstudio: {
-    label: 'LM Studio',
+    label: 'LM Studio (Optional)',
     desc: 'Alternative local LLM engine (OpenAI-compatible server on port 1234)',
     check: (d) => d.lmstudio && d.lmstudio.installed,
     statusText: (d) => {
@@ -723,7 +886,7 @@ const DEP_DEF = {
 };
 function renderDeps(data) {
   const cmds = data.install_commands || {};
-  const renderable = ['ffmpeg', 'whisper', 'ollama', 'lmstudio', 'pytorch', 'ultralytics'];
+  const renderable = ['ollama', 'whisper', 'pytorch', 'ultralytics', 'lmstudio', 'ffmpeg'];
   const rows = renderable.map((key) => {
     const def = DEP_DEF[key];
     const ok = def.check(data);
@@ -731,7 +894,7 @@ function renderDeps(data) {
     const statusMark = ok ? '✅' : '❌';
     const tag = def.statusText ? def.statusText(data) : (ok ? 'Installed' : 'Missing');
     return `
-      <div class="dep-row ${ok ? 'ok' : 'missing'}">
+      <div class="dep-row ${ok ? 'ok' : 'missing'}" data-key="${key}">
         <div class="dep-info">
           <span class="dep-status">${statusMark}</span>
           <div>
@@ -781,6 +944,28 @@ function renderDeps(data) {
       }
     });
   });
+
+  // One-click Ollama model pull (auto-downloads a GGUF model in the app)
+  if (data.ollama && data.ollama.installed) {
+    const row = document.querySelector('.dep-row[data-key="ollama"]');
+    if (row) row.querySelector('.dep-actions').insertAdjacentHTML('beforeend', '<button class="btn btn-small" id="ollama-pull-btn">🔄 Pull model</button>');
+  }
+  const pullBtn = document.getElementById('ollama-pull-btn');
+  if (pullBtn) pullBtn.addEventListener('click', async () => {
+    pullBtn.disabled = true;
+    pullBtn.textContent = '⏳ Downloading model...';
+    try {
+      const res = await fetch(`${serverUrl}/api/setup/ollama/pull?model=gemma2:2b`, { method: 'POST' });
+      const d = await res.json();
+      if (d.error) alert(`Pull failed: ${d.error}`);
+      else if (d.returncode === 0) alert('✅ gemma2:2b downloaded and ready!');
+      else alert(`Pull may have failed (code ${d.returncode}).\n\n${d.stderr || d.stdout || ''}`);
+    } catch (e) {
+      alert('Pull error: ' + e.message);
+    }
+    pullBtn.disabled = false;
+    pullBtn.textContent = '🔄 Pull model';
+  });
 }
 
 // Render time estimator
@@ -804,5 +989,82 @@ function bindEstimator() {
 }
 
 // Start
+// ------------------------------------------------------------------
+// Audio Feedback (Clicks, Success Chimes, Error Alerts)
+// ------------------------------------------------------------------
+let _audioCtx = null;
+function getAudioContext() {
+  if (!_audioCtx) {
+    _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (_audioCtx.state === 'suspended') {
+    _audioCtx.resume();
+  }
+  return _audioCtx;
+}
+
+function playClick() {
+  try {
+    const ctx = getAudioContext();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(660, ctx.currentTime);
+    g.gain.setValueAtTime(0.04, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.04);
+    o.connect(g);
+    g.connect(ctx.destination);
+    o.start();
+    o.stop(ctx.currentTime + 0.05);
+  } catch (e) { /* audio unavailable */ }
+}
+
+function playSuccessSound() {
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+    // Pleasant ascending major triad chord / chime (C5 -> E5 -> G5 -> C6)
+    const notes = [523.25, 659.25, 783.99, 1046.50];
+    notes.forEach((freq, i) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'triangle';
+      o.frequency.setValueAtTime(freq, now + i * 0.08);
+      g.gain.setValueAtTime(0.0, now + i * 0.08);
+      g.gain.linearRampToValueAtTime(0.12, now + i * 0.08 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, now + i * 0.08 + 0.35);
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.start(now + i * 0.08);
+      o.stop(now + i * 0.08 + 0.4);
+    });
+  } catch (e) { /* audio unavailable */ }
+}
+
+function playErrorSound() {
+  try {
+    const ctx = getAudioContext();
+    const now = ctx.currentTime;
+    // Low double buzz / error tone
+    [0, 0.12].forEach((offset) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(160, now + offset);
+      o.frequency.linearRampToValueAtTime(110, now + offset + 0.1);
+      g.gain.setValueAtTime(0.1, now + offset);
+      g.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.11);
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.start(now + offset);
+      o.stop(now + offset + 0.12);
+    });
+  } catch (e) { /* audio unavailable */ }
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.closest('button, .btn, .dep-row')) playClick();
+});
+
 bindEstimator();
 init();

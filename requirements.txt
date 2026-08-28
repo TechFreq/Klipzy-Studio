@@ -1,4 +1,4 @@
-# AI Video Clipper - Python server dependencies
+# Klipzy Studio - Python server dependencies
 
 # Core
 pydantic>=2.0.0
