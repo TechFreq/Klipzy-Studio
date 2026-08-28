@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# Node / Electron
+node_modules/
+dist/
+out/
+*.log
+
+# Output clips
+output/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+gitstatus.txt

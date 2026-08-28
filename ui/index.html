@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src http://127.0.0.1:8765; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:;">
+  <title>AI Video Clipper</title>
+  <link rel="stylesheet" href="src/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo">
+        <span class="logo-icon">🎬</span>
+        <span class="logo-text">AI Clipper</span>
+      </div>
+      <nav class="nav">
+        <button class="nav-item active" data-view="clipper">✂️ Clipper</button>
+        <button class="nav-item" data-view="chat">💬 AI Edit Chat</button>
+      </nav>
+      <div class="sidebar-footer">
+        <div id="health-status" class="health-status">
+          <span class="dot"></span> Checking server...
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="main">
+      <!-- Clipper View -->
+      <section id="view-clipper" class="view active">
+        <header class="view-header">
+          <h1>AI Video Clipper</h1>
+          <p class="subtitle">Turn long videos into viral vertical shorts — 100% locally.</p>
+        </header>
+
+        <div class="card drop-zone" id="drop-zone">
+          <div class="drop-content">
+            <span class="drop-icon">🎞️</span>
+            <h3>Drop a video here or click to browse</h3>
+            <p class="muted">MP4, MOV, MKV, WebM — processed entirely on your device</p>
+          </div>
+          <input type="file" id="file-input" accept="video/*" hidden />
+        </div>
+
+        <div id="file-info" class="file-info hidden">
+          <span id="file-name"></span>
+          <button class="btn btn-small" id="change-file">Change</button>
+        </div>
+
+        <div class="card options-card">
+          <h3>Clipping Options</h3>
+          <div class="options-grid">
+            <label class="option">
+              <span>Max clips</span>
+              <input type="number" id="max-clips" value="5" min="1" max="20" />
+            </label>
+            <label class="option">
+              <span>Min duration (s)</span>
+              <input type="number" id="min-duration" value="20" min="5" max="120" />
+            </label>
+            <label class="option">
+              <span>Max duration (s)</span>
+              <input type="number" id="max-duration" value="60" min="10" max="300" />
+            </label>
+            <label class="option">
+              <span>Whisper model</span>
+              <select id="whisper-model">
+                <option value="tiny">Tiny (fastest)</option>
+                <option value="base" selected>Base</option>
+                <option value="small">Small</option>
+                <option value="medium">Medium</option>
+              </select>
+            </label>
+          </div>
+          <div class="options-grid">
+            <label class="toggle">
+              <input type="checkbox" id="vertical-crop" checked />
+              <span>Vertical 9:16 crop</span>
+            </label>
+            <label class="toggle">
+              <input type="checkbox" id="audio-energy" checked />
+              <span>Audio energy detection</span>
+            </label>
+            <label class="toggle">
+              <input type="checkbox" id="burn-captions" checked />
+              <span>Burn captions into clips</span>
+            </label>
+            <label class="toggle">
+              <input type="checkbox" id="use-llm" />
+              <span>Use local LLM (Ollama)</span>
+            </label>
+          </div>
+          <button class="btn btn-primary" id="start-clipping" disabled>🚀 Start Clipping</button>
+        </div>
+
+        <!-- Progress -->
+        <div id="progress-container" class="card hidden">
+          <h3 id="progress-step">Processing...</h3>
+          <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+        </div>
+
+        <!-- Results -->
+        <div id="results" class="results hidden">
+          <h2>Generated Clips</h2>
+          <div id="clips-grid" class="clips-grid"></div>
+        </div>
+      </section>
+
+      <!-- Chat View -->
+      <section id="view-chat" class="view">
+        <header class="view-header">
+          <h1>AI Edit Chat</h1>
+          <p class="subtitle">Get hook ideas, captions, and editing advice from your local AI.</p>
+        </header>
+        <div class="card chat-container">
+          <div id="chat-messages" class="chat-messages">
+            <div class="chat-message bot">
+              <div class="bubble">Hi! I'm your AI editing assistant. Ask me for hook ideas, captions, hashtags, or clip timing advice! 🎬</div>
+            </div>
+          </div>
+          <div class="chat-input-row">
+            <input type="text" id="chat-input" placeholder="e.g. Give me a hook for my podcast clip..." />
+            <button class="btn btn-primary" id="chat-send">Send</button>
+          </div>
+          <p class="muted small">Powered by local Ollama (Gemma) with smart fallback.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="src/renderer.js"></script>
+</body>
+</html>

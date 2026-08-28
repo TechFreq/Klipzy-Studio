@@ -1,0 +1,42 @@
+{
+  "name": "ai-video-clipper",
+  "version": "1.0.0",
+  "description": "Local-first AI video clipper - turn long videos into vertical shorts",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
+  },
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.yourname.ai-video-clipper",
+    "productName": "AI Video Clipper",
+    "files": [
+      "electron/**/*",
+      "src/**/*",
+      "index.html",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "../assets/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "../assets/icon.icns",
+      "category": "public.app-category.video"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "AudioVideo"
+    }
+  }
+}
