@@ -178,6 +178,18 @@ def render_clip(
             filters.append(f"[0:v]crop=ih*9/16:ih:{crop_x_offset}:0[v]")
         else:
             filters.append("[0:v]crop=ih*9/16:ih:(iw-ow)/2:0[v]")
+    elif aspect_ratio == "1:1":
+        if crop_x_offset is not None:
+            filters.append(f"[0:v]crop=min(iw\\,ih):min(iw\\,ih):{crop_x_offset}:(ih-oh)/2[v]")
+        else:
+            filters.append("[0:v]crop=min(iw\\,ih):min(iw\\,ih):(iw-ow)/2:(ih-oh)/2[v]")
+    elif aspect_ratio == "4:5":
+        if crop_x_offset is not None:
+            filters.append(f"[0:v]crop=ih*4/5:ih:{crop_x_offset}:0[v]")
+        else:
+            filters.append("[0:v]crop=ih*4/5:ih:(iw-ow)/2:0[v]")
+    elif aspect_ratio == "16:9":
+        filters.append("[0:v]crop=min(iw\\,ih*16/9):min(ih\\,iw*9/16):(iw-ow)/2:(ih-oh)/2[v]")
 
     burn_cwd = None
     if burn_captions and subtitle_path and os.path.exists(subtitle_path):

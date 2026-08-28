@@ -142,11 +142,48 @@
                 <option value="medium">Medium</option>
               </select>
             </label>
+            <label class="option">
+              <span>Aspect Ratio</span>
+              <select id="clip-aspect-ratio">
+                <option value="9:16" selected>📱 9:16 Vertical (Shorts/TikTok)</option>
+                <option value="1:1">⬛ 1:1 Square (Instagram/Feed)</option>
+                <option value="4:5">🖼️ 4:5 Portrait (IG Portrait)</option>
+                <option value="16:9">📺 16:9 Landscape (YouTube)</option>
+                <option value="full">↔️ Original (No Crop)</option>
+              </select>
+            </label>
+            <label class="option">
+              <span>Caption Preset</span>
+              <select id="global-caption-preset">
+                <option value="viral_yellow" selected>✨ Viral Yellow Highlight</option>
+                <option value="neon_green">🟢 Neon Green Pop</option>
+                <option value="bold_white">⚪ Bold Clean White</option>
+                <option value="cyberpunk_cyan">💠 Cyberpunk Cyan</option>
+                <option value="tiktok_pop">🔥 TikTok Pop Red-Yellow</option>
+                <option value="fire_red">🔴 Fire Red Flame</option>
+                <option value="retro_vaporwave">🌴 Retro Vaporwave</option>
+                <option value="mrbeast_impact">⚡ MrBeast Impact Yellow</option>
+                <option value="pastel_pink">🌸 Pastel Pink Aesthetic</option>
+                <option value="minimalist_dark">📦 Minimalist Dark Box</option>
+                <option value="comic_punch">💥 Comic Book Punch</option>
+                <option value="golden_hour">🌅 Golden Hour Amber</option>
+                <option value="electric_purple">🔮 Electric Purple</option>
+                <option value="sunset_orange">🌇 Sunset Coral Orange</option>
+                <option value="matrix_green">💻 Matrix Digital Green</option>
+                <option value="deep_blue">❄️ Ice Blue Arctic</option>
+                <option value="boxed_karaoke">🏷️ Boxed Pill Karaoke</option>
+                <option value="glitch_shadow">👾 Glitch Cyan Shadow</option>
+                <option value="elegant_serif">🖋️ Editorial Luxury Serif</option>
+                <option value="high_contrast">👁️ High-Contrast Inverted</option>
+                <option value="monochrome_chic">🎬 Monochrome Chic</option>
+                <option value="gaming_rgb">🕹️ Gamer RGB Lime/Pink</option>
+              </select>
+            </label>
           </div>
-          <div class="options-grid">
+          <div class="options-grid" style="margin-top: 12px;">
             <label class="toggle">
               <input type="checkbox" id="vertical-crop" checked />
-              <span>Vertical 9:16 crop</span>
+              <span>Smart speaker reframing</span>
             </label>
             <label class="toggle">
               <input type="checkbox" id="audio-energy" checked />
@@ -154,7 +191,15 @@
             </label>
             <label class="toggle">
               <input type="checkbox" id="burn-captions" checked />
-              <span>Burn captions into clips</span>
+              <span>Burn animated captions</span>
+            </label>
+            <label class="toggle">
+              <input type="checkbox" id="remove-silence" />
+              <span>✂️ Auto-cut dead air & silence</span>
+            </label>
+            <label class="toggle">
+              <input type="checkbox" id="censor-profanity" />
+              <span>🔇 Bleep / Mute profanity</span>
             </label>
             <label class="toggle">
               <input type="checkbox" id="use-llm" />
@@ -220,9 +265,28 @@
             <div class="caption-style-bar">
               <label>Style: 
                 <select id="caption-preset">
-                  <option value="opus_yellow">Opus Yellow Highlight</option>
-                  <option value="neon_green">Neon Green Pop</option>
-                  <option value="bold_white">Bold Clean White</option>
+                  <option value="viral_yellow" selected>✨ Viral Yellow Highlight</option>
+                  <option value="neon_green">🟢 Neon Green Pop</option>
+                  <option value="bold_white">⚪ Bold Clean White</option>
+                  <option value="cyberpunk_cyan">💠 Cyberpunk Cyan</option>
+                  <option value="tiktok_pop">🔥 TikTok Pop Red-Yellow</option>
+                  <option value="fire_red">🔴 Fire Red Flame</option>
+                  <option value="retro_vaporwave">🌴 Retro Vaporwave</option>
+                  <option value="mrbeast_impact">⚡ MrBeast Impact Yellow</option>
+                  <option value="pastel_pink">🌸 Pastel Pink Aesthetic</option>
+                  <option value="minimalist_dark">📦 Minimalist Dark Box</option>
+                  <option value="comic_punch">💥 Comic Book Punch</option>
+                  <option value="golden_hour">🌅 Golden Hour Amber</option>
+                  <option value="electric_purple">🔮 Electric Purple</option>
+                  <option value="sunset_orange">🌇 Sunset Coral Orange</option>
+                  <option value="matrix_green">💻 Matrix Digital Green</option>
+                  <option value="deep_blue">❄️ Ice Blue Arctic</option>
+                  <option value="boxed_karaoke">🏷️ Boxed Pill Karaoke</option>
+                  <option value="glitch_shadow">👾 Glitch Cyan Shadow</option>
+                  <option value="elegant_serif">🖋️ Editorial Luxury Serif</option>
+                  <option value="high_contrast">👁️ High-Contrast Inverted</option>
+                  <option value="monochrome_chic">🎬 Monochrome Chic</option>
+                  <option value="gaming_rgb">🕹️ Gamer RGB Lime/Pink</option>
                 </select>
               </label>
               <button class="btn btn-primary" id="save-captions-btn">💾 Save & Apply Subtitles</button>

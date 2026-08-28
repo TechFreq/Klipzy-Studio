@@ -33,6 +33,7 @@ class VideoClipperEngine:
         self,
         video_path: str,
         vertical_crop: bool = True,
+        aspect_ratio: Optional[str] = "9:16",
         max_clips: int = 5,
         min_duration: float = 20.0,
         max_duration: float = 60.0,
@@ -41,6 +42,10 @@ class VideoClipperEngine:
         use_audio_energy: bool = True,
         use_llm: bool = False,
         burn_captions: bool = True,
+        caption_style: str = "viral_yellow",
+        remove_silence: bool = False,
+        bleep_profanity: bool = False,
+        mute_profanity: bool = False,
         progress_callback=None,
     ) -> List[ClipResult]:
         """
@@ -122,7 +127,7 @@ class VideoClipperEngine:
                 generate_srt(clip_segs, clip_srt)
                 try:
                     from server.core.caption_styler import generate_animated_ass
-                    generate_animated_ass(clip_segs, clip_ass)
+                    generate_animated_ass(clip_segs, clip_ass, style_preset=caption_style)
                 except Exception:
                     clip_ass = None
             else:
@@ -137,11 +142,38 @@ class VideoClipperEngine:
                 output_video=output_clip_path,
                 start_time=clip.start_time,
                 end_time=clip.end_time,
-                aspect_ratio="9:16" if vertical_crop else None,
+                aspect_ratio=aspect_ratio or ("9:16" if vertical_crop else None),
                 crop_x_offset=crop_offset,
                 burn_captions=burn_captions,
                 subtitle_path=sub_to_burn,
             )
+
+            # Optional profanity bleep/mute
+            if (bleep_profanity or mute_profanity) and os.path.exists(output_clip_path):
+                try:
+                    from server.core.word_filter import find_profanity_timestamps, apply_bleep_or_mute
+                    swear_ts = find_profanity_timestamps(clip_segs)
+                    if swear_ts:
+                        censored_path = str(job_dir / f"clip_{idx}_censored.mp4")
+                        mode = "mute" if mute_profanity else "bleep"
+                        apply_bleep_or_mute(output_clip_path, censored_path, swear_ts, mode=mode)
+                        if os.path.exists(censored_path):
+                            import shutil
+                            shutil.move(censored_path, output_clip_path)
+                except Exception:
+                    pass
+
+            # Optional dead air removal
+            if remove_silence and os.path.exists(output_clip_path):
+                try:
+                    from server.core.silence_cutter import remove_silence as cut_dead_air
+                    tight_path = str(job_dir / f"clip_{idx}_tight.mp4")
+                    cut_dead_air(output_clip_path, tight_path)
+                    if os.path.exists(tight_path):
+                        import shutil
+                        shutil.move(tight_path, output_clip_path)
+                except Exception:
+                    pass
 
             results.append(
                 ClipResult(

@@ -337,6 +337,8 @@ async function startClipping() {
   const payload = {
     video_path: selectedVideo,
     vertical_crop: document.getElementById('vertical-crop').checked,
+    aspect_ratio: document.getElementById('clip-aspect-ratio') ? document.getElementById('clip-aspect-ratio').value : '9:16',
+    caption_style: document.getElementById('global-caption-preset') ? document.getElementById('global-caption-preset').value : 'viral_yellow',
     max_clips: parseInt(document.getElementById('max-clips').value) || 5,
     min_duration: parseFloat(document.getElementById('min-duration').value) || 20,
     max_duration: parseFloat(document.getElementById('max-duration').value) || 60,
@@ -344,6 +346,8 @@ async function startClipping() {
     use_audio_energy: document.getElementById('audio-energy').checked,
     use_llm: document.getElementById('use-llm').checked,
     burn_captions: document.getElementById('burn-captions').checked,
+    remove_silence: document.getElementById('remove-silence') ? document.getElementById('remove-silence').checked : false,
+    bleep_profanity: document.getElementById('censor-profanity') ? document.getElementById('censor-profanity').checked : false,
   };
 
   try {
@@ -431,7 +435,9 @@ function buildClipCard(clip, idx) {
       <div class="clip-hook">"${clip.hook_text}"</div>
       <div class="clip-actions" style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
         <button class="btn btn-small" onclick="openCaptionEditor(${idx})">✏️ Edit Captions</button>
-        <button class="btn btn-small" onclick="revealInFolder('${clip.output_file}')">📂 Open</button>
+        <button class="btn btn-small" onclick="quickCutSilence(${idx})" title="Auto-cut dead air pauses">✂️ Snip Silence</button>
+        <button class="btn btn-small" onclick="quickBleepClip(${idx})" title="Bleep or mute profanity">🔇 Bleep</button>
+        <button class="btn btn-small" onclick="revealInFolder('${clip.output_file.replace(/\\/g, '\\\\')}')">📂 Open</button>
         <select class="export-format-select clip-export-fmt" data-clip-idx="${idx}" title="Clip output format">
           <option value="mp4">📦 Export as MP4</option>
           <option value="mov">📦 Export as MOV</option>
@@ -683,7 +689,7 @@ document.getElementById('save-captions-btn')?.addEventListener('click', async ()
     return;
   }
 
-  const preset = document.getElementById('caption-preset')?.value || 'opus_yellow';
+  const preset = document.getElementById('caption-preset')?.value || 'viral_yellow';
   const outputPath = currentEditingClip.ass_path ? currentEditingClip.ass_path.replace(/\.ass$/i, '.srt') : '';
 
   try {
@@ -720,6 +726,58 @@ function revealInFolder(filePath) {
     alert(`Path copied to clipboard:\n${filePath}`);
   }
 }
+
+window.quickCutSilence = async function(clipIndex) {
+  const clip = generatedClips[clipIndex];
+  if (!clip) return;
+  try {
+    const res = await fetch(`${serverUrl}/tools/remove-silence`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video_path: clip.output_file }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      playSuccessSound();
+      alert(`✂️ Dead air removed! Saved ${data.time_saved}s (${data.original_duration}s -> ${data.cut_duration}s)`);
+      clip.output_file = data.output_path;
+      clip.duration = data.cut_duration;
+      showResults(generatedClips);
+    } else {
+      throw new Error(data.detail || 'Silence removal failed');
+    }
+  } catch (e) {
+    showError(e.message);
+  }
+};
+
+window.quickBleepClip = async function(clipIndex) {
+  const clip = generatedClips[clipIndex];
+  if (!clip) return;
+  try {
+    const res = await fetch(`${serverUrl}/tools/bleep-mute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        video_path: clip.output_file,
+        mode: 'bleep',
+        timestamps: clip.words ? clip.words.map(w => ({ word: w.word, start: w.start, end: w.end })) : [],
+      }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      playSuccessSound();
+      alert(`🔇 Bleep filter applied! (${data.message})`);
+      clip.output_file = data.output_path;
+      showResults(generatedClips);
+    } else {
+      throw new Error(data.detail || 'Bleeping failed');
+    }
+  } catch (e) {
+    showError(e.message);
+  }
+};
+
 
 function showError(message) {
   playErrorSound();

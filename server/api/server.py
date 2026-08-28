@@ -21,6 +21,8 @@ from server.models import (
     TrimRequest, TrimResponse, CustomRenderRequest,
     ExportMediaRequest, ExportMediaResponse, ExportCompileRequest, ExportCompileResponse,
     ExportStandaloneRequest, ExportStandaloneResponse,
+    DetectSilenceRequest, DetectSilenceResponse, RemoveSilenceRequest, RemoveSilenceResponse,
+    BleepMuteRequest, BleepMuteResponse, CaptionPresetInfo,
 )
 from server.core.pipeline import VideoClipperEngine
 from server.core.edit_chat import EditChat
@@ -97,6 +99,7 @@ def process_video(req: ProcessRequest):
             clips = ENGINE.process_video(
                 video_path=req.video_path,
                 vertical_crop=req.vertical_crop,
+                aspect_ratio=req.aspect_ratio,
                 max_clips=req.max_clips,
                 min_duration=req.min_duration,
                 max_duration=req.max_duration,
@@ -104,6 +107,11 @@ def process_video(req: ProcessRequest):
                 language=req.language,
                 use_audio_energy=req.use_audio_energy,
                 use_llm=req.use_llm,
+                burn_captions=req.burn_captions,
+                caption_style=req.caption_style or "viral_yellow",
+                remove_silence=req.remove_silence,
+                bleep_profanity=req.bleep_profanity,
+                mute_profanity=req.mute_profanity,
                 progress_callback=progress_callback,
             )
             JOBS[job_id]["clips"] = [c.model_dump() for c in clips]
@@ -323,26 +331,98 @@ def regenerate_subtitles(req: SubtitleRegenRequest):
     )
     generate_srt([seg], req.output_path)
 
-    preset_colors = {
-        "opus_yellow": ("Arial Black", "&H00FFFFFF", "&H0000FFFF", "&H00000000", 3),
-        "neon_green": ("Arial Black", "&H00FFFFFF", "&H0000FF00", "&H00000000", 3),
-        "bold_white": ("Arial", "&H00FFFFFF", "&H00FFD700", "&H00000000", 2),
-    }
-    font, primary, highlight, outline, border = preset_colors.get(
-        req.style_preset, preset_colors["opus_yellow"]
-    )
     ass_path = os.path.splitext(req.output_path)[0] + ".ass"
-    generate_animated_ass(
-        [seg], ass_path,
-        font_name=font, primary_color=primary,
-        highlight_color=highlight, outline_color=outline, outline_width=border,
-    )
+    generate_animated_ass([seg], ass_path, style_preset=req.style_preset)
 
     return ExportProjectResponse(
         export_path=req.output_path,
         format="srt",
         message=f"Regenerated subtitles at {req.output_path} (and {ass_path})",
     )
+
+@app.get("/caption-presets")
+def get_caption_presets():
+    """Returns the list of 20+ creator caption style presets."""
+    from server.core.caption_presets import get_available_presets
+    return get_available_presets()
+
+
+@app.post("/tools/detect-silence", response_model=DetectSilenceResponse)
+def api_detect_silence(req: DetectSilenceRequest):
+    """Find dead-air / silent intervals in video/audio."""
+    from server.core.silence_cutter import detect_silence_intervals
+    try:
+        intervals = detect_silence_intervals(
+            req.media_path,
+            noise_threshold_db=req.noise_threshold_db,
+            min_silence_duration=req.min_silence_duration,
+        )
+        total_sil = round(sum(i["duration"] for i in intervals), 2)
+        return DetectSilenceResponse(
+            intervals=intervals,
+            total_silence=total_sil,
+            silence_count=len(intervals),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/tools/remove-silence", response_model=RemoveSilenceResponse)
+def api_remove_silence(req: RemoveSilenceRequest):
+    """Auto-cut dead air silence from a video clip."""
+    from server.core.silence_cutter import remove_silence
+    try:
+        out_path = req.output_path
+        if not out_path:
+            p = Path(req.video_path)
+            out_path = str(p.parent / f"{p.stem}_tight{p.suffix}")
+        
+        result = remove_silence(
+            input_video=req.video_path,
+            output_video=out_path,
+            noise_threshold_db=req.noise_threshold_db,
+            min_silence_duration=req.min_silence_duration,
+            pad_seconds=req.pad_seconds,
+        )
+        return RemoveSilenceResponse(
+            output_path=result["output_path"],
+            original_duration=result["original_duration"],
+            cut_duration=result["cut_duration"],
+            time_saved=result["time_saved"],
+            silence_intervals=result.get("silence_intervals", []),
+            message=result["message"],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/tools/bleep-mute", response_model=BleepMuteResponse)
+def api_bleep_mute(req: BleepMuteRequest):
+    """Censor audio profanity or custom words with 1000Hz bleep or mute."""
+    from server.core.word_filter import apply_bleep_or_mute
+    try:
+        out_path = req.output_path
+        if not out_path:
+            p = Path(req.video_path)
+            out_path = str(p.parent / f"{p.stem}_censored{p.suffix}")
+        
+        ts = req.timestamps or []
+        result = apply_bleep_or_mute(
+            input_video=req.video_path,
+            output_video=out_path,
+            timestamps=ts,
+            mode=req.mode,
+            beep_freq=req.beep_freq,
+        )
+        return BleepMuteResponse(
+            output_path=result["output_path"],
+            censored_count=result["censored_count"],
+            mode=result["mode"],
+            message=result["message"],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 @app.post("/trim", response_model=TrimResponse)
 def create_manual_trim(req: TrimRequest):

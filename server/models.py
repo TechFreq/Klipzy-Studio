@@ -63,6 +63,7 @@ class ClipResult(BaseModel):
 class ProcessRequest(BaseModel):
     video_path: str
     vertical_crop: bool = True
+    aspect_ratio: Optional[str] = "9:16"  # "9:16" | "1:1" | "4:5" | "16:9" | "full"
     max_clips: int = 5
     min_duration: float = 20.0
     max_duration: float = 60.0
@@ -71,7 +72,10 @@ class ProcessRequest(BaseModel):
     use_audio_energy: bool = True
     use_llm: bool = False
     burn_captions: bool = True
-    caption_style: Optional[str] = "karaoke"
+    caption_style: Optional[str] = "viral_yellow"
+    remove_silence: bool = False
+    bleep_profanity: bool = False
+    mute_profanity: bool = False
 
 
 class ProcessResponse(BaseModel):
@@ -97,7 +101,7 @@ class ExportProjectResponse(BaseModel):
 class SubtitleRegenRequest(BaseModel):
     output_path: str
     words: List[dict] = Field(default_factory=list)
-    style_preset: str = "opus_yellow"
+    style_preset: str = "viral_yellow"
 
 
 class ChatRequest(BaseModel):
@@ -185,3 +189,58 @@ class ExportStandaloneResponse(BaseModel):
     export_path: str
     asset_type: str
     message: str
+
+
+class DetectSilenceRequest(BaseModel):
+    media_path: str
+    noise_threshold_db: float = -30.0
+    min_silence_duration: float = 0.6
+
+
+class DetectSilenceResponse(BaseModel):
+    intervals: List[dict] = Field(default_factory=list)
+    total_silence: float
+    silence_count: int
+
+
+class RemoveSilenceRequest(BaseModel):
+    video_path: str
+    output_path: Optional[str] = None
+    noise_threshold_db: float = -30.0
+    min_silence_duration: float = 0.6
+    pad_seconds: float = 0.08
+
+
+class RemoveSilenceResponse(BaseModel):
+    output_path: str
+    original_duration: float
+    cut_duration: float
+    time_saved: float
+    silence_intervals: List[dict] = Field(default_factory=list)
+    message: str
+
+
+class BleepMuteRequest(BaseModel):
+    video_path: str
+    output_path: Optional[str] = None
+    mode: str = "bleep"  # "bleep" | "mute"
+    timestamps: Optional[List[dict]] = None
+    custom_words: Optional[List[str]] = None
+    beep_freq: int = 1000
+
+
+class BleepMuteResponse(BaseModel):
+    output_path: str
+    censored_count: int
+    mode: str
+    message: str
+
+
+class CaptionPresetInfo(BaseModel):
+    id: str
+    name: str
+    description: str
+    font_name: str
+    font_size: int
+    primary_color: str
+    highlight_color: str

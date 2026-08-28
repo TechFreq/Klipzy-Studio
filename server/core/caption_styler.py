@@ -1,41 +1,62 @@
 """
-OpusClip / OpenClipper style animated caption generator.
+Animated caption generator with 20+ professional styling presets.
 Produces Advanced SubStation Alpha (.ass) subtitles with word-by-word karaoke highlights.
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pathlib import Path
+from server.core.caption_presets import CAPTION_PRESETS, get_available_presets
 
 
 def generate_animated_ass(
     segments: List[Any],
     output_ass_path: str,
-    font_name: str = "Arial Black",
-    font_size: int = 24,
-    primary_color: str = "&H00FFFFFF",      # White
-    highlight_color: str = "&H0000FFFF",    # Yellow highlight
-    outline_color: str = "&H00000000",      # Black outline
-    outline_width: int = 3
+    style_preset: str = "viral_yellow",
+    font_name: Optional[str] = None,
+    font_size: Optional[int] = None,
+    primary_color: Optional[str] = None,
+    highlight_color: Optional[str] = None,
+    outline_color: Optional[str] = None,
+    outline_width: Optional[int] = None,
+    chunk_size: int = 4,
+    play_res_x: int = 1080,
+    play_res_y: int = 1920,
 ) -> str:
     """
     Generates ASS subtitle with karaoke tags (\\k) for active-word highlighting.
+    Supports 20+ preset styles with individual property overrides.
     """
+    preset = CAPTION_PRESETS.get(style_preset, CAPTION_PRESETS["viral_yellow"])
+
+    f_name = font_name or preset.get("font_name", "Arial Black")
+    f_size = font_size or preset.get("font_size", 26)
+    p_color = primary_color or preset.get("primary_color", "&H00FFFFFF")
+    h_color = highlight_color or preset.get("highlight_color", "&H0000FFFF")
+    o_color = outline_color or preset.get("outline_color", "&H00000000")
+    b_color = preset.get("back_color", "&H80000000")
+    o_width = outline_width if outline_width is not None else preset.get("outline_width", 3)
+    s_width = preset.get("shadow_width", 2)
+    border_style = preset.get("border_style", 1)
+    margin_v = preset.get("margin_v", 240)
+
     header = f"""[Script Info]
 ScriptType: v4.00+
-PlayResX: 1080
-PlayResY: 1920
+PlayResX: {play_res_x}
+PlayResY: {play_res_y}
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,{font_name},{font_size},{primary_color},{highlight_color},{outline_color},&H80000000,-1,0,0,0,100,100,1,0,1,{outline_width},2,2,40,40,240,1
+Style: Default,{f_name},{f_size},{p_color},{h_color},{o_color},{b_color},-1,0,0,0,100,100,1,0,{border_style},{o_width},{s_width},2,40,40,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
     def fmt_ass_time(seconds: float) -> str:
-        cs = int((seconds % 1) * 100)
+        cs = int(round((seconds % 1) * 100))
+        if cs >= 100:
+            cs = 99
         s = int(seconds) % 60
         m = (int(seconds) // 60) % 60
         h = int(seconds) // 3600
@@ -49,11 +70,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             # Fallback if no word timestamps
             start_str = fmt_ass_time(seg.start)
             end_str = fmt_ass_time(seg.end)
-            event_lines.append(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{seg.text.upper()}")
+            clean_text = str(seg.text).upper().replace("{", "").replace("}", "")
+            event_lines.append(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{clean_text}")
             continue
 
         # Group words into chunks of 3-5 words for fast-paced vertical shorts reading
-        chunk_size = 4
         for i in range(0, len(words), chunk_size):
             chunk = words[i:i + chunk_size]
             chunk_start = chunk[0].start
@@ -61,8 +82,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             
             karaoke_text = ""
             for w in chunk:
-                dur_cs = max(1, int((w.end - w.start) * 100))
-                karaoke_text += f"{{\\k{dur_cs}}}{w.word.upper()} "
+                dur_cs = max(1, int(round((w.end - w.start) * 100)))
+                w_text = getattr(w, "word", str(w)).replace("{", "").replace("}", "").upper()
+                karaoke_text += f"{{\\k{dur_cs}}}{w_text} "
 
             start_str = fmt_ass_time(chunk_start)
             end_str = fmt_ass_time(chunk_end)
@@ -73,3 +95,4 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         f.write(header + "\n".join(event_lines))
 
     return output_ass_path
+

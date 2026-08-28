@@ -100,7 +100,7 @@ def test_fcpxml_export(tmp_path):
 def test_capcut_draft_export(tmp_path):
     from server.core.export_tools import export_capcut_draft
     clips = [
-        {"title": "Opus Clip 1", "start_time": 0.0, "end_time": 25.0, "hook_text": "Secret tips"}
+        {"title": "Clip 1", "start_time": 0.0, "end_time": 25.0, "hook_text": "Secret tips"}
     ]
     capcut_out = tmp_path / "capcut.json"
     export_capcut_draft("dummy_video.mp4", clips, str(capcut_out))
@@ -113,7 +113,7 @@ def test_capcut_draft_export(tmp_path):
 def test_animated_ass_generation(tmp_path):
     from server.core.caption_styler import generate_animated_ass
     from server.models import TranscriptSegment, WordTimestamp
-    
+
     seg = TranscriptSegment(
         id=1,
         start=0.0,
@@ -131,3 +131,67 @@ def test_animated_ass_generation(tmp_path):
     content = ass_out.read_text(encoding="utf-8")
     assert "[Script Info]" in content
     assert "\\k" in content
+
+
+def test_caption_presets_library(tmp_path):
+    from server.core.caption_presets import CAPTION_PRESETS, get_available_presets
+    from server.core.caption_styler import generate_animated_ass
+
+    presets = get_available_presets()
+    assert len(presets) >= 20, f"Expected 20+ presets, found {len(presets)}"
+    
+    seg = TranscriptSegment(
+        id=1,
+        start=0.0,
+        end=3.0,
+        text="Viral caption preset test",
+        words=[
+            WordTimestamp(word="Viral", start=0.0, end=1.0),
+            WordTimestamp(word="caption", start=1.0, end=2.0),
+            WordTimestamp(word="test", start=2.0, end=3.0),
+        ]
+    )
+    for p in ["viral_yellow", "neon_green", "cyberpunk_cyan", "mrbeast_impact", "monochrome_chic", "gaming_rgb"]:
+        out = tmp_path / f"test_{p}.ass"
+        generate_animated_ass([seg], str(out), style_preset=p)
+        assert out.exists()
+        content = out.read_text(encoding="utf-8")
+        assert "\\k" in content
+        assert "Default" in content
+
+
+def test_silence_speech_segment_calculation():
+    from server.core.silence_cutter import calculate_speech_segments
+    silences = [
+        {"start": 3.0, "end": 6.0, "duration": 3.0},
+        {"start": 12.0, "end": 15.0, "duration": 3.0},
+    ]
+    speech = calculate_speech_segments(total_duration=20.0, silence_intervals=silences, pad_seconds=0.1)
+    assert len(speech) == 3
+    assert speech[0][0] == 0.0
+    assert speech[0][1] > 2.5
+    assert speech[2][1] == 20.0
+
+
+def test_profanity_filter_detection():
+    from server.core.word_filter import sanitize_text, find_profanity_timestamps
+    text = "This is a fucking crazy and holy shit podcast"
+    sanitized = sanitize_text(text)
+    assert "f*****g" in sanitized or "f**k" in sanitized
+    assert "s**t" in sanitized
+
+    seg = TranscriptSegment(
+        id=1,
+        start=0.0,
+        end=4.0,
+        text="holy shit that is wild",
+        words=[
+            WordTimestamp(word="holy", start=0.0, end=0.8),
+            WordTimestamp(word="shit", start=0.8, end=1.5),
+            WordTimestamp(word="that", start=1.5, end=2.0),
+        ]
+    )
+    swear_ts = find_profanity_timestamps([seg])
+    assert len(swear_ts) == 1
+    assert swear_ts[0]["word"] == "shit"
+    assert swear_ts[0]["start"] == 0.8

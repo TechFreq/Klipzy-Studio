@@ -12,7 +12,7 @@ A **local-first, open-source AI video clipper by TechFreq** for Windows and macO
 |---------|-------------|
 | 🎯 **AI Virality & Hook Detection** | Finds the most engaging moments with Virality Scores, Hook strength, and Trend breakdowns |
 | ⚡ **Hardware Acceleration** | Auto GPU video encoding acceleration (NVIDIA NVENC, Apple Silicon VideoToolbox, CPU x264 fallback) |
-| 🎨 **OpusClip-Style Captions** | Word-by-word active karaoke highlights (`.ass` format) with dynamic color styling |
+| 🎨 **Viral Dynamic Captions** | Word-by-word active karaoke highlights (`.ass` format) with dynamic color styling |
 | ✏️ **Interactive Caption Editor** | Live word timestamp adjusting and subtitle customization |
 | 🎬 **NLE Project Exports** | Export timeline directly to **Adobe Premiere Pro** (XML), **DaVinci Resolve** (EDL), or **CapCut** (Draft) |
 | 🔊 **Audio Energy Detection** | Detects excitement spikes and loudness peaks to catch dramatic moments |
