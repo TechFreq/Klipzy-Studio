@@ -18,8 +18,10 @@ function findPython() {
   // Dev: venv at repo root (same location as `npm run dev` uses).
   // Packaged: venv + server copied to resourcesPath via electron-builder extraResources.
   const candidates = [
-    path.join(__dirname, '..', '..', 'venv', 'Scripts', 'python.exe'),   // Windows dev venv
-    path.join(__dirname, '..', '..', 'venv', 'bin', 'python'),           // macOS/Linux dev venv
+    path.join(__dirname, '..', '..', '.venv', 'Scripts', 'python.exe'),  // Windows dev venv
+    path.join(__dirname, '..', '..', '.venv', 'bin', 'python'),          // macOS/Linux dev venv
+    path.join(__dirname, '..', '..', 'venv', 'Scripts', 'python.exe'),   // Legacy Windows dev venv
+    path.join(__dirname, '..', '..', 'venv', 'bin', 'python'),           // Legacy macOS/Linux dev venv
     path.join(process.resourcesPath, 'venv', 'Scripts', 'python.exe'),   // Windows packaged
     path.join(process.resourcesPath, 'venv', 'bin', 'python'),           // macOS/Linux packaged
     'python',
@@ -55,26 +57,33 @@ async function startServer() {
         env: { ...process.env, PYTHONUNBUFFERED: '1' },
       });
 
+      let spawnError = null;
+      serverProcess.once('error', (error) => {
+        spawnError = error;
+        console.error('Failed to start Python with', py, error.message);
+      });
       serverProcess.stdout.on('data', (d) => console.log('[server]', d.toString().trim()));
       serverProcess.stderr.on('data', (d) => console.error('[server-err]', d.toString().trim()));
 
       // Wait for server to be ready
-      const ready = await waitForServer();
+      const ready = await waitForServer(30000, () => spawnError !== null);
       if (ready) {
         console.log('Python server started.');
         return;
       }
+      if (serverProcess && !serverProcess.killed) serverProcess.kill();
     } catch (e) {
-      console.error('Failed to start with', py, e);
+      console.error('Failed to start with', py, e.message || e);
     }
   }
   console.error('Could not start Python server. Is Python + deps installed?');
 }
 
-function waitForServer(timeoutMs = 30000) {
+function waitForServer(timeoutMs = 30000, hasSpawnError = () => false) {
   return new Promise((resolve) => {
     const start = Date.now();
     const check = async () => {
+      if (hasSpawnError()) return resolve(false);
       try {
         const res = await fetch(`http://127.0.0.1:${SERVER_PORT}/health`);
         if (res.ok) return resolve(true);
