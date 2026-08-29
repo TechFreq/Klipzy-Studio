@@ -22,7 +22,12 @@ from server.models import ClipCandidate, ClipResult, TranscriptSegment
 
 class VideoClipperEngine:
     def __init__(self, output_dir: str = "output", whisper_model: str = "base"):
-        self.output_dir = Path(output_dir)
+        # Always anchor generated media to the repository, not the process cwd.
+        # This keeps returned paths valid when FFmpeg temporarily changes cwd for subtitles.
+        configured_dir = Path(output_dir)
+        if not configured_dir.is_absolute():
+            configured_dir = Path(__file__).resolve().parents[2] / configured_dir
+        self.output_dir = configured_dir.resolve()
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         self.transcriber = Transcriber(model_size=whisper_model)

@@ -6,6 +6,8 @@ let selectedVideo = null;
 let pollTimer = null;
 let generatedClips = [];
 let currentEditingClip = null;
+let currentProjectId = null;
+const PROJECTS_KEY = 'klipzy.projects.v1';
 
 // Manual trim state
 let trimState = {
@@ -14,6 +16,75 @@ let trimState = {
   end: 0,
   camVideo: null,
 };
+
+// ------------------------------------------------------------------
+// Custom UI Dialogs (Styled Alert & Confirm Modal / Toast)
+// ------------------------------------------------------------------
+function showToast(message, type = 'info') {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `<span>${escapeHtml(message)}</span>`;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.animation = 'toast-out 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards';
+    setTimeout(() => toast.remove(), 260);
+  }, 3200);
+}
+
+function showCustomDialog({ title = 'Notification', message = '', isConfirm = false }) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('dialog-modal');
+    const titleEl = document.getElementById('dialog-title');
+    const msgEl = document.getElementById('dialog-message');
+    const cancelBtn = document.getElementById('dialog-cancel-btn');
+    const confirmBtn = document.getElementById('dialog-confirm-btn');
+    const closeBtn = document.getElementById('dialog-close');
+
+    if (!modal) {
+      if (isConfirm) resolve(window.confirm(message));
+      else { window.alert(message); resolve(true); }
+      return;
+    }
+
+    titleEl.textContent = title;
+    msgEl.textContent = message;
+
+    if (isConfirm) {
+      cancelBtn.classList.remove('hidden');
+      confirmBtn.textContent = 'Confirm';
+    } else {
+      cancelBtn.classList.add('hidden');
+      confirmBtn.textContent = 'OK';
+    }
+
+    modal.classList.remove('hidden');
+
+    function cleanup(val) {
+      modal.classList.add('hidden');
+      confirmBtn.removeEventListener('click', onConfirm);
+      cancelBtn.removeEventListener('click', onCancel);
+      closeBtn.removeEventListener('click', onCancel);
+      resolve(val);
+    }
+
+    function onConfirm() { cleanup(true); }
+    function onCancel() { cleanup(false); }
+
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+    closeBtn.addEventListener('click', onCancel);
+  });
+}
+
+function showAlert(message, title = 'Notification') {
+  return showCustomDialog({ title, message, isConfirm: false });
+}
+
+function showConfirm(message, title = 'Please Confirm') {
+  return showCustomDialog({ title, message, isConfirm: true });
+}
 
 // ------------------------------------------------------------------
 // Init
@@ -25,6 +96,7 @@ async function init() {
   checkHealth();
   bindEvents();
   loadSetupPanel();
+  loadProjectList();
 }
 
 function bindEvents() {
@@ -56,6 +128,11 @@ function bindEvents() {
   });
 
   document.getElementById('change-file').addEventListener('click', () => fileInput.click());
+  document.getElementById('save-project').addEventListener('click', saveCurrentProject);
+  document.getElementById('project-list').addEventListener('change', (e) => {
+    if (e.target.value) openProject(e.target.value);
+  });
+  document.getElementById('delete-project').addEventListener('click', deleteCurrentProject);
 
   // Start clipping
   document.getElementById('start-clipping').addEventListener('click', startClipping);
@@ -67,6 +144,7 @@ function bindEvents() {
     const isReaction = e.target.value === 'game_reaction';
     document.getElementById('cam-options').classList.toggle('hidden', !isReaction);
     // Reaction PiP is full-frame, so no smart-crop offset needed.
+    applyTrimPreviewRatio(e.target.value);
     document.getElementById('trim-video').style.display = '';
   });
   document.getElementById('pick-cam-btn').addEventListener('click', pickCameraClip);
@@ -76,6 +154,7 @@ function bindEvents() {
       const third = trimState.duration / 3;
       trimState.start = 0;
       trimState.end = trimState.duration;
+      applyTrimPreviewRatio();
       updateTrimUI();
     }
   });
@@ -89,6 +168,12 @@ function bindEvents() {
 
   // Export-as format actions
   document.getElementById('export-compile')?.addEventListener('click', exportCompileReel);
+
+  // Caption preset select inside the caption editor modal refreshes the preview.
+  const captionPresetSelect = document.getElementById('caption-preset');
+  if (captionPresetSelect) {
+    captionPresetSelect.addEventListener('change', refreshCaptionPreview);
+  }
 }
 
 // ------------------------------------------------------------------
@@ -102,6 +187,13 @@ async function checkHealth() {
     statusEl.innerHTML = `<span class="dot ok"></span> Server ready`;
     if (!data.ffmpeg_available) {
       statusEl.innerHTML = `<span class="dot error"></span> FFmpeg missing`;
+  // Caption preset select inside manual trim refreshes preview
+  const trimCaptionPresetSelect = document.getElementById('trim-caption-preset');
+  if (trimCaptionPresetSelect) {
+    trimCaptionPresetSelect.addEventListener('change', applyTrimCaptionStyle);
+    applyTrimCaptionStyle();
+  }
+
     }
   } catch (e) {
     statusEl.innerHTML = `<span class="dot error"></span> Server offline`;
@@ -113,9 +205,15 @@ async function checkHealth() {
 // ------------------------------------------------------------------
 function selectVideoFile(file) {
   selectedVideo = file.path;
+  generatedClips = [];
+  currentProjectId = null;
   document.getElementById('file-name').textContent = file.name;
   document.getElementById('file-info').classList.remove('hidden');
+  document.getElementById('project-bar').classList.remove('hidden');
+  document.getElementById('project-name').value = file.name.replace(/\.[^.]+$/, '');
   document.getElementById('start-clipping').disabled = false;
+  document.getElementById('clips-grid').innerHTML = '';
+  document.getElementById('results').classList.add('hidden');
 
   // Initialize the manual trimmer with this source.
   const video = document.getElementById('trim-video');
@@ -123,6 +221,101 @@ function selectVideoFile(file) {
   trimState.camVideo = null;
   document.getElementById('trim-panel').classList.remove('hidden');
   document.getElementById('cam-path').value = '';
+}
+
+function readProjects() {
+  try { return JSON.parse(localStorage.getItem(PROJECTS_KEY) || '[]'); }
+  catch (_) { return []; }
+}
+
+function writeProjects(projects) {
+  localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects));
+}
+
+function loadProjectList() {
+  const select = document.getElementById('project-list');
+  if (!select) return;
+  select.innerHTML = '<option value="">Open saved project…</option>';
+  readProjects().sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')).forEach((project) => {
+    const option = document.createElement('option');
+    option.value = project.id;
+    option.textContent = project.name || 'Untitled project';
+    select.appendChild(option);
+  });
+}
+
+function saveProjectManifest(showMessage = false) {
+  if (!selectedVideo) return;
+  const name = document.getElementById('project-name').value.trim() || 'Untitled project';
+  const projects = readProjects();
+  const project = {
+    id: currentProjectId || `project-${Date.now()}`,
+    name,
+    source: selectedVideo,
+    sourceName: document.getElementById('file-name').textContent,
+    clips: generatedClips,
+    updatedAt: new Date().toISOString(),
+  };
+  currentProjectId = project.id;
+  const index = projects.findIndex((item) => item.id === project.id);
+  if (index >= 0) projects[index] = project; else projects.push(project);
+  writeProjects(projects);
+  loadProjectList();
+  document.getElementById('project-list').value = project.id;
+  if (showMessage) showAlert(`✅ Project saved: ${name}`);
+}
+
+function saveCurrentProject() {
+  if (!selectedVideo) return showAlert('Choose a video before saving a project.');
+  saveProjectManifest(true);
+}
+
+function saveCurrentProjectSilently() {
+  saveProjectManifest(false);
+}
+
+function openProject(id) {
+  const project = readProjects().find((item) => item.id === id);
+  if (!project) return;
+  currentProjectId = project.id;
+  selectedVideo = project.source;
+  generatedClips = Array.isArray(project.clips) ? project.clips : [];
+  document.getElementById('file-name').textContent = project.sourceName || project.source;
+  document.getElementById('file-info').classList.remove('hidden');
+  document.getElementById('project-bar').classList.remove('hidden');
+  document.getElementById('project-name').value = project.name || '';
+  document.getElementById('start-clipping').disabled = !selectedVideo;
+  const video = document.getElementById('trim-video');
+  video.src = `file://${selectedVideo}`;
+  document.getElementById('trim-panel').classList.remove('hidden');
+  showResults(generatedClips);
+  document.getElementById('project-list').value = id;
+}
+
+async function deleteCurrentProject() {
+  if (!currentProjectId) return showAlert('Save this project first, then it can be deleted.');
+  const projects = readProjects();
+  const project = projects.find((item) => item.id === currentProjectId);
+  const confirmed = await showConfirm(`Delete project “${project.name}” and its generated files?`);
+  if (!project || !confirmed) return;
+  const paths = (project.clips || []).map((clip) => clip.output_file).filter(Boolean);
+  try {
+    await fetch(`${serverUrl}/project/delete`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths }),
+    });
+  } catch (_) { /* local project deletion still proceeds */ }
+  writeProjects(projects.filter((item) => item.id !== currentProjectId));
+  currentProjectId = null;
+  generatedClips = [];
+  selectedVideo = null;
+  document.getElementById('project-name').value = '';
+  document.getElementById('project-bar').classList.add('hidden');
+  document.getElementById('file-info').classList.add('hidden');
+  document.getElementById('trim-panel').classList.add('hidden');
+  document.getElementById('results').classList.add('hidden');
+  document.getElementById('clips-grid').innerHTML = '';
+  loadProjectList();
 }
 
 // ------------------------------------------------------------------
@@ -163,19 +356,38 @@ function setupTrimTimeline() {
     paint(document.getElementById('trim-selection'), timeToPct(trimState.start), timeToPct(trimState.end));
   };
 
+  // Coalesce seeks to a single update per animation frame: seeking on every
+  // mousemove is what made the preview feel laggy during a drag.
+  function createSeeker() {
+    let raf = 0;
+    let pending = null;
+    const apply = () => {
+      raf = 0;
+      if (pending != null) {
+        const t = pending;
+        pending = null;
+        video.currentTime = t;
+      }
+    };
+    return (t) => {
+      pending = t;
+      if (!raf) raf = requestAnimationFrame(() => apply());
+    };
+  }
+  const seekTo = createSeeker();
+
   // Click on empty timeline seeks the video.
   timeline.addEventListener('click', (e) => {
     if (e.target === timeline) {
-      video.currentTime = xToTime(e.clientX);
+      seekTo(xToTime(e.clientX));
     }
   });
 
   // Drag anywhere non-handle seeks playhead.
   timeline.addEventListener('mousedown', (e) => {
     if (e.target !== handleIn && e.target !== handleOut) {
-      const seek = () => { video.currentTime = xToTime(e.clientX); };
-      seek();
-      const move = (ev) => { ev.preventDefault(); seek(); };
+      const move = (ev) => { ev.preventDefault(); seekTo(xToTime(ev.clientX)); };
+      move(e);
       const up = () => {
         window.removeEventListener('mousemove', move);
         window.removeEventListener('mouseup', up);
@@ -185,26 +397,39 @@ function setupTrimTimeline() {
     }
   });
 
-  // Drag in/out handles.
+  // Drag handles with pointer capture. DOM updates and preview seeks are both
+  // coalesced, avoiding layout/decoder work for every raw mouse event.
   const handleDrag = (which) => (e) => {
+    e.preventDefault();
     e.stopPropagation();
+    const handle = e.currentTarget;
     const move = (ev) => {
-      ev.preventDefault();
-      let t = xToTime(ev.clientX);
+      const t = xToTime(ev.clientX);
       if (which === 'in') trimState.start = Math.min(t, trimState.end - 0.1);
       else trimState.end = Math.max(t, trimState.start + 0.1);
-      paint(document.getElementById('trim-selection'), timeToPct(trimState.start), timeToPct(trimState.end));
+      seekTo(which === 'in' ? trimState.start : trimState.end);
+      if (!handleDrag.paintRaf) {
+        handleDrag.paintRaf = requestAnimationFrame(() => {
+          handleDrag.paintRaf = 0;
+          paint(document.getElementById('trim-selection'), timeToPct(trimState.start), timeToPct(trimState.end));
+        });
+      }
     };
     const up = () => {
-      window.removeEventListener('mousemove', move);
-      window.removeEventListener('mouseup', up);
+      handle.releasePointerCapture?.(e.pointerId);
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', up);
+      handle.removeEventListener('pointercancel', up);
     };
-    window.addEventListener('mousemove', move);
-    window.addEventListener('mouseup', up);
+    handle.setPointerCapture?.(e.pointerId);
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', up);
+    handle.addEventListener('pointercancel', up);
+    move(e);
   };
 
-  handleIn.addEventListener('mousedown', handleDrag('in'));
-  handleOut.addEventListener('mousedown', handleDrag('out'));
+  handleIn.addEventListener('pointerdown', handleDrag('in'));
+  handleOut.addEventListener('pointerdown', handleDrag('out'));
 
   // Keep playhead in sync while video plays.
   video.addEventListener('timeupdate', () => {
@@ -219,6 +444,14 @@ function fmtTrimTime(seconds) {
   const s = Math.floor(seconds % 60);
   const tenths = Math.floor((seconds % 1) * 10);
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${tenths}`;
+}
+
+// Mirror the selected output ratio in the preview box.
+function applyTrimPreviewRatio() {
+  const layout = document.getElementById('trim-layout').value;
+  const video = document.getElementById('trim-video');
+  video.classList.toggle('trim-vertical', layout === 'vertical');
+  video.classList.toggle('trim-wide', layout === 'full');
 }
 
 function previewTrimSelection() {
@@ -260,11 +493,11 @@ async function pickCameraClip() {
 async function addTrimmedClip() {
   if (!selectedVideo) return;
   if (!trimState.duration) {
-    alert('Please wait for the video to finish loading first.');
+    showAlert('Please wait for the video to finish loading first.');
     return;
   }
   if (trimState.end - trimState.start < 1) {
-    alert('Please select at least 1 second of footage.');
+    showAlert('Please select at least 1 second of footage.');
     return;
   }
 
@@ -309,12 +542,13 @@ async function addTrimmedClip() {
     };
     generatedClips.push(clip);
     appendClipCard(clip, generatedClips.length - 1);
+    saveCurrentProjectSilently();
     document.getElementById('results').classList.remove('hidden');
     playSuccessSound();
-    alert('✅ Trimmed clip rendered!');
+    showAlert('✅ Trimmed clip rendered!');
   } catch (err) {
     playErrorSound();
-    alert(`Trim failed: ${err.message || err}`);
+    showAlert(`Trim failed: ${err.message || err}`);
   } finally {
     btn.disabled = false;
     btn.textContent = '➕ Add Trimmed Clip';
@@ -396,7 +630,8 @@ function pollJob(jobId) {
 // ------------------------------------------------------------------
 function showResults(clips) {
   playSuccessSound();
-  generatedClips = clips;
+  generatedClips = clips || [];
+  saveCurrentProjectSilently();
   const btn = document.getElementById('start-clipping');
   btn.disabled = false;
   btn.textContent = '🚀 Start Clipping';
@@ -416,40 +651,82 @@ function showResults(clips) {
 function buildClipCard(clip, idx) {
   const card = document.createElement('div');
   card.className = 'clip-card';
+  card.dataset.clipIdx = String(idx);
 
   const v = clip.virality || { hook_score: 8.5, flow_score: 8.0, engagement_score: 9.0, trend_potential: 'High' };
+  const title = clip.title || (clip.hook_text ? clip.hook_text.slice(0, 48) : 'Highlight');
+  const desc = clip.hook_text || clip.reason || 'AI-selected moment with strong virality signals.';
+  const score = clip.score != null ? Number(clip.score).toFixed(1) : '–';
 
   card.innerHTML = `
-    <video controls src="file://${clip.output_file}"></video>
+    <video controls preload="metadata"></video>
     <div class="clip-info">
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <div class="clip-title">${clip.title}</div>
-        <span class="virality-badge">🔥 Virality: ${clip.score}/10</span>
+      <div class="clip-headline">
+        <div class="clip-title">${escapeHtml(title)}</div>
+        <span class="virality-badge">🔥 Virality: ${score}/10</span>
       </div>
       <div class="virality-metrics">
-        <span class="metric-pill">Hook: <strong>${v.hook_score}/10</strong></span>
-        <span class="metric-pill">Flow: <strong>${v.flow_score}/10</strong></span>
-        <span class="metric-pill">Trend: <strong>${v.trend_potential}</strong></span>
+        <span class="metric-pill">Hook: <strong>${escapeHtml(String(v.hook_score))}</strong></span>
+        <span class="metric-pill">Flow: <strong>${escapeHtml(String(v.flow_score))}</strong></span>
+        <span class="metric-pill">Trend: <strong>${escapeHtml(String(v.trend_potential))}</strong></span>
       </div>
-      <div class="clip-meta">${clip.duration}s duration</div>
-      <div class="clip-hook">"${clip.hook_text}"</div>
-      <div class="clip-actions" style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
-        <button class="btn btn-small" onclick="openCaptionEditor(${idx})">✏️ Edit Captions</button>
-        <button class="btn btn-small" onclick="quickCutSilence(${idx})" title="Auto-cut dead air pauses">✂️ Snip Silence</button>
-        <button class="btn btn-small" onclick="quickBleepClip(${idx})" title="Bleep or mute profanity">🔇 Bleep</button>
-        <button class="btn btn-small" onclick="revealInFolder('${clip.output_file.replace(/\\/g, '\\\\')}')">📂 Open</button>
-        <select class="export-format-select clip-export-fmt" data-clip-idx="${idx}" title="Clip output format">
-          <option value="mp4">📦 Export as MP4</option>
-          <option value="mov">📦 Export as MOV</option>
-          <option value="mkv">📦 Export as MKV</option>
-          <option value="webm">📦 Export as WebM</option>
-          <option value="gif">📦 Export as GIF</option>
-        </select>
-        <button class="btn btn-small btn-export" data-clip-idx="${idx}" onclick="exportSingleClip(${idx})">🚀 Export</button>
-      </div>
+      <div class="clip-meta">${escapeHtml(String(clip.duration))}s duration</div>
+      <div class="clip-desc">${escapeHtml(desc)}</div>
+    </div>
+    <div class="clip-actions">
+      <button class="btn btn-small" data-action="edit-captions">✏️ Edit Captions</button>
+      <button class="btn btn-small" data-action="snip-silence" title="Auto-cut dead air pauses">✂️ Snip Silence</button>
+      <button class="btn btn-small" data-action="bleep" title="Bleep or mute profanity">🔇 Bleep</button>
+      <button class="btn btn-small" data-action="open-folder">📂 Open</button>
+      <button class="btn btn-small btn-danger" data-action="delete" title="Remove this clip">🗑 Delete</button>
+      <select class="export-format-select clip-export-fmt" data-clip-idx="${idx}" title="Clip output format">
+        <option value="mp4">📦 MP4</option>
+        <option value="mov">📦 MOV</option>
+        <option value="mkv">📦 MKV</option>
+        <option value="webm">📦 WebM</option>
+        <option value="gif">📦 GIF</option>
+      </select>
+      <button class="btn btn-small btn-export" data-action="export" data-clip-idx="${idx}">🚀 Export</button>
     </div>
   `;
+
+  const video = card.querySelector('video');
+  video.src = `file://${clip.output_file}`;
+
+  card.addEventListener('click', (e) => {
+    const actionBtn = e.target.closest('[data-action]');
+    if (!actionBtn) return;
+    const idx2 = parseInt(card.dataset.clipIdx, 10);
+    switch (actionBtn.dataset.action) {
+      case 'edit-captions': openCaptionEditor(idx2); break;
+      case 'snip-silence': quickCutSilence(idx2); break;
+      case 'bleep': quickBleepClip(idx2); break;
+      case 'open-folder': revealInFolder(clip.output_file); break;
+      case 'export': exportSingleClip(idx2); break;
+    }
+  });
+
+  const deleteBtn = card.querySelector('[data-action="delete"]');
+  deleteBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const confirmed = await showConfirm(`Delete "${title || 'this clip'}" from the grid?`);
+    if (!confirmed) return;
+    deleteClip(idx);
+  });
+
   return card;
+}
+
+function deleteClip(idx) {
+  if (!generatedClips.length) return;
+  generatedClips.splice(idx, 1);
+  saveCurrentProjectSilently();
+  const grid = document.getElementById('clips-grid');
+  grid.innerHTML = '';
+  generatedClips.forEach((clip, i) => grid.appendChild(buildClipCard(clip, i)));
+  if (!generatedClips.length) {
+    document.getElementById('results').classList.add('hidden');
+  }
 }
 
 function appendClipCard(clip, idx) {
@@ -463,7 +740,7 @@ function appendClipCard(clip, idx) {
 async function exportProject(format) {
   if (!selectedVideo || !generatedClips.length) {
     playErrorSound();
-    alert("Please generate clips first before exporting a project timeline.");
+    showAlert("Please generate clips first before exporting a project timeline.");
     return;
   }
 
@@ -481,14 +758,14 @@ async function exportProject(format) {
     const data = await res.json();
     if (res.ok) {
       playSuccessSound();
-      alert(`✅ ${data.message}\nSaved at: ${data.export_path}`);
+      showAlert(`✅ ${data.message}\nSaved at: ${data.export_path}`);
     } else {
       playErrorSound();
-      alert(`Export failed: ${data.detail}`);
+      showAlert(`Export failed: ${data.detail}`);
     }
   } catch (err) {
     playErrorSound();
-    alert(`Export error: ${err.message}`);
+    showAlert(`Export error: ${err.message}`);
   }
 }
 
@@ -502,7 +779,7 @@ document.getElementById('export-capcut')?.addEventListener('click', () => export
 async function exportStandaloneAsset() {
   if (!selectedVideo) {
     playErrorSound();
-    alert("Please select and load a video file first.");
+    showAlert("Please select and load a video file first.");
     return;
   }
   const sel = document.getElementById('standalone-asset');
@@ -525,14 +802,14 @@ async function exportStandaloneAsset() {
     const data = await res.json();
     if (res.ok) {
       playSuccessSound();
-      alert(`✅ ${data.message}\nSaved at: ${data.export_path}`);
+      showAlert(`✅ ${data.message}\nSaved at: ${data.export_path}`);
     } else {
       playErrorSound();
-      alert(`Standalone export failed: ${data.detail}`);
+      showAlert(`Standalone export failed: ${data.detail}`);
     }
   } catch (err) {
     playErrorSound();
-    alert(`Export error: ${err.message}`);
+    showAlert(`Export error: ${err.message}`);
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -550,7 +827,7 @@ window.exportSingleClip = async function (clipIndex) {
   const clip = generatedClips[clipIndex];
   if (!clip || !clip.output_file) {
     playErrorSound();
-    alert('No rendered clip to export yet.');
+    showAlert('No rendered clip to export yet.');
     return;
   }
   const sel = document.querySelector(`.clip-export-fmt[data-clip-idx="${clipIndex}"]`);
@@ -572,14 +849,14 @@ window.exportSingleClip = async function (clipIndex) {
     const data = await res.json();
     if (res.ok) {
       playSuccessSound();
-      alert(`✅ ${data.message}\nSaved at: ${data.export_path}`);
+      showAlert(`✅ ${data.message}\nSaved at: ${data.export_path}`);
     } else {
       playErrorSound();
-      alert(`Export failed: ${data.detail}`);
+      showAlert(`Export failed: ${data.detail}`);
     }
   } catch (err) {
     playErrorSound();
-    alert(`Export error: ${err.message}`);
+    showAlert(`Export error: ${err.message}`);
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -594,7 +871,7 @@ window.exportSingleClip = async function (clipIndex) {
 async function exportCompileReel() {
   if (!generatedClips.length) {
     playErrorSound();
-    alert('Please generate clips first before compiling a reel.');
+    showAlert('Please generate clips first before compiling a reel.');
     return;
   }
   const fmt = document.getElementById('compile-format') ? document.getElementById('compile-format').value : 'mp4';
@@ -617,14 +894,14 @@ async function exportCompileReel() {
     const data = await res.json();
     if (res.ok) {
       playSuccessSound();
-      alert(`✅ ${data.message}\nSaved at: ${data.export_path}`);
+      showAlert(`✅ ${data.message}\nSaved at: ${data.export_path}`);
     } else {
       playErrorSound();
-      alert(`Compile failed: ${data.detail}`);
+      showAlert(`Compile failed: ${data.detail}`);
     }
   } catch (err) {
     playErrorSound();
-    alert(`Compile error: ${err.message}`);
+    showAlert(`Compile error: ${err.message}`);
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -632,6 +909,79 @@ async function exportCompileReel() {
     }
   }
 }
+
+// ------------------------------------------------------------------
+// Caption preset preview
+// Converts ASS colors (&HB BG R R) to CSS and mirrors the preset's
+// primary + highlight so the style bar shows a live sample.
+// ------------------------------------------------------------------
+const CAPTION_PREVIEW = {
+  viral_yellow:  { text: '#ffffff', accent: '#ffd21e', back: '#000000', font: 'Arial Black' },
+  neon_green:    { text: '#ffffff', accent: '#1bff3a', back: '#111111', font: 'Impact' },
+  bold_white:    { text: '#e0e0e0', accent: '#ffffff', back: '#000000', font: 'Montserrat, Arial' },
+  cyberpunk_cyan:{ text: '#64e6ff', accent: '#ff40d0', back: '#050515', font: 'Arial Black' },
+  tiktok_pop:    { text: '#ffd21e', accent: '#ff2a3a', back: '#000000', font: 'Arial Black' },
+  fire_red:      { text: '#ffffff', accent: '#ff4530', back: '#000000', font: 'Impact' },
+  retro_vaporwave:{ text: '#e0b0ff', accent: '#ffff59', back: '#330033', font: 'Trebuchet MS' },
+  mrbeast_impact:{ text: '#ffffff', accent: '#ffd21e', back: '#000000', font: 'Impact' },
+  pastel_pink:   { text: '#ffffff', accent: '#ffa4d8', back: '#2e1b33', font: 'Arial' },
+  minimalist_dark:{ text: '#f0f0f0', accent: '#ff8a4d', back: '#000000', font: 'Helvetica' },
+  comic_punch:   { text: '#ffd21e', accent: '#ffffff', back: '#000000', font: 'Impact' },
+  golden_hour:   { text: '#fff0e6', accent: '#ffa510', back: '#1a1005', font: 'Arial Black' },
+  electric_purple:{ text: '#ffffff', accent: '#b833ff', back: '#1b0324', font: 'Arial Black' },
+  sunset_orange: { text: '#ffffff', accent: '#ff7b14', back: '#050905', font: 'Impact' },
+  matrix_green:  { text: '#00cc33', accent: '#80ff80', back: '#001500', font: 'Courier New' },
+  deep_blue:     { text: '#ffffff', accent: '#33aaff', back: '#051024', font: 'Arial Black' },
+  boxed_karaoke: { text: '#dddddd', accent: '#ffe500', back: '#000000', font: 'Arial' },
+  glitch_shadow: { text: '#ffffff', accent: '#ff30e0', back: '#000000', font: 'Arial Black' },
+  elegant_serif: { text: '#f5f5f5', accent: '#ff6bd3', back: '#1c1c1c', font: 'Georgia' },
+  high_contrast: { text: '#000000', accent: '#ffcc00', back: '#000000', font: 'Arial Black' },
+  monochrome_chic:{ text: '#888888', accent: '#ffffff', back: '#111111', font: 'Helvetica' },
+  gaming_rgb:    { text: '#80ffaa', accent: '#ff20b0', back: '#000000', font: 'Impact' },
+};
+
+function applyCaptionPreviewStyle() {
+  const preview = document.getElementById('caption-preview');
+  if (!preview) return;
+  const presetId = document.getElementById('caption-preset')?.value || 'viral_yellow';
+  const style = CAPTION_PREVIEW[presetId] || CAPTION_PREVIEW.viral_yellow;
+
+  preview.style.color = style.text;
+  preview.style.fontFamily = style.font;
+  preview.style.textShadow = style.back !== '#000000'
+    ? `3px 3px 0 ${style.back}, 0 0 18px ${style.accent}55`
+    : `0 0 18px ${style.accent}55, 0 2px 12px rgba(0,0,0,0.9)`;
+
+  const highlights = preview.querySelectorAll('mark');
+  highlights.forEach((m) => { m.style.color = style.accent; });
+}
+
+function refreshCaptionPreview() {
+  const preview = document.getElementById('caption-preview');
+  if (!preview) return;
+  const words = preview.dataset.words || 'Your caption appears here';
+  // Render words, highlighting every few so the accent shows like a karaoke lead.
+  const list = words.split(' ').map((w, i) => (i % 3 === 0 ? `<mark>${escapeHtml(w)}</mark>` : escapeHtml(w)));
+  preview.innerHTML = list.join(' ');
+  preview.dataset.words = words;
+  applyCaptionPreviewStyle();
+}
+function applyTrimCaptionStyle() {
+  const sampleEl = document.getElementById('trim-caption-sample');
+  if (!sampleEl) return;
+  const presetId = document.getElementById('trim-caption-preset')?.value || 'viral_yellow';
+  const style = CAPTION_PREVIEW[presetId] || CAPTION_PREVIEW.viral_yellow;
+
+  sampleEl.style.color = style.text;
+  sampleEl.style.fontFamily = style.font;
+  sampleEl.style.textShadow = style.back !== '#000000'
+    ? `2px 2px 0 ${style.back}, 0 0 14px ${style.accent}66`
+    : `0 0 14px ${style.accent}66, 0 2px 10px rgba(0,0,0,0.9)`;
+
+  const highlights = sampleEl.querySelectorAll('mark');
+  highlights.forEach((m) => { m.style.color = style.accent; });
+}
+
 
 // ------------------------------------------------------------------
 // Interactive Caption Editor
@@ -651,10 +1001,18 @@ window.openCaptionEditor = function(clipIndex) {
     const chip = document.createElement('div');
     chip.className = 'word-chip';
     chip.innerHTML =
-      `<span class="word-text" contenteditable="true">${w.word}</span> ` +
+      `<span class="word-text" contenteditable="true">${escapeHtml(w.word || String(w))}</span> ` +
       `<small class="word-time" data-start="${w.start}" data-end="${w.end}" style="color:var(--text-muted);">[${w.start.toFixed(1)}s]</small>`;
     chipsContainer.appendChild(chip);
   });
+
+  // Seed the preview with a real snippet from this clip's words.
+  const preview = document.getElementById('caption-preview');
+  const sample = (clip.hook_text || (clip.words || []).map((x) => x.word).join(' ') || 'Your caption appears here').trim();
+  if (preview) {
+    preview.dataset.words = sample.length ? sample : 'Your caption appears here';
+    refreshCaptionPreview();
+  }
 
   modal.classList.remove('hidden');
 };
@@ -685,7 +1043,7 @@ document.getElementById('save-captions-btn')?.addEventListener('click', async ()
   });
 
   if (!editedWords.length) {
-    alert('No editable words found.');
+    showAlert('No editable words found.');
     return;
   }
 
@@ -707,12 +1065,12 @@ document.getElementById('save-captions-btn')?.addEventListener('click', async ()
       // Update in-memory clip state
       currentEditingClip.words = editedWords;
       if (data.export_path) currentEditingClip.srt_path = data.export_path;
-      alert(`✅ ${data.message}\n\nNote: burned-in captions require re-rendering the clip to take effect.`);
+      showAlert(`✅ ${data.message}\n\nNote: burned-in captions require re-rendering the clip to take effect.`);
     } else {
-      alert(`Save failed: ${data.detail || 'Unknown error'}`);
+      showAlert(`Save failed: ${data.detail || 'Unknown error'}`);
     }
   } catch (err) {
-    alert(`Save error: ${err.message}`);
+    showAlert(`Save error: ${err.message}`);
   }
   document.getElementById('caption-modal').classList.add('hidden');
 });
@@ -723,7 +1081,7 @@ function revealInFolder(filePath) {
     window.clipperAPI.revealInFolder(filePath);
   } else {
     navigator.clipboard.writeText(filePath).catch(() => {});
-    alert(`Path copied to clipboard:\n${filePath}`);
+    showAlert(`Path copied to clipboard:\n${filePath}`);
   }
 }
 
@@ -739,7 +1097,7 @@ window.quickCutSilence = async function(clipIndex) {
     const data = await res.json();
     if (res.ok) {
       playSuccessSound();
-      alert(`✂️ Dead air removed! Saved ${data.time_saved}s (${data.original_duration}s -> ${data.cut_duration}s)`);
+      showAlert(`✂️ Dead air removed! Saved ${data.time_saved}s (${data.original_duration}s -> ${data.cut_duration}s)`);
       clip.output_file = data.output_path;
       clip.duration = data.cut_duration;
       showResults(generatedClips);
@@ -767,7 +1125,7 @@ window.quickBleepClip = async function(clipIndex) {
     const data = await res.json();
     if (res.ok) {
       playSuccessSound();
-      alert(`🔇 Bleep filter applied! (${data.message})`);
+      showAlert(`🔇 Bleep filter applied! (${data.message})`);
       clip.output_file = data.output_path;
       showResults(generatedClips);
     } else {
@@ -785,7 +1143,7 @@ function showError(message) {
   btn.disabled = false;
   btn.textContent = '🚀 Start Clipping';
   document.getElementById('progress-container').classList.add('hidden');
-  alert(`Error: ${message}`);
+  showAlert(`Error: ${message}`);
 }
 
 // ------------------------------------------------------------------
@@ -984,19 +1342,19 @@ function renderDeps(data) {
         });
         const data = await res.json();
         if (data.error) {
-          alert(`Install failed: ${data.error}`);
+          showAlert(`Install failed: ${data.error}`);
           btn.disabled = false;
           btn.textContent = '⬇️ Install';
         } else if (data.returncode === 0) {
-          alert(`✅ ${key} installed successfully!\n\nCommand: ${data.command}`);
+          showAlert(`✅ ${key} installed successfully!\n\nCommand: ${data.command}`);
           loadSetupPanel();
         } else {
-          alert(`Install may have failed (code ${data.returncode}).\n\nCommand: ${data.command}\n\n${data.stderr || data.stdout || ''}`);
+          showAlert(`Install may have failed (code ${data.returncode}).\n\nCommand: ${data.command}\n\n${data.stderr || data.stdout || ''}`);
           btn.disabled = false;
           btn.textContent = '⬇️ Install';
         }
       } catch (e) {
-        alert(`Install error: ${e.message}`);
+        showAlert(`Install error: ${e.message}`);
         btn.disabled = false;
         btn.textContent = '⬇️ Install';
       }
@@ -1015,11 +1373,11 @@ function renderDeps(data) {
     try {
       const res = await fetch(`${serverUrl}/api/setup/ollama/pull?model=gemma2:2b`, { method: 'POST' });
       const d = await res.json();
-      if (d.error) alert(`Pull failed: ${d.error}`);
-      else if (d.returncode === 0) alert('✅ gemma2:2b downloaded and ready!');
-      else alert(`Pull may have failed (code ${d.returncode}).\n\n${d.stderr || d.stdout || ''}`);
+      if (d.error) showAlert(`Pull failed: ${d.error}`);
+      else if (d.returncode === 0) showAlert('✅ gemma2:2b downloaded and ready!');
+      else showAlert(`Pull may have failed (code ${d.returncode}).\n\n${d.stderr || d.stdout || ''}`);
     } catch (e) {
-      alert('Pull error: ' + e.message);
+      showAlert('Pull error: ' + e.message);
     }
     pullBtn.disabled = false;
     pullBtn.textContent = '🔄 Pull model';

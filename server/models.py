@@ -147,6 +147,11 @@ class CustomRenderRequest(BaseModel):
     cam_position: str = "bottom-right"
 
 
+class DeleteProjectRequest(BaseModel):
+    """Paths belonging to a saved project that may be safely removed."""
+    paths: List[str] = Field(default_factory=list)
+
+
 class ExportMediaRequest(BaseModel):
     """Export a single existing rendered clip to a chosen container/codec format."""
     video_path: str

@@ -139,6 +139,12 @@ def render_clip(
       'full'            -> no crop, full-frame passthrough
       'game_reaction'   -> full-frame gameplay + webcam reaction in a corner overlay
     """
+    # Resolve before changing cwd below for the subtitles filter. A relative
+    # output path would otherwise be resolved relative to the subtitle folder.
+    output_video = str(Path(output_video).expanduser().resolve())
+    input_video = str(Path(input_video).expanduser().resolve())
+    if cam_video:
+        cam_video = str(Path(cam_video).expanduser().resolve())
     Path(output_video).parent.mkdir(parents=True, exist_ok=True)
     duration = end_time - start_time
 

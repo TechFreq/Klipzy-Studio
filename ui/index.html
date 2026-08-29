@@ -48,6 +48,12 @@
           <span id="file-name"></span>
           <button class="btn btn-small" id="change-file">Change</button>
         </div>
+        <div id="project-bar" class="project-bar hidden">
+          <input id="project-name" type="text" placeholder="Project name" maxlength="80" />
+          <button class="btn btn-small btn-primary" id="save-project">💾 Save Project</button>
+          <select id="project-list" title="Open saved project"><option value="">Open saved project…</option></select>
+          <button class="btn btn-small btn-danger" id="delete-project">🗑 Delete Project</button>
+        </div>
 
         <!-- Manual Clip Trimmer -->
         <div id="trim-panel" class="card trim-panel hidden">
@@ -58,7 +64,7 @@
 
           <div class="trim-body">
             <div class="trim-preview-col">
-              <video id="trim-video" class="trim-video" controls></video>
+              <video id="trim-video" class="trim-video" controls preload="metadata" disablepictureinpicture></video>
               <div id="trim-timeline" class="trim-timeline">
                 <div id="trim-playhead" class="trim-playhead"></div>
                 <div id="trim-selection" class="trim-selection"></div>
@@ -109,6 +115,42 @@
                 </label>
                 <p class="muted small">Pick a webcam or face-cam recording that plays alongside your gameplay for a classic reaction layout.</p>
               </div>
+              <!-- Caption Style Preview for Manual Trim -->
+              <div class="trim-caption-group">
+                <label class="option">
+                  <span>Caption Style Preset</span>
+                  <select id="trim-caption-preset">
+                    <option value="viral_yellow" selected>✨ Viral Yellow Highlight</option>
+                    <option value="neon_green">🟢 Neon Green Pop</option>
+                    <option value="bold_white">⚪ Bold Clean White</option>
+                    <option value="cyberpunk_cyan">💠 Cyberpunk Cyan</option>
+                    <option value="tiktok_pop">🔥 TikTok Pop Red-Yellow</option>
+                    <option value="fire_red">🔴 Fire Red Flame</option>
+                    <option value="retro_vaporwave">🌴 Retro Vaporwave</option>
+                    <option value="mrbeast_impact">⚡ MrBeast Impact Yellow</option>
+                    <option value="pastel_pink">🌸 Pastel Pink Aesthetic</option>
+                    <option value="minimalist_dark">📦 Minimalist Dark Box</option>
+                    <option value="comic_punch">💥 Comic Book Punch</option>
+                    <option value="golden_hour">🌅 Golden Hour Amber</option>
+                    <option value="electric_purple">🔮 Electric Purple</option>
+                    <option value="sunset_orange">🌇 Sunset Coral Orange</option>
+                    <option value="matrix_green">💻 Matrix Digital Green</option>
+                    <option value="deep_blue">❄️ Ice Blue Arctic</option>
+                    <option value="boxed_karaoke">🏷️ Boxed Pill Karaoke</option>
+                    <option value="glitch_shadow">👾 Glitch Cyan Shadow</option>
+                    <option value="elegant_serif">🖋️ Editorial Luxury Serif</option>
+                    <option value="high_contrast">👁️ High-Contrast Inverted</option>
+                    <option value="monochrome_chic">🎬 Monochrome Chic</option>
+                    <option value="gaming_rgb">🕹️ Gamer RGB Lime/Pink</option>
+                  </select>
+                </label>
+                <div class="trim-caption-preview-box">
+                  <div class="trim-caption-sample-text" id="trim-caption-sample">
+                    viral clips <mark>made easy</mark>
+                  </div>
+                </div>
+              </div>
+
 
               <div class="trim-actions">
                 <button class="btn btn-primary" id="add-trim-btn">➕ Add Trimmed Clip</button>
@@ -261,6 +303,9 @@
           </div>
           <div class="modal-body">
             <p class="muted">Edit word timings and styling before final export:</p>
+            <div class="caption-preview-stage">
+              <div id="caption-preview" class="caption-preview">Preview will appear here when you pick a style.</div>
+            </div>
             <div id="word-chips" class="word-chips-container"></div>
             <div class="caption-style-bar">
               <label>Style: 
@@ -294,6 +339,26 @@
           </div>
         </div>
       </div>
+      <!-- Custom Alert / Confirm Modal Dialog -->
+      <div id="dialog-modal" class="modal hidden">
+        <div class="modal-content dialog-modal-content">
+          <div class="modal-header">
+            <h3 id="dialog-title">Notification</h3>
+            <button class="modal-close" id="dialog-close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p id="dialog-message" class="dialog-message"></p>
+            <div class="dialog-actions">
+              <button class="btn btn-secondary hidden" id="dialog-cancel-btn">Cancel</button>
+              <button class="btn btn-primary" id="dialog-confirm-btn">OK</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Toast Container -->
+      <div id="toast-container" class="toast-container"></div>
+
 
       <!-- Chat View -->
       <section id="view-chat" class="view">

@@ -20,7 +20,7 @@ from server.models import (
     ExportProjectRequest, ExportProjectResponse, SubtitleRegenRequest,
     TrimRequest, TrimResponse, CustomRenderRequest,
     ExportMediaRequest, ExportMediaResponse, ExportCompileRequest, ExportCompileResponse,
-    ExportStandaloneRequest, ExportStandaloneResponse,
+    ExportStandaloneRequest, ExportStandaloneResponse, DeleteProjectRequest,
     DetectSilenceRequest, DetectSilenceResponse, RemoveSilenceRequest, RemoveSilenceResponse,
     BleepMuteRequest, BleepMuteResponse, CaptionPresetInfo,
 )
@@ -474,12 +474,12 @@ def render_custom_selection(req: CustomRenderRequest):
     if req.end_seconds <= req.start_seconds:
         raise HTTPException(status_code=400, detail="end_seconds must be greater than start_seconds")
 
-    out_path = req.output_path or os.path.join(
-        os.path.dirname(os.path.abspath(req.video_path)),
-        f"custom_render_{uuid.uuid4().hex[:8]}.mp4",
+    out_path = req.output_path or str(
+        ENGINE.output_dir / f"manual_{uuid.uuid4().hex[:8]}" / "clip.mp4"
     )
     if not Path(out_path).suffix:
         out_path += ".mp4"
+    out_path = str(Path(out_path).expanduser().resolve())
 
     if req.layout not in ("vertical", "full", "game_reaction"):
         raise HTTPException(status_code=400, detail=f"Unsupported layout: {req.layout}")
@@ -499,6 +499,9 @@ def render_custom_selection(req: CustomRenderRequest):
         cam_position=req.cam_position,
     )
 
+    if not os.path.isfile(out_path):
+        raise HTTPException(status_code=500, detail=f"Render completed without creating output file: {out_path}")
+
     return TrimResponse(
         clip_path=out_path,
         title="Custom render",
@@ -506,6 +509,35 @@ def render_custom_selection(req: CustomRenderRequest):
         end_seconds=req.end_seconds,
         duration=round(req.end_seconds - req.start_seconds, 3),
     )
+
+@app.post("/project/delete")
+def delete_project_files(req: DeleteProjectRequest):
+    """Delete only generated files inside the engine output directory."""
+    root = ENGINE.output_dir.resolve()
+    deleted = []
+    for raw_path in req.paths:
+        try:
+            candidate = Path(raw_path).expanduser().resolve()
+            candidate.relative_to(root)
+        except (OSError, ValueError):
+            continue
+        if candidate == root or not candidate.exists():
+            continue
+        if candidate.is_dir():
+            shutil.rmtree(candidate)
+        else:
+            candidate.unlink()
+        # Remove now-empty generated job folders, but never the output root.
+        parent = candidate.parent
+        while parent != root and parent.is_relative_to(root):
+            try:
+                parent.rmdir()
+            except OSError:
+                break
+            parent = parent.parent
+        deleted.append(str(candidate))
+    return {"deleted": deleted}
+
 
 # ----------------------------------------------------------------------
 # Setup / System panel
