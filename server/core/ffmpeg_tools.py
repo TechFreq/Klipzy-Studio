@@ -5,10 +5,19 @@ Works on Windows and macOS. Requires ffmpeg/ffprobe in PATH.
 
 import json
 import os
+import platform
 import shutil
 import subprocess
 from pathlib import Path
 from typing import List, Optional, Tuple
+
+# libx264 fallback args reused across render / silence-cut / bleep / export paths.
+X264_FALLBACK_ARGS = ["-preset", "fast", "-crf", "22"]
+
+# Hardware encoder detection is cached: it spawns `ffmpeg -encoders` (a ~200ms
+# subprocess) and is currently called on every render, concat, silence cut,
+# bleep/mute, and /health poll. One probe per process is plenty.
+_HW_ENCODER_CACHE: Optional[Tuple[str, List[str]]] = None
 
 
 def check_ffmpeg() -> Tuple[bool, Optional[str]]:
@@ -28,24 +37,31 @@ def check_ffmpeg() -> Tuple[bool, Optional[str]]:
 def detect_hw_encoder() -> Tuple[str, List[str]]:
     """
     Detects hardware video encoder for maximum rendering speed.
-    Returns (encoder_name, extra_args).
+    Returns (encoder_name, extra_args). Result is cached for the process lifetime.
     """
-    import platform
+    global _HW_ENCODER_CACHE
+    if _HW_ENCODER_CACHE is not None:
+        return _HW_ENCODER_CACHE
+
     system = platform.system()
     try:
         res = subprocess.run(["ffmpeg", "-encoders"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout = res.stdout
 
         if "h264_nvenc" in stdout:
-            return "h264_nvenc", ["-preset", "p4", "-cq", "23"]
+            _HW_ENCODER_CACHE = ("h264_nvenc", ["-preset", "p4", "-cq", "23"])
+            return _HW_ENCODER_CACHE
         elif system == "Darwin" and "h264_videotoolbox" in stdout:
-            return "h264_videotoolbox", ["-q:v", "65"]
+            _HW_ENCODER_CACHE = ("h264_videotoolbox", ["-q:v", "65"])
+            return _HW_ENCODER_CACHE
         elif "h264_vaapi" in stdout:
-            return "h264_vaapi", []
+            _HW_ENCODER_CACHE = ("h264_vaapi", [])
+            return _HW_ENCODER_CACHE
     except Exception:
         pass
 
-    return "libx264", ["-preset", "fast", "-crf", "22"]
+    _HW_ENCODER_CACHE = ("libx264", list(X264_FALLBACK_ARGS))
+    return _HW_ENCODER_CACHE
 
 
 def get_media_info(file_path: str) -> dict:
@@ -117,6 +133,84 @@ def export_standalone_audio(video_path: str, output_path: str, fmt: str = "mp3")
     return output_path
 
 
+def build_filter_chain(
+    aspect_ratio: Optional[str] = None,
+    crop_x_offset: Optional[float] = None,
+    layout: str = "",
+    has_cam: bool = False,
+    cam_video: Optional[str] = None,
+    cam_scale: float = 0.3,
+    cam_position: str = "bottom-right",
+) -> List[str]:
+    """
+    Build the ffmpeg filtergraph part (without subtitle burn) for a clip render.
+
+    Returns a list of filtergraph sub-graphs; each entry is a complete
+    "inputs...label" chain. When an aspect ratio / PiP layout is requested the
+    chain emits a `[v]` label that later steps consume. Returns [] for a plain
+    full-frame passthrough (no visual processing needed).
+    """
+    filters: List[str] = []
+
+    if layout == "game_reaction":
+        if has_cam:
+            base_w, base_h = 1920, 1080
+            pad = 6
+            cam_w = int(base_w * max(0.1, min(cam_scale, 0.5)))
+            cam_h = int(cam_w * 9 / 16)
+            box_w, box_h = cam_w + pad * 2, cam_h + pad * 2
+            if cam_position == "bottom-left":
+                x, y = pad, base_h - box_h - pad
+            elif cam_position == "top-right":
+                x, y = base_w - box_w - pad, pad
+            elif cam_position == "top-left":
+                x, y = pad, pad
+            else:
+                x, y = base_w - box_w - pad, base_h - box_h - pad
+
+            # Camera PiP: scale + letterbox in a 16:9 box, white border, overlay
+            # in the chosen corner over the full-frame gameplay.
+            base_chain = (
+                f"[1:v]scale={cam_w}:{cam_h}:force_original_aspect_ratio=decrease,"
+                f"pad={cam_w}:{cam_h}:(ow-iw)/2:(oh-ih)/2:color=0x000000,"
+                f"pad={box_w}:{box_h}:{pad}:{pad}:color=0xFFFFFF,setsar=1[cf];"
+                f"[0:v][cf]overlay={x}:{y}:eof_action=repeat[v]"
+            )
+            filters.append(base_chain)
+    elif aspect_ratio == "9:16":
+        if crop_x_offset is not None:
+            filters.append(f"[0:v]crop=ih*9/16:ih:{crop_x_offset}:0[v]")
+        else:
+            filters.append("[0:v]crop=ih*9/16:ih:(iw-ow)/2:0[v]")
+    elif aspect_ratio == "1:1":
+        if crop_x_offset is not None:
+            filters.append(f"[0:v]crop=min(iw\\,ih):min(iw\\,ih):{crop_x_offset}:(ih-oh)/2[v]")
+        else:
+            filters.append("[0:v]crop=min(iw\\,ih):min(iw\\,ih):(iw-ow)/2:(ih-oh)/2[v]")
+    elif aspect_ratio == "4:5":
+        if crop_x_offset is not None:
+            filters.append(f"[0:v]crop=ih*4/5:ih:{crop_x_offset}:0[v]")
+        else:
+            filters.append("[0:v]crop=ih*4/5:ih:(iw-ow)/2:0[v]")
+    elif aspect_ratio == "16:9":
+        # Landscape for YouTube - fit the largest 16:9 window inside the frame.
+        if crop_x_offset is not None:
+            filters.append(
+                f"[0:v]scale=w=min(iw\\,ih*16/9):h=min(ih\\,iw*9/16):"
+                f"force_original_aspect_ratio=decrease,crop=trunc(iw/2)*2:trunc(ih/2)*2,"
+                f"setsar=1,pad=w=trunc(iw/2)*2:h=trunc(ih/2)*2:x={crop_x_offset}:y=0,"
+                f"scale=trunc(iw/2)*2:trunc(ih/2)*2[v]"
+            )
+        else:
+            filters.append(
+                "[0:v]scale=w=min(iw\\,ih*16/9):h=min(ih\\,iw*9/16):"
+                "force_original_aspect_ratio=decrease,crop=trunc(iw/2)*2:trunc(ih/2)*2,"
+                "setsar=1[v]"
+            )
+
+    return filters
+
+
 def render_clip(
     input_video: str,
     output_video: str,
@@ -149,53 +243,16 @@ def render_clip(
     duration = end_time - start_time
 
     has_cam = bool(cam_video and os.path.exists(cam_video))
-    filters: List[str] = []
+    filters = build_filter_chain(
+        aspect_ratio=aspect_ratio,
+        crop_x_offset=crop_x_offset,
+        layout=layout,
+        has_cam=has_cam,
+        cam_video=cam_video,
+        cam_scale=cam_scale,
+        cam_position=cam_position,
+    )
     use_complex = False
-
-    if layout == "game_reaction":
-        if has_cam:
-            use_complex = True
-            base_w, base_h = 1920, 1080
-            pad = 6
-            cam_w = int(base_w * max(0.1, min(cam_scale, 0.5)))
-            cam_h = int(cam_w * 9 / 16)
-            box_w, box_h = cam_w + pad * 2, cam_h + pad * 2
-            if cam_position == "bottom-left":
-                x, y = pad, base_h - box_h - pad
-            elif cam_position == "top-right":
-                x, y = base_w - box_w - pad, pad
-            elif cam_position == "top-left":
-                x, y = pad, pad
-            else:
-                x, y = base_w - box_w - pad, base_h - box_h - pad
-
-            # Camera PiP: scale + letterbox in a 16:9 box, white border, overlay
-            # in the chosen corner over the full-frame gameplay.
-            # Output is threaded to label [v] so later chain steps can consume it.
-            base_chain = (
-                f"[1:v]scale={cam_w}:{cam_h}:force_original_aspect_ratio=decrease,"
-                f"pad={cam_w}:{cam_h}:(ow-iw)/2:(oh-ih)/2:color=0x000000,"
-                f"pad={box_w}:{box_h}:{pad}:{pad}:color=0xFFFFFF,setsar=1[cf];"
-                f"[0:v][cf]overlay={x}:{y}:eof_action=repeat[v]"
-            )
-            filters.append(base_chain)
-    elif aspect_ratio == "9:16":
-        if crop_x_offset is not None:
-            filters.append(f"[0:v]crop=ih*9/16:ih:{crop_x_offset}:0[v]")
-        else:
-            filters.append("[0:v]crop=ih*9/16:ih:(iw-ow)/2:0[v]")
-    elif aspect_ratio == "1:1":
-        if crop_x_offset is not None:
-            filters.append(f"[0:v]crop=min(iw\\,ih):min(iw\\,ih):{crop_x_offset}:(ih-oh)/2[v]")
-        else:
-            filters.append("[0:v]crop=min(iw\\,ih):min(iw\\,ih):(iw-ow)/2:(ih-oh)/2[v]")
-    elif aspect_ratio == "4:5":
-        if crop_x_offset is not None:
-            filters.append(f"[0:v]crop=ih*4/5:ih:{crop_x_offset}:0[v]")
-        else:
-            filters.append("[0:v]crop=ih*4/5:ih:(iw-ow)/2:0[v]")
-    elif aspect_ratio == "16:9":
-        filters.append("[0:v]crop=min(iw\\,ih*16/9):min(ih\\,iw*9/16):(iw-ow)/2:(ih-oh)/2[v]")
 
     burn_cwd = None
     if burn_captions and subtitle_path and os.path.exists(subtitle_path):
@@ -222,8 +279,6 @@ def render_clip(
             filters.append("[v]null[out]")
         use_complex = True
 
-    encoder, enc_args = detect_hw_encoder()
-
     cmd = [
         "ffmpeg", "-y",
         "-ss", str(start_time),
@@ -234,26 +289,61 @@ def render_clip(
     cmd += ["-t", str(duration)]
 
     if use_complex:
+        encoder, enc_args = detect_hw_encoder()
         cmd += ["-filter_complex", ";".join(filters)]
         cmd += ["-map", "[out]", "-map", "0:a:0?"]
-    cmd += [
+        cmd += [
+            "-c:v", encoder,
+            *enc_args,
+            "-c:a", "aac", "-b:a", "192k",
+            output_video
+        ]
+
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=burn_cwd)
+        if result.returncode != 0:
+            # Fallback to software encoding libx264
+            cmd_fb = [c for c in cmd]
+            enc_i = cmd_fb.index("-c:v")
+            enc_args_i = enc_i + 2
+            cmd_fb[enc_i + 1] = "libx264"
+            cmd_fb[enc_args_i:enc_args_i + len(enc_args)] = X264_FALLBACK_ARGS
+            res_fb = subprocess.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=burn_cwd)
+            if res_fb.returncode != 0:
+                raise RuntimeError(f"Clip rendering failed: {res_fb.stderr[-500:]}")
+        return output_video
+
+    # Fast path: plain full-frame cut with no captions / PiP -> stream copy.
+    # No re-encode, so manual trims are near-instant and lossless.
+    cmd_copy = [
+        "ffmpeg", "-y",
+        "-ss", str(start_time),
+        "-i", input_video,
+        "-t", str(duration),
+        "-map", "0:v:0", "-map", "0:a:0?",
+        "-c:v", "copy", "-c:a", "copy",
+        "-movflags", "+faststart",
+        output_video,
+    ]
+    res_copy = subprocess.run(cmd_copy, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if res_copy.returncode == 0 and os.path.getsize(output_video) > 0:
+        return output_video
+
+    # Fallback re-encode (e.g. stream-copy-incompatible source / weird container).
+    encoder, enc_args = detect_hw_encoder()
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(start_time),
+        "-i", input_video,
+        "-t", str(duration),
+        "-map", "0:v:0", "-map", "0:a:0?",
         "-c:v", encoder,
         *enc_args,
         "-c:a", "aac", "-b:a", "192k",
-        output_video
+        output_video,
     ]
-
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=burn_cwd)
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if result.returncode != 0:
-        # Fallback to software encoding libx264
-        cmd_fb = [c for c in cmd]
-        enc_i = cmd_fb.index("-c:v")
-        enc_args_i = enc_i + 2
-        cmd_fb[enc_i + 1] = "libx264"
-        cmd_fb[enc_args_i:enc_args_i + len(enc_args)] = ["-preset", "fast", "-crf", "22"]
-        res_fb = subprocess.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=burn_cwd)
-        if res_fb.returncode != 0:
-            raise RuntimeError(f"Clip rendering failed: {res_fb.stderr[-500:]}")
+        raise RuntimeError(f"Clip rendering failed: {result.stderr[-500:]}")
 
     return output_video
 
@@ -305,10 +395,11 @@ def export_clip_as(
             ]
         else:
             cmd += ["-c:a", "aac", "-b:a", "192k"]
-        if fmt == "mov":
-            cmd += ["-movflags", "+faststart"]
-        if fmt == "mkv":
-            cmd += ["-movflags", "+faststart"]
+        if fmt in ("mp4", "mov", "mkv"):
+            # faststart relocates the moov atom for instant web playback.
+            # Harmless for mp4/mov; mkv stores cues separately, and this flag
+            # does nothing useful there, so it is intentionally omitted.
+            cmd += ["-movflags", "+faststart"] if fmt in ("mp4", "mov") else []
         cmd += [out_path]
 
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

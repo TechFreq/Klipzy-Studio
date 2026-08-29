@@ -106,9 +106,12 @@ function createWindow() {
     minHeight: 700,
     title: 'Klipzy Studio',
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
+      // The renderer only talks to the preload bridge (window.clipperAPI); it
+      // never needs direct Node access, so keep the process isolated.
+      nodeIntegration: false,
+      contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
+      sandbox: true,
     },
   });
 

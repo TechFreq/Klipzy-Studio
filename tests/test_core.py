@@ -195,3 +195,111 @@ def test_profanity_filter_detection():
     assert len(swear_ts) == 1
     assert swear_ts[0]["word"] == "shit"
     assert swear_ts[0]["start"] == 0.8
+
+
+# ---------------------------------------------------------------------------
+# ffmpeg_tools refactor tests
+# ---------------------------------------------------------------------------
+def test_build_filter_chain_full_passthrough_is_empty():
+    from server.core.ffmpeg_tools import build_filter_chain
+    # Full-frame no-crop no-PiP -> no filtergraph (stream-copy fast path).
+    assert build_filter_chain(layout="full", aspect_ratio=None, has_cam=False) == []
+    assert build_filter_chain(layout="", aspect_ratio=None, has_cam=False) == []
+
+
+def test_build_filter_chain_vertical_crop():
+    from server.core.ffmpeg_tools import build_filter_chain
+    chain = build_filter_chain(layout="", aspect_ratio="9:16", has_cam=False)
+    assert len(chain) == 1 and "[0:v]crop=ih*9/16:ih:" in chain[0]
+
+
+def test_build_filter_chain_16x9_fit():
+    from server.core.ffmpeg_tools import build_filter_chain
+    chain = build_filter_chain(layout="full", aspect_ratio="16:9", has_cam=False)
+    assert len(chain) == 1
+    # 16:9 must FIT (scale) rather than crop the frame.
+    assert "scale=w=min(iw" in chain[0]
+    assert "force_original_aspect_ratio=decrease" in chain[0]
+
+
+def test_build_filter_chain_game_reaction_needs_cam():
+    from server.core.ffmpeg_tools import build_filter_chain
+    # Without a cam, game_reaction degrades to a plain passthrough.
+    chain = build_filter_chain(layout="game_reaction", has_cam=False)
+    assert chain == []
+    chain2 = build_filter_chain(layout="game_reaction", has_cam=True)
+    assert len(chain2) == 1
+    assert "overlay=" in chain2[0]
+
+
+def test_detect_hw_encoder_is_cached():
+    from server.core import ffmpeg_tools
+    # Reset cache
+    ffmpeg_tools._HW_ENCODER_CACHE = None
+    first = ffmpeg_tools.detect_hw_encoder()
+    second = ffmpeg_tools.detect_hw_encoder()
+    assert first == second
+    assert ffmpeg_tools._HW_ENCODER_CACHE is not None
+
+
+def test_x264_fallback_args_constant():
+    from server.core.ffmpeg_tools import X264_FALLBACK_ARGS, detect_hw_encoder
+    # When no HW encoder, we should return the same fallback args used elsewhere.
+    assert X264_FALLBACK_ARGS == ["-preset", "fast", "-crf", "22"]
+
+
+# ---------------------------------------------------------------------------
+# API validation tests (happy-path + guards) using FastAPI TestClient
+# ---------------------------------------------------------------------------
+def _make_client():
+    from fastapi.testclient import TestClient
+    import server.api.server as srv
+    return TestClient(srv.app)
+
+
+def test_process_rejects_bad_max_clips():
+    client = _make_client()
+    here = os.path.abspath(os.path.join(os.path.dirname(__file__), "test_core.py"))
+    r = client.post("/process", json={
+        "video_path": here,
+        "max_clips": 0,
+    })
+    assert r.status_code == 400
+    assert "max_clips" in r.json()["detail"]
+
+
+def test_process_rejects_bad_duration_range():
+    client = _make_client()
+    here = os.path.abspath(os.path.join(os.path.dirname(__file__), "test_core.py"))
+    r = client.post("/process", json={
+        "video_path": here,
+        "max_clips": 5,
+        "min_duration": 60.0,
+        "max_duration": 20.0,
+    })
+    assert r.status_code == 400
+    assert "max_duration" in r.json()["detail"]
+
+
+def test_trim_rejects_zero_length():
+    client = _make_client()
+    here = os.path.abspath(os.path.join(os.path.dirname(__file__), "test_core.py"))
+    r = client.post("/trim", json={
+        "video_path": here,
+        "start_seconds": 5.0,
+        "end_seconds": 5.0,
+    })
+    assert r.status_code == 400
+
+
+def test_render_custom_rejects_bad_layout_and_ratio():
+    client = _make_client()
+    here = os.path.abspath(os.path.join(os.path.dirname(__file__), "test_core.py"))
+    r = client.post("/render/custom", json={
+        "video_path": here,
+        "start_seconds": 0,
+        "end_seconds": 10,
+        "layout": "spinning_cube",
+    })
+    assert r.status_code == 400
+    assert "layout" in r.json()["detail"]

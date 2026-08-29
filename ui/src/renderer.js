@@ -97,6 +97,65 @@ async function init() {
   bindEvents();
   loadSetupPanel();
   loadProjectList();
+  populateCaptionPresets();
+}
+
+// Caption preset dropdown labels (emoji + display name). Single source of
+// truth shared by the main clipper options, the trim panel, and the caption
+// editor modal, so new presets only need adding here (backend supplies the
+// full list via /caption-presets).
+const CAPTION_PRESET_LABELS = {
+  viral_yellow:   '✨ Viral Yellow Highlight',
+  neon_green:     '🟢 Neon Green Pop',
+  bold_white:     '⚪ Bold Clean White',
+  cyberpunk_cyan: '💠 Cyberpunk Cyan',
+  tiktok_pop:     '🔥 TikTok Pop Red-Yellow',
+  fire_red:       '🔴 Fire Red Flame',
+  retro_vaporwave:'🌴 Retro Vaporwave',
+  mrbeast_impact: '⚡ MrBeast Impact Yellow',
+  pastel_pink:    '🌸 Pastel Pink Aesthetic',
+  minimalist_dark:'📦 Minimalist Dark Box',
+  comic_punch:    '💥 Comic Book Punch',
+  golden_hour:    '🌅 Golden Hour Amber',
+  electric_purple:'🔮 Electric Purple',
+  sunset_orange:  '🌇 Sunset Coral Orange',
+  matrix_green:   '💻 Matrix Digital Green',
+  deep_blue:      '❄️ Ice Blue Arctic',
+  boxed_karaoke:  '🏷️ Boxed Pill Karaoke',
+  glitch_shadow:  '👾 Glitch Cyan Shadow',
+  elegant_serif:  '🖋️ Editorial Luxury Serif',
+  high_contrast:  '👁️ High-Contrast Inverted',
+  monochrome_chic:'🎬 Monochrome Chic',
+  gaming_rgb:     '🕹️ Gamer RGB Lime/Pink',
+};
+
+// Backend fallback order if /caption-presets is unreachable.
+const CAPTION_PRESET_IDS = Object.keys(CAPTION_PRESET_LABELS);
+
+async function populateCaptionPresets() {
+  let presets = null;
+  try {
+    const res = await fetch(`${serverUrl}/caption-presets`);
+    if (res.ok) presets = await res.json();
+  } catch (_) { /* offline -> fall back to static list */ }
+
+  const ids = presets && presets.length
+    ? presets.map((p) => p.id)
+    : CAPTION_PRESET_IDS;
+
+  const opts = ids
+    .map((id) => `<option value="${escapeHtml(id)}">${escapeHtml(CAPTION_PRESET_LABELS[id] || id)}</option>`)
+    .join('');
+
+  ['global-caption-preset', 'trim-caption-preset', 'caption-preset'].forEach((selId) => {
+    const sel = document.getElementById(selId);
+    if (sel && !sel.dataset.populated) {
+      const current = sel.value;
+      sel.innerHTML = opts;
+      if (current && ids.includes(current)) sel.value = current;
+      sel.dataset.populated = '1';
+    }
+  });
 }
 
 function bindEvents() {
@@ -582,6 +641,7 @@ async function startClipping() {
     burn_captions: document.getElementById('burn-captions').checked,
     remove_silence: document.getElementById('remove-silence') ? document.getElementById('remove-silence').checked : false,
     bleep_profanity: document.getElementById('censor-profanity') ? document.getElementById('censor-profanity').checked : false,
+    mute_profanity: false,
   };
 
   try {
@@ -604,7 +664,10 @@ async function startClipping() {
 function pollJob(jobId) {
   if (pollTimer) clearInterval(pollTimer);
 
+  let ticking = false;
   pollTimer = setInterval(async () => {
+    if (ticking) return; // don't stack requests if a poll takes longer than the interval
+    ticking = true;
     try {
       const res = await fetch(`${serverUrl}/job/${jobId}`);
       const data = await res.json();
@@ -621,8 +684,10 @@ function pollJob(jobId) {
       }
     } catch (e) {
       // transient error, keep polling
+    } finally {
+      ticking = false;
     }
-  }, 1000);
+  }, 650); // 650ms is smooth enough for the progress bar without hammering localhost
 }
 
 // ------------------------------------------------------------------

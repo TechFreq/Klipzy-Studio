@@ -9,7 +9,7 @@ import os
 import subprocess
 from pathlib import Path
 from typing import List, Dict, Tuple, Any, Optional, Set
-from server.core.ffmpeg_tools import detect_hw_encoder, get_video_duration
+from server.core.ffmpeg_tools import detect_hw_encoder, get_video_duration, X264_FALLBACK_ARGS
 
 
 DEFAULT_PROFANITY_LIST: Set[str] = {

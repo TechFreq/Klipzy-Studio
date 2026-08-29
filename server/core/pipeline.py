@@ -83,14 +83,16 @@ class VideoClipperEngine:
         report("Transcribing with Whisper...", 25)
         segments = self.transcriber.transcribe(temp_audio, language=language)
 
-        report("Finding highlight moments...", 50)
+        report("Finding highlight moments...", 38)
         candidates: List[ClipCandidate] = self.detector.detect_highlights_heuristic(segments)
 
         if use_audio_energy:
+            report("Scanning audio energy peaks...", 42)
             energy_clips = detect_highlights_audio_energy(temp_audio, segments)
             candidates.extend(energy_clips)
 
         if use_llm:
+            report("Asking local LLM for viral moments...", 46)
             llm_clips = detect_highlights_llm(segments)
             candidates.extend(llm_clips)
 
@@ -103,6 +105,7 @@ class VideoClipperEngine:
         srt_path = str(job_dir / "captions.srt")
         vtt_path = str(job_dir / "captions.vtt")
         ass_path = str(job_dir / "captions.ass")
+        report("Writing transcript & caption files...", 50)
         generate_srt(segments, srt_path)
         generate_vtt(segments, vtt_path)
         try:
@@ -117,9 +120,10 @@ class VideoClipperEngine:
             clip_filename = f"clip_{idx}.mp4"
             output_clip_path = str(job_dir / clip_filename)
 
+            clip_progress = 55 + int(35 * (idx - 1) / max(1, total))
             crop_offset = None
             if vertical_crop:
-                report(f"Tracking speaker for clip {idx}/{total}...", 55 + int(35 * (idx - 1) / max(1, total)))
+                report(f"Tracking speaker for clip {idx}/{total}...", clip_progress)
                 crop_offset = self.face_tracker.get_speaker_center_x(
                     video_path, clip.start_time, clip.end_time
                 )
@@ -127,7 +131,9 @@ class VideoClipperEngine:
             # Generate clip-specific animated karaoke subtitle
             clip_ass = str(job_dir / f"clip_{idx}.ass")
             clip_srt = str(job_dir / f"clip_{idx}.srt")
-            clip_segs = [s for s in segments if s.start >= clip.start_time and s.end <= clip.end_time]
+            # Segments that overlap the clip window (partial overlap counts so a
+            # word straddling the boundary is still captioned).
+            clip_segs = [s for s in segments if s.start < clip.end_time and s.end > clip.start_time]
             if clip_segs:
                 generate_srt(clip_segs, clip_srt)
                 try:
@@ -139,7 +145,7 @@ class VideoClipperEngine:
                 clip_srt = srt_path
                 clip_ass = ass_path
 
-            report(f"Rendering clip {idx}/{total}...", 55 + int(35 * idx / max(1, total)))
+            report(f"Rendering clip {idx}/{total}...", clip_progress + int(35 / max(1, total)))
             sub_to_burn = clip_ass if (clip_ass and os.path.exists(clip_ass)) else (clip_srt if os.path.exists(clip_srt) else None)
             
             render_clip(

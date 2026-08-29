@@ -154,7 +154,7 @@ def remove_silence(
             "-i", input_video,
             "-filter_complex", filter_complex,
             "-map", "[v]", "-map", "[a]",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+            "-c:v", "libx264", *X264_FALLBACK_ARGS,
             "-c:a", "aac", "-b:a", "192k",
             output_video
         ]

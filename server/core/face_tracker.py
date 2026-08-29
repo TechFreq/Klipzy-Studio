@@ -26,6 +26,11 @@ class FaceTracker:
         """
         Samples frames to find the average horizontal center of detected people,
         returning the crop X offset for vertical 9:16 framing.
+
+        Instead of decoding and discarding every frame between start and end
+        (expensive on long clips), we jump straight to the sampled frame
+        positions with CAP_PROP_POS_FRAMES + read. This cuts a 10s clip from
+        ~300 frame decodes to ~2-10, making face tracking dramatically faster.
         """
         try:
             import cv2
@@ -49,33 +54,36 @@ class FaceTracker:
 
         start_frame = int(start_time * fps)
         end_frame = int(end_time * fps)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
         self._init_model()
         centers_x: List[float] = []
-        step = max(1, int(fps))  # Sample ~1 frame per second
-        current_frame = start_frame
+        # Sample about 1 frame/sec but cap on huge/dense selections so very
+        # long clips don't hammer the detector. Also compute in a bounded range.
+        total_frames = max(1, end_frame - start_frame)
+        sample_count = min(12, max(3, total_frames // max(1, int(fps))))
+        step = max(1, total_frames // sample_count)
 
-        while current_frame < end_frame:
+        for frame_idx in range(sample_count):
+            target = start_frame + frame_idx * step
+            if target >= end_frame:
+                break
+            cap.set(cv2.CAP_PROP_POS_FRAMES, target)
             ret, frame = cap.read()
             if not ret:
                 break
-
-            if (current_frame - start_frame) % step == 0:
-                if self.model:
-                    results = self.model(frame, verbose=False, classes=[0])  # person
-                    boxes = results[0].boxes
-                    if len(boxes) > 0:
-                        # Largest box = main speaker
-                        box = sorted(
-                            boxes,
-                            key=lambda b: (b.xyxy[0][2] - b.xyxy[0][0]) * (b.xyxy[0][3] - b.xyxy[0][1]),
-                            reverse=True,
-                        )[0]
-                        xyxy = box.xyxy[0].cpu().numpy()
-                        centers_x.append((xyxy[0] + xyxy[2]) / 2.0)
-
-            current_frame += 1
+            if not self.model:
+                continue
+            results = self.model(frame, verbose=False, classes=[0])  # person
+            boxes = results[0].boxes
+            if len(boxes) > 0:
+                # Largest box = main speaker
+                box = sorted(
+                    boxes,
+                    key=lambda b: (b.xyxy[0][2] - b.xyxy[0][0]) * (b.xyxy[0][3] - b.xyxy[0][1]),
+                    reverse=True,
+                )[0]
+                xyxy = box.xyxy[0].cpu().numpy()
+                centers_x.append((xyxy[0] + xyxy[2]) / 2.0)
 
         cap.release()
 

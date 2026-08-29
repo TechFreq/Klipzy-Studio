@@ -9,7 +9,7 @@ import subprocess
 import threading
 import uuid
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -42,10 +42,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory job store
+# In-memory job store. To avoid unbounded growth over a long session (each
+# /process stores full clip metadata + words), keep only the most recent jobs
+# and drop the oldest completed/failed ones.
 JOBS: Dict[str, dict] = {}
+_JOBS_ORDER: List[str] = []
+MAX_JOBS = 60
 ENGINE = VideoClipperEngine()
 CHAT = EditChat()
+
+
+def _prune_jobs():
+    """Drop oldest terminal jobs when the ring buffer exceeds MAX_JOBS.
+    Active/queued jobs are kept; we only stop scanning once we've removed what
+    we can (bounded to MAX_JOBS work so a pathological session can't spin).
+    """
+    scanned = 0
+    while len(JOBS) > MAX_JOBS and _JOBS_ORDER and scanned < MAX_JOBS:
+        oldest = _JOBS_ORDER.pop(0)
+        scanned += 1
+        if oldest in JOBS and JOBS[oldest].get("status") in ("completed", "failed"):
+            del JOBS[oldest]
+        elif oldest in JOBS:
+            # Still running - move to back so it eventually gets pruned after
+            # it completes, and stop scanning to avoid a spin.
+            _JOBS_ORDER.append(oldest)
+            break
 
 
 class HealthResponse(BaseModel):
@@ -85,9 +107,15 @@ def health():
 def process_video(req: ProcessRequest):
     if not os.path.exists(req.video_path):
         raise HTTPException(status_code=400, detail=f"Video file not found: {req.video_path}")
+    if not (1 <= req.max_clips <= 20):
+        raise HTTPException(status_code=400, detail="max_clips must be between 1 and 20")
+    if req.max_duration <= req.min_duration:
+        raise HTTPException(status_code=400, detail="max_duration must be greater than min_duration")
 
     job_id = uuid.uuid4().hex[:8]
     JOBS[job_id] = {"status": "queued", "clips": [], "error": None, "progress": 0}
+    _JOBS_ORDER.append(job_id)
+    _prune_jobs()
 
     def run():
         def progress_callback(step: str, pct: int):
@@ -432,8 +460,10 @@ def create_manual_trim(req: TrimRequest):
     """
     if not os.path.exists(req.video_path):
         raise HTTPException(status_code=400, detail=f"Video file not found: {req.video_path}")
-    if req.end_seconds <= req.start_seconds:
-        raise HTTPException(status_code=400, detail="end_seconds must be greater than start_seconds")
+    if req.start_seconds < 0 or req.end_seconds <= req.start_seconds:
+        raise HTTPException(status_code=400, detail="end_seconds must be greater than a non-negative start_seconds")
+    if req.end_seconds - req.start_seconds > 600:
+        raise HTTPException(status_code=400, detail="Trim range too long (max 10 minutes per clip)")
 
     video_dir = os.path.dirname(os.path.abspath(req.video_path))
     stem = os.path.splitext(os.path.basename(req.video_path))[0]
@@ -471,8 +501,15 @@ def render_custom_selection(req: CustomRenderRequest):
     """
     if not os.path.exists(req.video_path):
         raise HTTPException(status_code=400, detail=f"Video file not found: {req.video_path}")
-    if req.end_seconds <= req.start_seconds:
-        raise HTTPException(status_code=400, detail="end_seconds must be greater than start_seconds")
+    if req.start_seconds < 0 or req.end_seconds <= req.start_seconds:
+        raise HTTPException(status_code=400, detail="end_seconds must be greater than a non-negative start_seconds")
+    if req.end_seconds - req.start_seconds > 600:
+        raise HTTPException(status_code=400, detail="Trim range too long (max 10 minutes per clip)")
+
+    if req.layout not in ("vertical", "full", "game_reaction"):
+        raise HTTPException(status_code=400, detail=f"Unsupported layout: {req.layout}")
+    if req.aspect_ratio not in ("9:16", "1:1", "4:5", "16:9", "full", None):
+        raise HTTPException(status_code=400, detail=f"Unsupported aspect ratio: {req.aspect_ratio}")
 
     out_path = req.output_path or str(
         ENGINE.output_dir / f"manual_{uuid.uuid4().hex[:8]}" / "clip.mp4"
@@ -480,9 +517,6 @@ def render_custom_selection(req: CustomRenderRequest):
     if not Path(out_path).suffix:
         out_path += ".mp4"
     out_path = str(Path(out_path).expanduser().resolve())
-
-    if req.layout not in ("vertical", "full", "game_reaction"):
-        raise HTTPException(status_code=400, detail=f"Unsupported layout: {req.layout}")
 
     render_clip(
         input_video=req.video_path,
