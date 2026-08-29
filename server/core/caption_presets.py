@@ -9,7 +9,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "viral_yellow": {
         "name": "Viral Yellow Highlight",
         "font_name": "Arial Black",
-        "font_size": 26,
+        "font_size": 40,
         "primary_color": "&H00FFFFFF",
         "highlight_color": "&H0000FFFF",
         "outline_color": "&H00000000",
@@ -21,7 +21,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "neon_green": {
         "name": "Neon Green Pop",
         "font_name": "Impact",
-        "font_size": 28,
+        "font_size": 42,
         "primary_color": "&H00FFFFFF",
         "highlight_color": "&H0000FF00",
         "outline_color": "&H00111111",
@@ -33,7 +33,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "bold_white": {
         "name": "Bold Clean White",
         "font_name": "Montserrat ExtraBold",
-        "font_size": 24,
+        "font_size": 36,
         "primary_color": "&H00E0E0E0",
         "highlight_color": "&H00FFFFFF",
         "outline_color": "&H00000000",
@@ -45,7 +45,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "cyberpunk_cyan": {
         "name": "Cyberpunk Cyan",
         "font_name": "Arial Black",
-        "font_size": 26,
+        "font_size": 40,
         "primary_color": "&H00FFFF00",
         "highlight_color": "&H00FF00FF",
         "outline_color": "&H00050515",
@@ -57,7 +57,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "tiktok_pop": {
         "name": "TikTok Pop Red-Yellow",
         "font_name": "Arial Black",
-        "font_size": 27,
+        "font_size": 40,
         "primary_color": "&H0000FFFF",
         "highlight_color": "&H000022FF",
         "outline_color": "&H00000000",
@@ -69,7 +69,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "fire_red": {
         "name": "Fire Red Flame",
         "font_name": "Impact",
-        "font_size": 28,
+        "font_size": 42,
         "primary_color": "&H00FFFFFF",
         "highlight_color": "&H000033FF",
         "outline_color": "&H00000000",
@@ -81,7 +81,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "retro_vaporwave": {
         "name": "Retro Vaporwave",
         "font_name": "Trebuchet MS",
-        "font_size": 25,
+        "font_size": 38,
         "primary_color": "&H00FFB0E0",
         "highlight_color": "&H00FFFF00",
         "outline_color": "&H00330033",
@@ -93,7 +93,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "mrbeast_impact": {
         "name": "MrBeast Impact Yellow",
         "font_name": "Impact",
-        "font_size": 30,
+        "font_size": 46,
         "primary_color": "&H00FFFFFF",
         "highlight_color": "&H0000E6FF",
         "outline_color": "&H00000000",
@@ -105,7 +105,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "pastel_pink": {
         "name": "Pastel Pink Aesthetic",
         "font_name": "Arial",
-        "font_size": 24,
+        "font_size": 36,
         "primary_color": "&H00FFFFFF",
         "highlight_color": "&H00D8A4FF",
         "outline_color": "&H002E1B33",
@@ -117,7 +117,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "minimalist_dark": {
         "name": "Minimalist Dark Box",
         "font_name": "Helvetica",
-        "font_size": 23,
+        "font_size": 34,
         "primary_color": "&H00F0F0F0",
         "highlight_color": "&H004DF8FF",
         "outline_color": "&H00000000",
@@ -129,7 +129,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "comic_punch": {
         "name": "Comic Book Punch",
         "font_name": "Impact",
-        "font_size": 28,
+        "font_size": 42,
         "primary_color": "&H0000FFFF",
         "highlight_color": "&H00FFFFFF",
         "outline_color": "&H00000000",
@@ -141,7 +141,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "golden_hour": {
         "name": "Golden Hour Amber",
         "font_name": "Arial Black",
-        "font_size": 26,
+        "font_size": 40,
         "primary_color": "&H00E6F0FF",
         "highlight_color": "&H0010A5FF",
         "outline_color": "&H001A1005",
@@ -153,7 +153,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "electric_purple": {
         "name": "Electric Purple Violet",
         "font_name": "Arial Black",
-        "font_size": 26,
+        "font_size": 40,
         "primary_color": "&H00FFFFFF",
         "highlight_color": "&H00FF33B8",
         "outline_color": "&H001B0324",
@@ -165,7 +165,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "sunset_orange": {
         "name": "Sunset Coral Orange",
         "font_name": "Impact",
-        "font_size": 28,
+        "font_size": 42,
         "primary_color": "&H00FFFFFF",
         "highlight_color": "&H00147BFF",
         "outline_color": "&H000D0905",
@@ -177,7 +177,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "matrix_green": {
         "name": "Matrix Digital Green",
         "font_name": "Courier New",
-        "font_size": 25,
+        "font_size": 38,
         "primary_color": "&H0000CC00",
         "highlight_color": "&H0080FF80",
         "outline_color": "&H00001500",
@@ -189,7 +189,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "deep_blue": {
         "name": "Ice Blue Arctic",
         "font_name": "Arial Black",
-        "font_size": 26,
+        "font_size": 40,
         "primary_color": "&H00FFFFFF",
         "highlight_color": "&H00FFAA33",
         "outline_color": "&H00241005",
@@ -201,7 +201,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "boxed_karaoke": {
         "name": "Boxed Pill Karaoke",
         "font_name": "Arial",
-        "font_size": 25,
+        "font_size": 38,
         "primary_color": "&H00DDDDDD",
         "highlight_color": "&H0000E5FF",
         "outline_color": "&H00000000",
@@ -214,7 +214,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "glitch_shadow": {
         "name": "Glitch Cyan Shadow",
         "font_name": "Arial Black",
-        "font_size": 27,
+        "font_size": 40,
         "primary_color": "&H00FFFFFF",
         "highlight_color": "&H0030E0FF",
         "outline_color": "&H00FF00AA",
@@ -226,7 +226,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "elegant_serif": {
         "name": "Editorial Luxury Serif",
         "font_name": "Georgia",
-        "font_size": 24,
+        "font_size": 36,
         "primary_color": "&H00F5F5F5",
         "highlight_color": "&H006BD3FF",
         "outline_color": "&H001C1C1C",
@@ -238,7 +238,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "high_contrast": {
         "name": "Accessibility Hyper-Contrast",
         "font_name": "Arial Black",
-        "font_size": 28,
+        "font_size": 42,
         "primary_color": "&H00000000",
         "highlight_color": "&H000000FF",
         "outline_color": "&H0000FFFF",
@@ -250,7 +250,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "monochrome_chic": {
         "name": "Monochrome Chic Grayscale",
         "font_name": "Helvetica",
-        "font_size": 25,
+        "font_size": 38,
         "primary_color": "&H00888888",
         "highlight_color": "&H00FFFFFF",
         "outline_color": "&H00111111",
@@ -262,7 +262,7 @@ CAPTION_PRESETS: Dict[str, Dict[str, Any]] = {
     "gaming_rgb": {
         "name": "Gamer RGB Lime & Violet",
         "font_name": "Impact",
-        "font_size": 29,
+        "font_size": 44,
         "primary_color": "&H0000FF80",
         "highlight_color": "&H00FF20B0",
         "outline_color": "&H00000000",

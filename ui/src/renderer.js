@@ -7,7 +7,41 @@ let pollTimer = null;
 let generatedClips = [];
 let currentEditingClip = null;
 let currentProjectId = null;
+let currentWizardStep = 1;
 const PROJECTS_KEY = 'klipzy.projects.v1';
+
+function setWizardStep(stepNum) {
+  currentWizardStep = stepNum;
+  for (let i = 1; i <= 4; i++) {
+    const stepBtn = document.getElementById(`wizard-step-btn-${i}`);
+    const panel = document.getElementById(`step-panel-${i}`);
+    if (stepBtn) {
+      stepBtn.classList.toggle('active', i === stepNum);
+      stepBtn.classList.toggle('completed', i < stepNum);
+    }
+    if (panel) {
+      panel.classList.toggle('active', i === stepNum);
+    }
+  }
+  if (stepNum === 2) {
+    refreshPortraitCaptionPreview();
+  }
+}
+
+function resetWizardToStep1() {
+  selectedVideo = null;
+  generatedClips = [];
+  currentProjectId = null;
+  document.getElementById('file-name').textContent = '';
+  document.getElementById('file-info').classList.add('hidden');
+  document.getElementById('project-bar').classList.add('hidden');
+  document.getElementById('project-name').value = '';
+  document.getElementById('trim-panel').classList.add('hidden');
+  document.getElementById('clips-grid').innerHTML = '';
+  const nextBtn = document.getElementById('step1-next-btn');
+  if (nextBtn) nextBtn.disabled = true;
+  setWizardStep(1);
+}
 
 // Manual trim state
 let trimState = {
@@ -98,6 +132,65 @@ async function init() {
   loadSetupPanel();
   loadProjectList();
   populateCaptionPresets();
+  loadOutputFolder();
+}
+
+// Kept in sync with the server-side default (server/api/server.py) so the
+// "Clear / reset" button knows what to restore to when offline.
+const DEFAULT_OUTPUT_ROOT = '';
+
+async function loadOutputFolder() {
+  const input = document.getElementById('output-folder-input');
+  if (!input) return;
+  try {
+    const res = await fetch(`${serverUrl}/output-folder`);
+    if (res.ok) {
+      const data = await res.json();
+      input.value = data.folder || '';
+      const isDefault = !!data.is_default || !data.folder;
+      input.dataset.default = data.folder || DEFAULT_OUTPUT_ROOT;
+      document.getElementById('output-folder-row')?.classList.toggle('is-default', isDefault);
+    }
+  } catch (_) { /* server offline: leave path blank; browse will still work */ }
+}
+
+async function chooseOutputFolder() {
+  let folder = null;
+  if (window.clipperAPI && window.clipperAPI.selectOutputFolder) {
+    folder = await window.clipperAPI.selectOutputFolder();
+  } else {
+    // Browser fallback (no Electron): can't pick a folder, prompt for a path.
+    folder = window.prompt('Paste the folder path where Klipzy should save generated clips:');
+  }
+  if (!folder) return;
+  await saveOutputFolder(folder);
+}
+
+async function saveOutputFolder(folder) {
+  const input = document.getElementById('output-folder-input');
+  const folderValue = (folder || '').trim();
+  const body = JSON.stringify({ folder: folderValue });
+  try {
+    const res = await fetch(`${serverUrl}/output-folder`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || data.message || 'Failed to save output folder');
+    if (input) input.value = data.folder || folderValue;
+    const isDefault = !data.is_default || data.is_default === true || data.folder === (input?.dataset.default || '');
+    document.getElementById('output-folder-row')?.classList.toggle('is-default', !!isDefault);
+    showToast('Output folder updated ✅', 'success');
+  } catch (err) {
+    showToast(`Output folder not saved: ${err.message || err}`, 'error');
+  }
+}
+
+async function resetOutputFolder() {
+  const input = document.getElementById('output-folder-input');
+  const defaultPath = input?.dataset.default || DEFAULT_OUTPUT_ROOT;
+  await saveOutputFolder(defaultPath);
 }
 
 // Caption preset dropdown labels (emoji + display name). Single source of
@@ -133,29 +226,39 @@ const CAPTION_PRESET_LABELS = {
 const CAPTION_PRESET_IDS = Object.keys(CAPTION_PRESET_LABELS);
 
 async function populateCaptionPresets() {
-  let presets = null;
-  try {
-    const res = await fetch(`${serverUrl}/caption-presets`);
-    if (res.ok) presets = await res.json();
-  } catch (_) { /* offline -> fall back to static list */ }
-
-  const ids = presets && presets.length
-    ? presets.map((p) => p.id)
-    : CAPTION_PRESET_IDS;
-
-  const opts = ids
+  // Populate immediately with the static list so the dropdowns are never
+  // empty (e.g. while the server fetch is still in flight or offline).
+  const renderOptions = (ids) => ids
     .map((id) => `<option value="${escapeHtml(id)}">${escapeHtml(CAPTION_PRESET_LABELS[id] || id)}</option>`)
     .join('');
 
-  ['global-caption-preset', 'trim-caption-preset', 'caption-preset'].forEach((selId) => {
-    const sel = document.getElementById(selId);
-    if (sel && !sel.dataset.populated) {
-      const current = sel.value;
-      sel.innerHTML = opts;
-      if (current && ids.includes(current)) sel.value = current;
-      sel.dataset.populated = '1';
+  const fillSelects = (ids) => {
+    const opts = renderOptions(ids);
+    ['generated-caption-preset', 'caption-preset'].forEach((selId) => {
+      const sel = document.getElementById(selId);
+      if (sel && !sel.dataset.populated) {
+        const current = sel.value;
+        sel.innerHTML = opts;
+        if (current && ids.includes(current)) sel.value = current;
+        sel.dataset.populated = '1';
+      }
+    });
+    // Options just landed, so refresh the caption editor preview.
+    refreshCaptionPreview();
+  };
+
+  fillSelects(CAPTION_PRESET_IDS);
+
+  // Then upgrade to the full backend list (with any new presets) if reachable.
+  try {
+    const res = await fetch(`${serverUrl}/caption-presets`);
+    if (res.ok) {
+      const presets = await res.json();
+      if (presets && presets.length) {
+        fillSelects(presets.map((p) => p.id));
+      }
     }
-  });
+  } catch (_) { /* offline -> static list already populated */ }
 }
 
 function bindEvents() {
@@ -189,6 +292,15 @@ function bindEvents() {
   document.getElementById('change-file').addEventListener('click', () => fileInput.click());
   document.getElementById('save-project').addEventListener('click', saveCurrentProject);
   document.getElementById('project-list').addEventListener('change', (e) => {
+    if (e.target.value) openProject(e.target.value);
+  });
+
+  // Output folder (CapCut-style save location)
+  const browseOutput = document.getElementById('browse-output-folder');
+  if (browseOutput) browseOutput.addEventListener('click', chooseOutputFolder);
+  const resetOutput = document.getElementById('reset-output-folder');
+  if (resetOutput) resetOutput.addEventListener('click', resetOutputFolder);
+  document.getElementById('sidebar-project-list')?.addEventListener('change', (e) => {
     if (e.target.value) openProject(e.target.value);
   });
   document.getElementById('delete-project').addEventListener('click', deleteCurrentProject);
@@ -228,10 +340,121 @@ function bindEvents() {
   // Export-as format actions
   document.getElementById('export-compile')?.addEventListener('click', exportCompileReel);
 
+  // Global font size used by the initial Generate Clip render.
+  // Generated clips own the caption controls; keep the legacy generation
+  // preset synchronized so an initial render and later edits use one setting.
+  const generatedPreset = document.getElementById('generated-caption-preset');
+  generatedPreset?.addEventListener('change', refreshCaptionPreview);
+  const generatedFontSize = document.getElementById('generated-caption-font-size');
+  if (generatedFontSize) {
+    const label = document.getElementById('generated-caption-font-size-label');
+    const syncGenerated = () => {
+      if (label) label.textContent = generatedFontSize.value;
+      const previewFont = document.getElementById('caption-preview-font-size');
+      const previewLabel = document.getElementById('caption-preview-font-size-label');
+      if (previewFont) previewFont.value = generatedFontSize.value;
+      if (previewLabel) previewLabel.textContent = generatedFontSize.value;
+      applyCaptionPreviewStyle();
+    };
+    generatedFontSize.addEventListener('input', syncGenerated);
+    generatedFontSize.addEventListener('change', syncGenerated);
+  }
+  const previewFontSize = document.getElementById('caption-preview-font-size');
+  if (previewFontSize) {
+    const previewLabel = document.getElementById('caption-preview-font-size-label');
+    const syncPreview = () => {
+      const generatedFont = document.getElementById('generated-caption-font-size');
+      if (generatedFont) generatedFont.value = previewFontSize.value;
+      if (previewLabel) previewLabel.textContent = previewFontSize.value;
+      const generatedLabel = document.getElementById('generated-caption-font-size-label');
+      if (generatedLabel) generatedLabel.textContent = previewFontSize.value;
+      applyCaptionPreviewStyle();
+    };
+    previewFontSize.addEventListener('input', syncPreview);
+    previewFontSize.addEventListener('change', syncPreview);
+  }
   // Caption preset select inside the caption editor modal refreshes the preview.
   const captionPresetSelect = document.getElementById('caption-preset');
   if (captionPresetSelect) {
-    captionPresetSelect.addEventListener('change', refreshCaptionPreview);
+    captionPresetSelect.addEventListener('change', () => {
+      const generatedPreset = document.getElementById('generated-caption-preset');
+      if (generatedPreset) generatedPreset.value = captionPresetSelect.value;
+      refreshCaptionPreview();
+    });
+  }
+
+  // CapCut-style caption customization live updates
+  document.getElementById('caption-font-name')?.addEventListener('change', applyCaptionPreviewStyle);
+  document.getElementById('caption-primary-color')?.addEventListener('input', applyCaptionPreviewStyle);
+  document.getElementById('caption-highlight-color')?.addEventListener('input', applyCaptionPreviewStyle);
+  document.getElementById('caption-outline-color')?.addEventListener('input', applyCaptionPreviewStyle);
+
+  const outlineSlider = document.getElementById('caption-outline-width');
+  if (outlineSlider) {
+    const outlineLabel = document.getElementById('caption-outline-width-label');
+    const updateOutline = () => {
+      if (outlineLabel) outlineLabel.textContent = outlineSlider.value;
+      applyCaptionPreviewStyle();
+    };
+    outlineSlider.addEventListener('input', updateOutline);
+    outlineSlider.addEventListener('change', updateOutline);
+  }
+
+  document.getElementById('caption-uppercase')?.addEventListener('change', refreshCaptionPreview);
+  document.getElementById('caption-bold')?.addEventListener('change', applyCaptionPreviewStyle);
+  document.getElementById('caption-italic')?.addEventListener('change', applyCaptionPreviewStyle);
+  document.getElementById('caption-position')?.addEventListener('change', applyPortraitCaptionPreviewStyle);
+  document.getElementById('caption-chunk-size')?.addEventListener('change', refreshPortraitCaptionPreview);
+
+  // Wizard Stepper & Nav Actions
+  for (let i = 1; i <= 4; i++) {
+    const stepBtn = document.getElementById(`wizard-step-btn-${i}`);
+    if (stepBtn) {
+      stepBtn.addEventListener('click', () => {
+        if (i === 1) {
+          setWizardStep(1);
+        } else if (i === 2 && selectedVideo) {
+          setWizardStep(2);
+        } else if (i === 3 && selectedVideo) {
+          setWizardStep(3);
+        } else if (i === 4 && generatedClips && generatedClips.length > 0) {
+          setWizardStep(4);
+        }
+      });
+    }
+  }
+
+  const step1Next = document.getElementById('step1-next-btn');
+  if (step1Next) {
+    step1Next.addEventListener('click', () => {
+      if (selectedVideo) setWizardStep(2);
+    });
+  }
+
+  const step2Back = document.getElementById('step2-back-btn');
+  if (step2Back) {
+    step2Back.addEventListener('click', () => setWizardStep(1));
+  }
+
+  const captionToggleBtn = document.getElementById('caption-style-toggle-btn');
+  const captionWrap = document.getElementById('generated-caption-settings-wrap');
+  if (captionToggleBtn && captionWrap) {
+    captionToggleBtn.addEventListener('click', () => {
+      const isOpen = !captionWrap.classList.contains('hidden');
+      if (isOpen) {
+        captionWrap.classList.add('hidden');
+        captionToggleBtn.classList.remove('open');
+      } else {
+        captionWrap.classList.remove('hidden');
+        captionToggleBtn.classList.add('open');
+        refreshPortraitCaptionPreview();
+      }
+    });
+  }
+
+  const step4Restart = document.getElementById('step4-restart-btn');
+  if (step4Restart) {
+    step4Restart.addEventListener('click', resetWizardToStep1);
   }
 }
 
@@ -246,13 +469,6 @@ async function checkHealth() {
     statusEl.innerHTML = `<span class="dot ok"></span> Server ready`;
     if (!data.ffmpeg_available) {
       statusEl.innerHTML = `<span class="dot error"></span> FFmpeg missing`;
-  // Caption preset select inside manual trim refreshes preview
-  const trimCaptionPresetSelect = document.getElementById('trim-caption-preset');
-  if (trimCaptionPresetSelect) {
-    trimCaptionPresetSelect.addEventListener('change', applyTrimCaptionStyle);
-    applyTrimCaptionStyle();
-  }
-
     }
   } catch (e) {
     statusEl.innerHTML = `<span class="dot error"></span> Server offline`;
@@ -271,6 +487,8 @@ function selectVideoFile(file) {
   document.getElementById('project-bar').classList.remove('hidden');
   document.getElementById('project-name').value = file.name.replace(/\.[^.]+$/, '');
   document.getElementById('start-clipping').disabled = false;
+  const nextBtn = document.getElementById('step1-next-btn');
+  if (nextBtn) nextBtn.disabled = false;
   document.getElementById('clips-grid').innerHTML = '';
   document.getElementById('results').classList.add('hidden');
 
@@ -280,6 +498,7 @@ function selectVideoFile(file) {
   trimState.camVideo = null;
   document.getElementById('trim-panel').classList.remove('hidden');
   document.getElementById('cam-path').value = '';
+  setWizardStep(1);
 }
 
 function readProjects() {
@@ -301,6 +520,22 @@ function loadProjectList() {
     option.textContent = project.name || 'Untitled project';
     select.appendChild(option);
   });
+  const generatedPreset = document.getElementById('generated-caption-preset');
+  if (generatedPreset && currentProjectId) {
+    const project = readProjects().find((item) => item.id === currentProjectId);
+    if (project?.captionStyle) generatedPreset.value = project.captionStyle;
+    if (project?.fontSize) {
+      const font = document.getElementById('generated-caption-font-size');
+      if (font) font.value = project.fontSize;
+      const label = document.getElementById('generated-caption-font-size-label');
+      if (label && font) label.textContent = font.value;
+    }
+  }
+  const sidebarSelect = document.getElementById('sidebar-project-list');
+  if (sidebarSelect) {
+    sidebarSelect.innerHTML = select.innerHTML;
+    if (currentProjectId) sidebarSelect.value = currentProjectId;
+  }
 }
 
 function saveProjectManifest(showMessage = false) {
@@ -313,6 +548,10 @@ function saveProjectManifest(showMessage = false) {
     source: selectedVideo,
     sourceName: document.getElementById('file-name').textContent,
     clips: generatedClips,
+    captionStyle: document.getElementById('generated-caption-preset')?.value || 'viral_yellow',
+    fontSize: globalCaptionFontSize(),
+    captionOptions: collectCaptionOptions(),
+    outputFolder: document.getElementById('output-folder-input')?.value || '',
     updatedAt: new Date().toISOString(),
   };
   currentProjectId = project.id;
@@ -338,6 +577,7 @@ function openProject(id) {
   if (!project) return;
   currentProjectId = project.id;
   selectedVideo = project.source;
+  if (project.outputFolder) saveOutputFolder(project.outputFolder);
   generatedClips = Array.isArray(project.clips) ? project.clips : [];
   document.getElementById('file-name').textContent = project.sourceName || project.source;
   document.getElementById('file-info').classList.remove('hidden');
@@ -347,8 +587,76 @@ function openProject(id) {
   const video = document.getElementById('trim-video');
   video.src = `file://${selectedVideo}`;
   document.getElementById('trim-panel').classList.remove('hidden');
+
+  // Restore caption options if present
+  if (project.captionOptions) {
+    const o = project.captionOptions;
+    if (o.caption_style) {
+      const preset = document.getElementById('generated-caption-preset');
+      if (preset) preset.value = o.caption_style;
+    }
+    if (o.font_size) {
+      const font = document.getElementById('generated-caption-font-size');
+      if (font) font.value = o.font_size;
+      const label = document.getElementById('generated-caption-font-size-label');
+      if (label) label.textContent = o.font_size;
+    }
+    if (o.font_name !== undefined) {
+      const el = document.getElementById('caption-font-name');
+      if (el) el.value = o.font_name || '';
+    }
+    if (o.primary_color) {
+      const el = document.getElementById('caption-primary-color');
+      if (el) el.value = o.primary_color;
+    }
+    if (o.highlight_color) {
+      const el = document.getElementById('caption-highlight-color');
+      if (el) el.value = o.highlight_color;
+    }
+    if (o.outline_color) {
+      const el = document.getElementById('caption-outline-color');
+      if (el) el.value = o.outline_color;
+    }
+    if (o.outline_width !== undefined) {
+      const el = document.getElementById('caption-outline-width');
+      if (el) el.value = o.outline_width;
+      const label = document.getElementById('caption-outline-width-label');
+      if (label) label.textContent = o.outline_width;
+    }
+    if (o.position !== undefined) {
+      const el = document.getElementById('caption-position');
+      if (el) el.value = String(o.position);
+    }
+    if (o.chunk_size !== undefined) {
+      const el = document.getElementById('caption-chunk-size');
+      if (el) el.value = String(o.chunk_size || 0);
+    }
+    if (o.uppercase !== undefined) {
+      const el = document.getElementById('caption-uppercase');
+      if (el) el.checked = !!o.uppercase;
+    }
+    if (o.bold !== undefined) {
+      const el = document.getElementById('caption-bold');
+      if (el) el.checked = !!o.bold;
+    }
+    if (o.italic !== undefined) {
+      const el = document.getElementById('caption-italic');
+      if (el) el.checked = !!o.italic;
+    }
+    refreshCaptionPreview();
+  }
+
   showResults(generatedClips);
   document.getElementById('project-list').value = id;
+  const sidebarSelect = document.getElementById('sidebar-project-list');
+  if (sidebarSelect) sidebarSelect.value = id;
+  const nextBtn = document.getElementById('step1-next-btn');
+  if (nextBtn) nextBtn.disabled = !selectedVideo;
+  if (generatedClips && generatedClips.length > 0) {
+    setWizardStep(4);
+  } else {
+    setWizardStep(1);
+  }
 }
 
 async function deleteCurrentProject() {
@@ -357,7 +665,33 @@ async function deleteCurrentProject() {
   const project = projects.find((item) => item.id === currentProjectId);
   const confirmed = await showConfirm(`Delete project “${project.name}” and its generated files?`);
   if (!project || !confirmed) return;
-  const paths = (project.clips || []).map((clip) => clip.output_file).filter(Boolean);
+  // Collect every generated artifact belonging to this project. Clip folders
+  // (output/<job_id>) contain the rendered clips plus caption/transcript and
+  // temp re-render files; include them and all known per-clip paths so a
+  // deleted project leaves no temp output files behind.
+  const paths = [];
+  (project.clips || []).forEach((clip) => {
+    if (clip?.output_file) paths.push(clip.output_file);
+    if (clip?.srt_path) paths.push(clip.srt_path);
+    if (clip?.vtt_path) paths.push(clip.vtt_path);
+    if (clip?.ass_path) paths.push(clip.ass_path);
+    if (clip?.output_file) {
+      // The clip's own generation folder (contains captions, transcripts,
+      // audio, and old versions after re-renders).
+      const baseDir = clip.output_file.replace(/\\/g, '/').split('/').slice(0, -1).join('/');
+      if (baseDir) paths.push(baseDir);
+    }
+  });
+  // The project's "commands" and "analysis" folders from the generated clips
+  // area may still hold temp output; remove those too when they are inside
+  // the project job folder.
+  if (project.source) {
+    const stem = project.source.replace(/\\/g, '/').split('/').pop().replace(/\.\w+$/, '');
+    const srcDir = project.source.replace(/\\/g, '/').split('/').slice(0, -1).join('/');
+    [`.klipzy/${stem}`, `${stem}_tools`].forEach((p) => {
+      if (p) paths.push(`${srcDir}/${p}`);
+    });
+  }
   try {
     await fetch(`${serverUrl}/project/delete`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -365,15 +699,7 @@ async function deleteCurrentProject() {
     });
   } catch (_) { /* local project deletion still proceeds */ }
   writeProjects(projects.filter((item) => item.id !== currentProjectId));
-  currentProjectId = null;
-  generatedClips = [];
-  selectedVideo = null;
-  document.getElementById('project-name').value = '';
-  document.getElementById('project-bar').classList.add('hidden');
-  document.getElementById('file-info').classList.add('hidden');
-  document.getElementById('trim-panel').classList.add('hidden');
-  document.getElementById('results').classList.add('hidden');
-  document.getElementById('clips-grid').innerHTML = '';
+  resetWizardToStep1();
   loadProjectList();
 }
 
@@ -603,6 +929,7 @@ async function addTrimmedClip() {
     appendClipCard(clip, generatedClips.length - 1);
     saveCurrentProjectSilently();
     document.getElementById('results').classList.remove('hidden');
+    setWizardStep(4);
     playSuccessSound();
     showAlert('✅ Trimmed clip rendered!');
   } catch (err) {
@@ -617,6 +944,8 @@ async function addTrimmedClip() {
 // ------------------------------------------------------------------
 // Clipping
 // ------------------------------------------------------------------
+let lastLoggedStep = '';
+
 async function startClipping() {
   if (!selectedVideo) return;
 
@@ -624,14 +953,47 @@ async function startClipping() {
   btn.disabled = true;
   btn.textContent = '⏳ Processing...';
 
-  document.getElementById('progress-container').classList.remove('hidden');
-  document.getElementById('results').classList.add('hidden');
+  const fileName = document.getElementById('file-name')?.textContent || 'Selected Video';
+  const procTitle = document.getElementById('processing-video-title');
+  if (procTitle) procTitle.textContent = `Analyzing "${fileName}" — extracting audio, transcribing, and scoring viral clips...`;
+
+  const stageBadge = document.getElementById('progress-stage-badge');
+  if (stageBadge) stageBadge.textContent = 'Initializing';
+  const percentEl = document.getElementById('progress-percent');
+  if (percentEl) percentEl.textContent = '0%';
+  const stepEl = document.getElementById('progress-step');
+  if (stepEl) stepEl.textContent = 'Initializing AI models...';
+  const fillEl = document.getElementById('progress-fill');
+  if (fillEl) fillEl.style.width = '0%';
+
+  const logEl = document.getElementById('transcription-log');
+  if (logEl) {
+    lastLoggedStep = '';
+    logEl.innerHTML = '<p class="muted">Started AI video processing pipeline...</p>';
+  }
+
+  setWizardStep(3);
+
+  const captionOpts = collectCaptionOptions();
 
   const payload = {
     video_path: selectedVideo,
     vertical_crop: document.getElementById('vertical-crop').checked,
     aspect_ratio: document.getElementById('clip-aspect-ratio') ? document.getElementById('clip-aspect-ratio').value : '9:16',
-    caption_style: document.getElementById('global-caption-preset') ? document.getElementById('global-caption-preset').value : 'viral_yellow',
+    caption_style: captionOpts.caption_style,
+    font_size: captionOpts.font_size,
+    font_name: captionOpts.font_name,
+    primary_color: captionOpts.primary_color,
+    highlight_color: captionOpts.highlight_color,
+    outline_color: captionOpts.outline_color,
+    outline_width: captionOpts.outline_width,
+    position: captionOpts.position,
+    chunk_size: captionOpts.chunk_size,
+    uppercase: captionOpts.uppercase,
+    bold: captionOpts.bold,
+    italic: captionOpts.italic,
+    intro_caption: captionOpts.intro_caption,
+    intro_caption_duration: captionOpts.intro_caption_duration,
     max_clips: parseInt(document.getElementById('max-clips').value) || 5,
     min_duration: parseFloat(document.getElementById('min-duration').value) || 20,
     max_duration: parseFloat(document.getElementById('max-duration').value) || 60,
@@ -666,14 +1028,46 @@ function pollJob(jobId) {
 
   let ticking = false;
   pollTimer = setInterval(async () => {
-    if (ticking) return; // don't stack requests if a poll takes longer than the interval
+    if (ticking) return;
     ticking = true;
     try {
       const res = await fetch(`${serverUrl}/job/${jobId}`);
       const data = await res.json();
 
-      document.getElementById('progress-step').textContent = data.step || 'Processing...';
-      document.getElementById('progress-fill').style.width = `${data.progress || 0}%`;
+      const stepText = data.step || 'Processing...';
+      const progressNum = Math.round(data.progress || 0);
+
+      const stepEl = document.getElementById('progress-step');
+      if (stepEl) stepEl.textContent = stepText;
+      const fillEl = document.getElementById('progress-fill');
+      if (fillEl) fillEl.style.width = `${progressNum}%`;
+      const percentEl = document.getElementById('progress-percent');
+      if (percentEl) percentEl.textContent = `${progressNum}%`;
+
+      // Update stage badge
+      let stage = 'Processing';
+      const stepLower = stepText.toLowerCase();
+      if (stepLower.includes('transcrib') || stepLower.includes('whisper')) stage = 'Transcribing';
+      else if (stepLower.includes('audio') || stepLower.includes('energy')) stage = 'Audio Analysis';
+      else if (stepLower.includes('highlight') || stepLower.includes('score') || stepLower.includes('llm')) stage = 'AI Scoring';
+      else if (stepLower.includes('face') || stepLower.includes('crop') || stepLower.includes('track')) stage = 'Smart Cropping';
+      else if (stepLower.includes('caption') || stepLower.includes('render') || stepLower.includes('burn')) stage = 'Rendering Subtitles';
+      const badgeEl = document.getElementById('progress-stage-badge');
+      if (badgeEl) badgeEl.textContent = stage;
+
+      // Append log entry if changed
+      if (stepText && stepText !== lastLoggedStep) {
+        lastLoggedStep = stepText;
+        const logEl = document.getElementById('transcription-log');
+        if (logEl) {
+          const p = document.createElement('p');
+          const timeStr = new Date().toLocaleTimeString([], { hour12: false });
+          p.className = 'log-entry';
+          p.innerHTML = `<span class="log-time">[${timeStr}]</span> <span>${escapeHtml(stepText)} (${progressNum}%)</span>`;
+          logEl.appendChild(p);
+          logEl.scrollTop = logEl.scrollHeight;
+        }
+      }
 
       if (data.status === 'completed') {
         clearInterval(pollTimer);
@@ -687,7 +1081,7 @@ function pollJob(jobId) {
     } finally {
       ticking = false;
     }
-  }, 650); // 650ms is smooth enough for the progress bar without hammering localhost
+  }, 650);
 }
 
 // ------------------------------------------------------------------
@@ -698,19 +1092,24 @@ function showResults(clips) {
   generatedClips = clips || [];
   saveCurrentProjectSilently();
   const btn = document.getElementById('start-clipping');
-  btn.disabled = false;
-  btn.textContent = '🚀 Start Clipping';
-
-  document.getElementById('progress-container').classList.add('hidden');
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = '🚀 Start Clipping & Transcribing';
+  }
 
   const grid = document.getElementById('clips-grid');
-  grid.innerHTML = '';
+  if (grid) {
+    grid.innerHTML = '';
+    clips.forEach((clip, idx) => {
+      grid.appendChild(buildClipCard(clip, idx));
+    });
+  }
 
-  clips.forEach((clip, idx) => {
-    grid.appendChild(buildClipCard(clip, idx));
-  });
+  // Un-hide the results wrapper (selectVideoFile/reset mark it hidden).
+  const resultsEl = document.getElementById('results');
+  if (resultsEl) resultsEl.classList.remove('hidden');
 
-  document.getElementById('results').classList.remove('hidden');
+  setWizardStep(4);
 }
 
 function buildClipCard(clip, idx) {
@@ -724,7 +1123,11 @@ function buildClipCard(clip, idx) {
   const score = clip.score != null ? Number(clip.score).toFixed(1) : '–';
 
   card.innerHTML = `
-    <video controls preload="metadata"></video>
+    <div class="clip-video-wrap">
+      <video preload="metadata" playsinline></video>
+      <button class="clip-mute-btn" type="button" data-action="mute" aria-label="Mute preview">🔊</button>
+      <span class="clip-hover-hint">Hover to preview</span>
+    </div>
     <div class="clip-info">
       <div class="clip-headline">
         <div class="clip-title">${escapeHtml(title)}</div>
@@ -757,6 +1160,9 @@ function buildClipCard(clip, idx) {
 
   const video = card.querySelector('video');
   video.src = `file://${clip.output_file}`;
+  video.muted = true;
+  card.addEventListener('mouseenter', () => video.play().catch(() => {}));
+  card.addEventListener('mouseleave', () => { video.pause(); video.currentTime = 0; });
 
   card.addEventListener('click', (e) => {
     const actionBtn = e.target.closest('[data-action]');
@@ -767,6 +1173,11 @@ function buildClipCard(clip, idx) {
       case 'snip-silence': quickCutSilence(idx2); break;
       case 'bleep': quickBleepClip(idx2); break;
       case 'open-folder': revealInFolder(clip.output_file); break;
+      case 'mute':
+        e.stopPropagation();
+        video.muted = !video.muted;
+        actionBtn.textContent = video.muted ? '🔇' : '🔊';
+        break;
       case 'export': exportSingleClip(idx2); break;
     }
   });
@@ -888,6 +1299,21 @@ document.getElementById('export-standalone-btn')?.addEventListener('click', expo
 // ------------------------------------------------------------------
 // Export-As Media (single clip -> mp4/mov/mkv/webm/gif)
 // ------------------------------------------------------------------
+function safeFileName(value) {
+  return String(value || 'clip').replace(/[^a-z0-9 _-]/gi, '').trim().replace(/\s+/g, '_').slice(0, 70) || 'clip';
+}
+
+async function chooseExportFolder(clip) {
+  const configured = document.getElementById('output-folder-input')?.value?.trim();
+  if (configured) return configured;
+  if (window.clipperAPI?.selectOutputFolder) {
+    const picked = await window.clipperAPI.selectOutputFolder();
+    if (picked) return picked;
+  }
+  const fallback = window.prompt('Choose a folder for this exported clip bundle:', configured || '');
+  return fallback?.trim() || null;
+}
+
 window.exportSingleClip = async function (clipIndex) {
   const clip = generatedClips[clipIndex];
   if (!clip || !clip.output_file) {
@@ -897,18 +1323,24 @@ window.exportSingleClip = async function (clipIndex) {
   }
   const sel = document.querySelector(`.clip-export-fmt[data-clip-idx="${clipIndex}"]`);
   const fmt = sel ? sel.value : 'mp4';
+  const exportFolder = await chooseExportFolder(clip);
+  if (!exportFolder) return;
   const btn = document.querySelector(`.btn-export[data-clip-idx="${clipIndex}"]`);
   if (btn) {
     btn.disabled = true;
     btn.textContent = '⏳ Exporting…';
   }
   try {
-    const res = await fetch(`${serverUrl}/export/media`, {
+    const res = await fetch(`${serverUrl}/export/clip-bundle`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         video_path: clip.output_file,
+        output_dir: exportFolder,
+        title: clip.title || clip.hook_text || 'clip',
         format: fmt,
+        srt_path: clip.srt_path,
+        ass_path: clip.ass_path,
       })
     });
     const data = await res.json();
@@ -1005,48 +1437,199 @@ const CAPTION_PREVIEW = {
   gaming_rgb:    { text: '#80ffaa', accent: '#ff20b0', back: '#000000', font: 'Impact' },
 };
 
+function captionFontSize() {
+  // The generated-clips toolbar is the single source of truth for both the
+  // initial render and the caption editor preview.
+  const slider = document.getElementById('generated-caption-font-size');
+  const n = parseFloat(slider ? slider.value : '40');
+  return Number.isFinite(n) ? n : 40;
+}
+
+function globalCaptionFontSize() {
+  const slider = document.getElementById('generated-caption-font-size');
+  const n = parseFloat(slider ? slider.value : '40');
+  return Number.isFinite(n) ? n : 40;
+}
+
+function collectCaptionOptions() {
+  const preset = document.getElementById('generated-caption-preset')?.value || 'viral_yellow';
+  const fontSize = globalCaptionFontSize();
+  const fontName = document.getElementById('caption-font-name')?.value || null;
+  const primaryColor = document.getElementById('caption-primary-color')?.value || null;
+  const highlightColor = document.getElementById('caption-highlight-color')?.value || null;
+  const outlineColor = document.getElementById('caption-outline-color')?.value || null;
+  const outlineWidthVal = document.getElementById('caption-outline-width')?.value;
+  const outlineWidth = outlineWidthVal !== undefined && outlineWidthVal !== '' ? parseInt(outlineWidthVal, 10) : null;
+  const positionVal = document.getElementById('caption-position')?.value;
+  const position = positionVal ? parseInt(positionVal, 10) : null;
+  const chunkSizeVal = document.getElementById('caption-chunk-size')?.value;
+  const chunkSize = chunkSizeVal && chunkSizeVal !== '0' ? parseInt(chunkSizeVal, 10) : null;
+  const uppercase = document.getElementById('caption-uppercase')?.checked || false;
+  const bold = document.getElementById('caption-bold')?.checked || false;
+  const italic = document.getElementById('caption-italic')?.checked || false;
+  const introEnabled = document.getElementById('caption-intro-enabled')?.checked || false;
+  const introCaption = introEnabled ? (document.getElementById('caption-intro-text')?.value || '').trim() : null;
+  const introCaptionDuration = parseFloat(document.getElementById('caption-intro-duration')?.value || '3');
+
+  return {
+    caption_style: preset,
+    style_preset: preset,
+    font_size: fontSize,
+    font_name: fontName || undefined,
+    primary_color: primaryColor || undefined,
+    highlight_color: highlightColor || undefined,
+    outline_color: outlineColor || undefined,
+    outline_width: Number.isFinite(outlineWidth) ? outlineWidth : undefined,
+    position: Number.isFinite(position) ? position : undefined,
+    chunk_size: Number.isFinite(chunkSize) ? chunkSize : undefined,
+    uppercase,
+    bold,
+    italic,
+    intro_caption: introCaption || undefined,
+    intro_caption_duration: Number.isFinite(introCaptionDuration) ? introCaptionDuration : 3,
+  };
+}
+
 function applyCaptionPreviewStyle() {
   const preview = document.getElementById('caption-preview');
   if (!preview) return;
-  const presetId = document.getElementById('caption-preset')?.value || 'viral_yellow';
-  const style = CAPTION_PREVIEW[presetId] || CAPTION_PREVIEW.viral_yellow;
+  const presetId = document.getElementById('generated-caption-preset')?.value || 'viral_yellow';
+  const baseStyle = CAPTION_PREVIEW[presetId] || CAPTION_PREVIEW.viral_yellow;
 
-  preview.style.color = style.text;
-  preview.style.fontFamily = style.font;
-  preview.style.textShadow = style.back !== '#000000'
-    ? `3px 3px 0 ${style.back}, 0 0 18px ${style.accent}55`
-    : `0 0 18px ${style.accent}55, 0 2px 12px rgba(0,0,0,0.9)`;
+  const fontName = document.getElementById('caption-font-name')?.value;
+  const primaryColor = document.getElementById('caption-primary-color')?.value;
+  const highlightColor = document.getElementById('caption-highlight-color')?.value;
+  const outlineColor = document.getElementById('caption-outline-color')?.value;
+  const outlineWidth = parseInt(document.getElementById('caption-outline-width')?.value || '3', 10);
+  const isUppercase = document.getElementById('caption-uppercase')?.checked;
+  const isBold = document.getElementById('caption-bold')?.checked;
+  const isItalic = document.getElementById('caption-italic')?.checked;
+
+  const font = fontName || baseStyle.font;
+  const textColor = primaryColor || baseStyle.text;
+  const accentColor = highlightColor || baseStyle.accent;
+  const strokeColor = outlineColor || baseStyle.back;
+
+  preview.style.color = textColor;
+  preview.style.fontFamily = font;
+  const previewStage = preview.parentElement;
+  const ratio = document.getElementById('clip-aspect-ratio')?.value || '9:16';
+  const canvasWidth = ratio === '16:9' ? 1920 : 1080;
+  const previewWidth = previewStage?.clientWidth > 0 ? previewStage.clientWidth : 540;
+  const previewScale = previewWidth / canvasWidth;
+  preview.style.fontSize = `${Math.max(1, Math.round(captionFontSize() * previewScale))}px`;
+  preview.style.fontWeight = isBold ? '900' : 'normal';
+  preview.style.fontStyle = isItalic ? 'italic' : 'normal';
+  preview.style.textTransform = isUppercase ? 'uppercase' : 'none';
+
+  if (outlineWidth > 0) {
+    const o = strokeColor || '#000000';
+    const w = outlineWidth;
+    preview.style.textShadow = `${w}px 0 0 ${o}, -${w}px 0 0 ${o}, 0 ${w}px 0 ${o}, 0 -${w}px 0 ${o}, ${w}px ${w}px 0 ${o}, -${w}px -${w}px 0 ${o}, ${w}px -${w}px 0 ${o}, -${w}px ${w}px 0 ${o}, 0 0 16px ${accentColor}55`;
+  } else {
+    preview.style.textShadow = `0 0 16px ${accentColor}55`;
+  }
 
   const highlights = preview.querySelectorAll('mark');
-  highlights.forEach((m) => { m.style.color = style.accent; });
+  highlights.forEach((m) => {
+    m.style.color = accentColor;
+    m.style.background = 'transparent';
+  });
+  applyPortraitCaptionPreviewStyle();
 }
 
 function refreshCaptionPreview() {
   const preview = document.getElementById('caption-preview');
   if (!preview) return;
-  const words = preview.dataset.words || 'Your caption appears here';
+  const rawWords = preview.dataset.words || 'Your caption appears here';
+  const isUppercase = document.getElementById('caption-uppercase')?.checked;
+  const words = isUppercase ? rawWords.toUpperCase() : rawWords;
+
+
   // Render words, highlighting every few so the accent shows like a karaoke lead.
+
   const list = words.split(' ').map((w, i) => (i % 3 === 0 ? `<mark>${escapeHtml(w)}</mark>` : escapeHtml(w)));
   preview.innerHTML = list.join(' ');
-  preview.dataset.words = words;
+  preview.dataset.words = rawWords;
+  refreshPortraitCaptionPreview();
   applyCaptionPreviewStyle();
 }
-function applyTrimCaptionStyle() {
-  const sampleEl = document.getElementById('trim-caption-sample');
-  if (!sampleEl) return;
-  const presetId = document.getElementById('trim-caption-preset')?.value || 'viral_yellow';
-  const style = CAPTION_PREVIEW[presetId] || CAPTION_PREVIEW.viral_yellow;
 
-  sampleEl.style.color = style.text;
-  sampleEl.style.fontFamily = style.font;
-  sampleEl.style.textShadow = style.back !== '#000000'
-    ? `2px 2px 0 ${style.back}, 0 0 14px ${style.accent}66`
-    : `0 0 14px ${style.accent}66, 0 2px 10px rgba(0,0,0,0.9)`;
+function applyPortraitCaptionPreviewStyle() {
+  const preview = document.getElementById('portrait-caption-preview');
+  if (!preview) return;
+  const presetId = document.getElementById('generated-caption-preset')?.value || 'viral_yellow';
+  const baseStyle = CAPTION_PREVIEW[presetId] || CAPTION_PREVIEW.viral_yellow;
 
-  const highlights = sampleEl.querySelectorAll('mark');
-  highlights.forEach((m) => { m.style.color = style.accent; });
+  const fontName = document.getElementById('caption-font-name')?.value;
+  const primaryColor = document.getElementById('caption-primary-color')?.value;
+  const highlightColor = document.getElementById('caption-highlight-color')?.value;
+  const outlineColor = document.getElementById('caption-outline-color')?.value;
+  const outlineWidth = parseInt(document.getElementById('caption-outline-width')?.value || '3', 10);
+  const isBold = document.getElementById('caption-bold')?.checked;
+  const isItalic = document.getElementById('caption-italic')?.checked;
+  const isUppercase = document.getElementById('caption-uppercase')?.checked;
+
+  const font = fontName || baseStyle.font;
+  const textColor = primaryColor || baseStyle.text;
+  const accentColor = highlightColor || baseStyle.accent;
+  const strokeColor = outlineColor || baseStyle.back;
+
+  const positionVal = document.getElementById('caption-position')?.value || '2';
+  const alignClass = ['1'].includes(positionVal) ? 'caption-align-left' : (['3'].includes(positionVal) ? 'caption-align-right' : 'caption-align-center');
+  const verticalClass = ['8'].includes(positionVal) ? 'caption-pos-top' : (['2', '1', '3'].includes(positionVal) ? 'caption-pos-bottom' : 'caption-pos-middle');
+  const screenEl = preview.parentElement;
+  if (screenEl) {
+    screenEl.classList.remove('caption-align-left', 'caption-align-right', 'caption-align-center');
+    screenEl.classList.remove('caption-pos-top', 'caption-pos-bottom', 'caption-pos-middle');
+    screenEl.classList.add(alignClass, verticalClass);
+  }
+
+  // Calculate proportional font size matching 1080x1920 video canvas
+  const containerWidth = (screenEl && screenEl.clientWidth > 0) ? screenEl.clientWidth : 200;
+  const rawSize = captionFontSize();
+  const ratio = document.getElementById('clip-aspect-ratio')?.value || '9:16';
+  const canvasWidth = ratio === '16:9' ? 1920 : (ratio === '1:1' ? 1080 : (ratio === '4:5' ? 1080 : 1080));
+  const scaledFontSize = Math.max(1, Math.round(rawSize * (containerWidth / canvasWidth)));
+  const scaledOutline = Math.max(0, Math.round(outlineWidth * (containerWidth / canvasWidth)));
+
+  preview.style.color = textColor;
+  preview.style.fontFamily = font;
+  preview.style.fontSize = `${scaledFontSize}px`;
+  preview.style.fontWeight = isBold ? '900' : 'normal';
+  preview.style.fontStyle = isItalic ? 'italic' : 'normal';
+  preview.style.textTransform = isUppercase ? 'uppercase' : 'none';
+
+  if (outlineWidth > 0) {
+    const o = strokeColor || '#000000';
+    const w = scaledOutline;
+    preview.style.textShadow = `${w}px 0 0 ${o}, -${w}px 0 0 ${o}, 0 ${w}px 0 ${o}, 0 -${w}px 0 ${o}, ${w}px ${w}px 0 ${o}, -${w}px -${w}px 0 ${o}, ${w}px -${w}px 0 ${o}, -${w}px ${w}px 0 ${o}, 0 0 14px ${accentColor}55`;
+  } else {
+    preview.style.textShadow = `0 0 14px ${accentColor}55`;
+  }
+
+  const highlights = preview.querySelectorAll('mark');
+  highlights.forEach((m) => {
+    m.style.color = accentColor;
+    m.style.background = 'transparent';
+  });
 }
 
+
+function refreshPortraitCaptionPreview() {
+  const preview = document.getElementById('portrait-caption-preview');
+  if (!preview) return;
+  const rawWords = preview.dataset.words || 'Your caption appears here';
+  const isUppercase = document.getElementById('caption-uppercase')?.checked;
+  const words = isUppercase ? rawWords.toUpperCase() : rawWords;
+
+
+  // Mirror the modal preview: highlight every 3rd word with the accent color.
+  const list = words.split(' ').map((w, i) => (i % 3 === 0 ? `<mark>${escapeHtml(w)}</mark>` : escapeHtml(w)));
+  preview.innerHTML = list.join(' ');
+  preview.dataset.words = rawWords;
+  applyPortraitCaptionPreviewStyle();
+}
 
 // ------------------------------------------------------------------
 // Interactive Caption Editor
@@ -1078,6 +1661,13 @@ window.openCaptionEditor = function(clipIndex) {
     preview.dataset.words = sample.length ? sample : 'Your caption appears here';
     refreshCaptionPreview();
   }
+  const previewFontSize = document.getElementById('caption-preview-font-size');
+  const generatedFontSize = document.getElementById('generated-caption-font-size');
+  const previewFontLabel = document.getElementById('caption-preview-font-size-label');
+  if (previewFontSize && generatedFontSize) {
+    previewFontSize.value = generatedFontSize.value;
+    if (previewFontLabel) previewFontLabel.textContent = generatedFontSize.value;
+  }
 
   modal.classList.remove('hidden');
 };
@@ -1090,6 +1680,13 @@ document.getElementById('save-captions-btn')?.addEventListener('click', async ()
   if (!currentEditingClip) {
     document.getElementById('caption-modal').classList.add('hidden');
     return;
+  }
+
+  const saveBtn = document.getElementById('save-captions-btn');
+  const originalText = saveBtn ? saveBtn.textContent : '💾 Save & Apply Subtitles';
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = '⏳ Saving & Burning Captions…';
   }
 
   // Read edited word chips: [word] [start] now editable
@@ -1108,21 +1705,44 @@ document.getElementById('save-captions-btn')?.addEventListener('click', async ()
   });
 
   if (!editedWords.length) {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = originalText;
+    }
     showAlert('No editable words found.');
     return;
   }
 
-  const preset = document.getElementById('caption-preset')?.value || 'viral_yellow';
-  const outputPath = currentEditingClip.ass_path ? currentEditingClip.ass_path.replace(/\.ass$/i, '.srt') : '';
+  const captionOpts = collectCaptionOptions();
+  const outputPath = currentEditingClip.ass_path
+    ? currentEditingClip.ass_path.replace(/\.ass$/i, '.srt')
+    : `${currentEditingClip.output_file}.srt`;
 
   try {
     const res = await fetch(`${serverUrl}/export/subtitles`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        output_path: outputPath || `${currentEditingClip.output_file}.srt`,
+        output_path: outputPath,
         words: editedWords,
-        style_preset: preset,
+        style_preset: captionOpts.style_preset,
+        font_size: captionOpts.font_size,
+        font_name: captionOpts.font_name,
+        primary_color: captionOpts.primary_color,
+        highlight_color: captionOpts.highlight_color,
+        outline_color: captionOpts.outline_color,
+        outline_width: captionOpts.outline_width,
+        position: captionOpts.position,
+        chunk_size: captionOpts.chunk_size,
+        uppercase: captionOpts.uppercase,
+        bold: captionOpts.bold,
+        italic: captionOpts.italic,
+        source_video: selectedVideo,
+        clip_output_file: currentEditingClip.output_file,
+        start_seconds: currentEditingClip.start_time,
+        end_seconds: currentEditingClip.end_time,
+        aspect_ratio: document.getElementById('clip-aspect-ratio')?.value || '9:16',
+        re_render: true,
       })
     });
     const data = await res.json();
@@ -1130,14 +1750,31 @@ document.getElementById('save-captions-btn')?.addEventListener('click', async ()
       // Update in-memory clip state
       currentEditingClip.words = editedWords;
       if (data.export_path) currentEditingClip.srt_path = data.export_path;
-      showAlert(`✅ ${data.message}\n\nNote: burned-in captions require re-rendering the clip to take effect.`);
+
+      // Reload the matching video in the clip card to play the updated burned captions
+      const cards = document.querySelectorAll('.clip-card');
+      cards.forEach((card) => {
+        const vid = card.querySelector('video');
+        if (vid && vid.src && vid.src.includes(encodeURIComponent(currentEditingClip.output_file).replace(/%2F/g, '/').replace(/%5C/g, '/')) || (vid && vid.src.endsWith(currentEditingClip.output_file.replace(/\\/g, '/')))) {
+          vid.src = `file://${currentEditingClip.output_file}?t=${Date.now()}`;
+          vid.load();
+        }
+      });
+      saveCurrentProjectSilently();
+      playSuccessSound();
+      showAlert(`✅ Captions updated and applied to clip!`);
     } else {
       showAlert(`Save failed: ${data.detail || 'Unknown error'}`);
     }
   } catch (err) {
     showAlert(`Save error: ${err.message}`);
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = originalText;
+    }
+    document.getElementById('caption-modal').classList.add('hidden');
   }
-  document.getElementById('caption-modal').classList.add('hidden');
 });
 
 function revealInFolder(filePath) {
@@ -1205,9 +1842,11 @@ window.quickBleepClip = async function(clipIndex) {
 function showError(message) {
   playErrorSound();
   const btn = document.getElementById('start-clipping');
-  btn.disabled = false;
-  btn.textContent = '🚀 Start Clipping';
-  document.getElementById('progress-container').classList.add('hidden');
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = '🚀 Start Clipping & Transcribing';
+  }
+  setWizardStep(2);
   showAlert(`Error: ${message}`);
 }
 
@@ -1305,9 +1944,9 @@ function renderHardware(data) {
 function renderRecommendations(recs) {
   if (!recs) return;
   const items = [
-    { name: '🎤 Whisper (transcription)', ...recs.whisper },
-    { name: '👁️ YOLO (face tracking)', ...recs.yolo },
-    { name: '🤖 Ollama (AI edit chat)', ...recs.ollama },
+    { key: 'whisper', name: '🎤 Whisper (transcription)', ...recs.whisper },
+    { key: 'yolo', name: '👁️ YOLO (face tracking)', ...recs.yolo },
+    { key: 'ollama', name: '🤖 Ollama (AI edit chat)', ...recs.ollama },
   ];
   document.getElementById('setup-recommendations').innerHTML = items.map((it) => `
     <div class="rec-card">
@@ -1318,7 +1957,22 @@ function renderRecommendations(recs) {
         ${it.realtime_factor ? `<span class="rec-chip">${escapeHtml(it.realtime_factor)}</span>` : ''}
       </div>
       <div class="rec-note muted">${escapeHtml(it.note || '')}</div>
+      ${it.choices ? `<div class="rec-choices">${it.choices.map((choice) => `
+        <button class="btn btn-small rec-choice" data-model-kind="${it.key}" data-model="${escapeHtml(choice.model)}">
+          ${escapeHtml(choice.tier)}: ${escapeHtml(choice.model)}
+        </button>`).join('')}</div>` : ''}
     </div>`).join('');
+  document.querySelectorAll('.rec-choice').forEach((button) => {
+    button.addEventListener('click', () => {
+      if (button.dataset.modelKind === 'whisper') {
+        const select = document.getElementById('whisper-model');
+        if (select) select.value = button.dataset.model;
+        showToast(`Whisper model set to ${button.dataset.model}`, 'success');
+      } else {
+        showToast(`${button.dataset.model} is the recommended Ollama choice. Ollama will use it locally when AI is enabled.`, 'info');
+      }
+    });
+  });
 }
 
 const DEP_DEF = {
@@ -1336,7 +1990,7 @@ const DEP_DEF = {
   },
   ollama: {
     label: 'Ollama (Required)',
-    desc: 'Local LLM engine — auto-pulls the model on first use (or via Pull button below)',
+    desc: 'Install Ollama once; Klipzy connects to its local service automatically when AI analysis or chat is enabled.',
     check: (d) => d.ollama && d.ollama.installed,
     statusText: (d) => {
       if (!d.ollama || !d.ollama.installed) return 'Missing - required';

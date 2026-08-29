@@ -12,10 +12,16 @@
     <aside class="sidebar">
       <div class="logo">
         <span class="logo-icon">🎬</span>
-        <span class="logo-text">AI Clipper</span>
+        <span class="logo-text">Klipzy Studio</span>
+      </div>
+      <div class="sidebar-projects">
+        <label for="sidebar-project-list">📁 Projects</label>
+        <select id="sidebar-project-list" title="Open saved project">
+          <option value="">Open saved project…</option>
+        </select>
       </div>
       <nav class="nav">
-        <button class="nav-item active" data-view="clipper">✂️ Clipper</button>
+        <button class="nav-item active" data-view="clipper">✂️ Shorts Clipper</button>
         <button class="nav-item" data-view="chat">💬 AI Edit Chat</button>
         <button class="nav-item" data-view="setup">⚙️ Setup</button>
       </nav>
@@ -35,25 +41,60 @@
           <p class="subtitle">Local AI video clipper by TechFreq — turn long videos into viral vertical shorts, 100% on your machine.</p>
         </header>
 
-        <div class="card drop-zone" id="drop-zone">
-          <div class="drop-content">
-            <span class="drop-icon">🎞️</span>
-            <h3>Drop a video here or click to browse</h3>
-            <p class="muted">MP4, MOV, MKV, WebM — processed entirely on your device</p>
+        <!-- Stepper Navigation Bar -->
+        <div class="wizard-stepper" id="wizard-stepper">
+          <div class="wizard-step active" data-step="1" id="wizard-step-btn-1">
+            <span class="step-num">1</span>
+            <span class="step-label">📁 Project & Video</span>
           </div>
-          <input type="file" id="file-input" accept="video/*" hidden />
+          <div class="step-line"></div>
+          <div class="wizard-step" data-step="2" id="wizard-step-btn-2">
+            <span class="step-num">2</span>
+            <span class="step-label">✂️ Clipping & Style</span>
+          </div>
+          <div class="step-line"></div>
+          <div class="wizard-step" data-step="3" id="wizard-step-btn-3">
+            <span class="step-num">3</span>
+            <span class="step-label">⚡ Transcribing & Process</span>
+          </div>
+          <div class="step-line"></div>
+          <div class="wizard-step" data-step="4" id="wizard-step-btn-4">
+            <span class="step-num">4</span>
+            <span class="step-label">🔥 Generated Clips</span>
+          </div>
         </div>
 
-        <div id="file-info" class="file-info hidden">
-          <span id="file-name"></span>
-          <button class="btn btn-small" id="change-file">Change</button>
-        </div>
-        <div id="project-bar" class="project-bar hidden">
-          <input id="project-name" type="text" placeholder="Project name" maxlength="80" />
-          <button class="btn btn-small btn-primary" id="save-project">💾 Save Project</button>
-          <select id="project-list" title="Open saved project"><option value="">Open saved project…</option></select>
-          <button class="btn btn-small btn-danger" id="delete-project">🗑 Delete Project</button>
-        </div>
+        <!-- STEP 1: Project & Video Input -->
+        <div id="step-panel-1" class="wizard-panel active">
+          <div class="card drop-zone" id="drop-zone">
+            <div class="drop-content">
+              <span class="drop-icon">🎞️</span>
+              <h3>Drop a video here or click to browse</h3>
+              <p class="muted">MP4, MOV, MKV, WebM — processed entirely on your device</p>
+            </div>
+            <input type="file" id="file-input" accept="video/*" hidden />
+          </div>
+
+          <div id="file-info" class="file-info hidden">
+            <span id="file-name"></span>
+            <button class="btn btn-small" id="change-file">Change</button>
+          </div>
+          <div id="project-bar" class="project-bar hidden">
+            <input id="project-name" type="text" placeholder="Project name" maxlength="80" />
+            <button class="btn btn-small btn-primary" id="save-project">💾 Save Project</button>
+            <select id="project-list" title="Open saved project"><option value="">Open saved project…</option></select>
+            <button class="btn btn-small btn-danger" id="delete-project">🗑 Delete Project</button>
+          </div>
+
+          <!-- Output folder picker -->
+          <div id="output-folder-row" class="card output-folder-row">
+            <label for="output-folder-input" class="output-folder-label">📁 Save generated clips to:</label>
+            <div class="output-folder-controls">
+              <input id="output-folder-input" type="text" placeholder="Choose an output folder…" readonly />
+              <button class="btn btn-small btn-secondary" id="browse-output-folder">📂 Browse…</button>
+              <button class="btn btn-small" id="reset-output-folder" title="Reset to the default Output folder">↺ Reset</button>
+            </div>
+          </div>
 
         <!-- Manual Clip Trimmer -->
         <div id="trim-panel" class="card trim-panel hidden">
@@ -64,7 +105,9 @@
 
           <div class="trim-body">
             <div class="trim-preview-col">
-              <video id="trim-video" class="trim-video" controls preload="metadata" disablepictureinpicture></video>
+              <div class="trim-video-wrap">
+                <video id="trim-video" class="trim-video" controls preload="metadata" disablepictureinpicture></video>
+              </div>
               <div id="trim-timeline" class="trim-timeline">
                 <div id="trim-playhead" class="trim-playhead"></div>
                 <div id="trim-selection" class="trim-selection"></div>
@@ -115,22 +158,6 @@
                 </label>
                 <p class="muted small">Pick a webcam or face-cam recording that plays alongside your gameplay for a classic reaction layout.</p>
               </div>
-              <!-- Caption Style Preview for Manual Trim -->
-              <div class="trim-caption-group">
-                <label class="option">
-                  <span>Caption Style Preset</span>
-                  <select id="trim-caption-preset">
-                    <!-- Options are populated from /caption-presets at startup -->
-                  </select>
-                </label>
-                <div class="trim-caption-preview-box">
-                  <div class="trim-caption-sample-text" id="trim-caption-sample">
-                    viral clips <mark>made easy</mark>
-                  </div>
-                </div>
-              </div>
-
-
               <div class="trim-actions">
                 <button class="btn btn-primary" id="add-trim-btn">➕ Add Trimmed Clip</button>
                 <button class="btn btn-secondary" id="trim-preview-btn">▶ Preview Selection</button>
@@ -139,8 +166,18 @@
           </div>
         </div>
 
+        <div class="step-actions">
+          <button class="btn btn-primary btn-large" id="step1-next-btn" disabled>Next: Clipping & Caption Options ➡️</button>
+        </div>
+      </div>
+
+      <!-- STEP 2: Clipping Options & Collapsible Caption Styling -->
+      <div id="step-panel-2" class="wizard-panel">
         <div class="card options-card">
-          <h3>Clipping Options</h3>
+          <div class="panel-header-row">
+            <h3>✂️ Clipping Options</h3>
+            <button class="btn btn-small btn-secondary" id="step2-back-btn">⬅️ Back to Project/Video</button>
+          </div>
           <div class="options-grid">
             <label class="option">
               <span>Max clips</span>
@@ -173,12 +210,6 @@
                 <option value="full">↔️ Original (No Crop)</option>
               </select>
             </label>
-            <label class="option">
-              <span>Caption Preset</span>
-              <select id="global-caption-preset">
-                  <!-- Options are populated from /caption-presets at startup -->
-                </select>
-            </label>
           </div>
           <div class="options-grid" style="margin-top: 12px;">
             <label class="toggle">
@@ -203,26 +234,185 @@
             </label>
             <label class="toggle">
               <input type="checkbox" id="use-llm" />
-              <span>Use local LLM (Ollama)</span>
+              <span>Use Ollama for AI highlight selection</span>
             </label>
           </div>
-          <button class="btn btn-primary" id="start-clipping" disabled>🚀 Start Clipping</button>
-        </div>
 
-        <!-- Progress -->
-        <div id="progress-container" class="card hidden">
-          <h3 id="progress-step">Processing...</h3>
-          <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
-        </div>
+          <!-- Button Toggle for Caption Styling Menu -->
+          <div class="caption-toggle-action-bar">
+            <button type="button" class="btn btn-secondary caption-style-toggle-btn" id="caption-style-toggle-btn">
+              <span>🎨 Customize Caption Style & Live Preview</span>
+              <span class="toggle-icon" id="caption-toggle-icon">▼</span>
+            </button>
+          </div>
 
-        <!-- Results -->
-        <div id="results" class="results hidden">
+          <!-- Collapsible Caption Customization Card -->
+          <div class="generated-caption-settings-wrap hidden" id="generated-caption-settings-wrap">
+            <div class="card generated-caption-settings" aria-label="Generated clip caption settings">
+              <div class="caption-settings-header">
+                <strong>🎨 CapCut-Style Caption Customization</strong>
+                <span class="muted small">Customize presets, fonts, colors, outline, position, and text styling.</span>
+              </div>
+
+              <div class="caption-settings-layout">
+                <div class="caption-controls-col">
+                  <div class="caption-grid">
+                    <label class="caption-field">
+                      <span>Preset Style</span>
+                      <select id="generated-caption-preset"></select>
+                    </label>
+
+                    <label class="caption-field">
+                      <span>Font Family</span>
+                      <select id="caption-font-name">
+                        <option value="" selected>Default (from preset)</option>
+                        <option value="Arial Black">Arial Black</option>
+                        <option value="Impact">Impact (Viral / Memes)</option>
+                        <option value="Montserrat">Montserrat</option>
+                        <option value="Inter">Inter (Clean)</option>
+                        <option value="Komika Axis">Komika Axis (Comic / MrBeast)</option>
+                        <option value="The Bold Font">The Bold Font</option>
+                        <option value="Bebas Neue">Bebas Neue</option>
+                        <option value="Rubik">Rubik</option>
+                        <option value="Futura">Futura</option>
+                        <option value="Proxima Nova">Proxima Nova</option>
+                        <option value="Roboto">Roboto</option>
+                      </select>
+                    </label>
+
+                    <label class="caption-field caption-font-size">
+                      <span>Font Size (<output id="generated-caption-font-size-label" for="generated-caption-font-size">40</output>px in ASS)</span>
+                      <input type="range" id="generated-caption-font-size" min="12" max="80" step="1" value="40" />
+                    </label>
+
+                    <label class="caption-field">
+                      <span>Outline Width (<output id="caption-outline-width-label">3</output>px)</span>
+                      <input type="range" id="caption-outline-width" min="0" max="12" step="1" value="3" />
+                    </label>
+                  </div>
+
+              <div class="caption-colors-row">
+                <label class="color-picker-label" title="Main text color">
+                  <span>Text Color</span>
+                  <input type="color" id="caption-primary-color" value="#ffffff" />
+                </label>
+                <label class="color-picker-label" title="Karaoke highlight color">
+                  <span>Highlight</span>
+                  <input type="color" id="caption-highlight-color" value="#ffe600" />
+                </label>
+                <label class="color-picker-label" title="Outline / stroke color">
+                  <span>Outline</span>
+                  <input type="color" id="caption-outline-color" value="#000000" />
+                </label>
+                <label class="caption-field">
+                  <span>Top hook (optional)</span>
+                  <input id="caption-intro-text" type="text" maxlength="90" placeholder="e.g. The truth about..." />
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" id="caption-intro-enabled" />
+                  <span>Show for first <input id="caption-intro-duration" class="inline-number" type="number" min="1" max="8" step="0.5" value="3" />s</span>
+                </label>
+                <label class="caption-field">
+                  <span>Position</span>
+                  <select id="caption-position">
+                    <option value="2" selected>Bottom Center</option>
+                    <option value="5">Middle Center</option>
+                    <option value="8">Top Center</option>
+                    <option value="1">Bottom Left</option>
+                    <option value="3">Bottom Right</option>
+                  </select>
+                </label>
+                <label class="caption-field">
+                  <span>Words / Line</span>
+                  <select id="caption-chunk-size">
+                    <option value="0" selected>Auto</option>
+                    <option value="1">1 word</option>
+                    <option value="2">2 words</option>
+                    <option value="3">3 words</option>
+                    <option value="4">4 words</option>
+                    <option value="5">5 words</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="caption-toggles-row">
+                <label class="toggle">
+                  <input type="checkbox" id="caption-uppercase" />
+                  <span>🔠 ALL CAPS</span>
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" id="caption-bold" />
+                  <span><b>B</b> Bold</span>
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" id="caption-italic" />
+                  <span><i>I</i> Italic</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="portrait-preview-col">
+              <div class="phone-preview-label">
+                <span>📱 Live Portrait Preview</span>
+                <span class="muted small">Scale-Accurate Mockup</span>
+              </div>
+              <div class="phone-frame">
+                <div class="phone-notch"></div>
+                <div class="portrait-preview-screen">
+                  <div id="portrait-caption-preview" class="caption-preview portrait-caption-preview" data-words="This is how your captions will look in portrait mode!">This is how your captions will look in portrait mode!</div>
+                </div>
+              </div>
+            </div>
+          </div>
+            </div>
+          </div>
+
+          <div class="step-actions" style="margin-top: 20px;">
+            <button class="btn btn-primary btn-large" id="start-clipping">🚀 Start Clipping & Transcribing</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 3: Transcribing & Processing Screen -->
+      <div id="step-panel-3" class="wizard-panel">
+        <div class="card processing-card">
+          <div class="processing-header">
+            <div class="spinner-large"></div>
+            <div>
+              <h2>⚡ AI Video Processing & Transcription</h2>
+              <p class="muted" id="processing-video-title">Analyzing audio tracks, extracting transcriptions, and scoring viral clips...</p>
+            </div>
+          </div>
+
+          <div class="progress-details-box">
+            <div class="progress-header-row">
+              <span class="progress-stage-badge" id="progress-stage-badge">Transcribing</span>
+              <span class="progress-percent" id="progress-percent">0%</span>
+            </div>
+            <h3 id="progress-step" class="processing-step-text">Initializing AI models...</h3>
+            <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+          </div>
+
+          <div class="live-transcription-box">
+            <h4>🎙️ Process Log & Transcription Feed</h4>
+            <div id="transcription-log" class="transcription-log">
+              <p class="muted">Waiting for Whisper speech recognition model to transcribe audio...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STEP 4: Generated Clips View -->
+      <div id="step-panel-4" class="wizard-panel">
+        <div id="results">
           <div class="results-header">
             <div>
               <h2>🔥 Viral Clips Generated</h2>
               <p class="muted">AI-scored and cropped ready for TikTok, Reels & YouTube Shorts</p>
             </div>
             <div class="export-actions">
+              <button class="btn btn-secondary" id="step4-restart-btn">➕ New Clipping Project</button>
+              <span class="export-sep">|</span>
               <button class="btn btn-secondary" id="export-premiere">🎬 Premiere Pro (XML)</button>
               <button class="btn btn-secondary" id="export-davinci">🎞️ DaVinci (EDL)</button>
               <button class="btn btn-secondary" id="export-capcut">✂️ CapCut</button>
@@ -250,7 +440,8 @@
           </div>
           <div id="clips-grid" class="clips-grid"></div>
         </div>
-      </section>
+      </div>
+    </section>
 
       <!-- Caption Editor Modal -->
       <div id="caption-modal" class="modal hidden">
@@ -264,9 +455,13 @@
             <div class="caption-preview-stage">
               <div id="caption-preview" class="caption-preview">Preview will appear here when you pick a style.</div>
             </div>
+            <label class="caption-preview-size">Preview font size
+              <input type="range" id="caption-preview-font-size" min="12" max="80" step="1" value="40" />
+              <output id="caption-preview-font-size-label" for="caption-preview-font-size">40</output>
+            </label>
             <div id="word-chips" class="word-chips-container"></div>
             <div class="caption-style-bar">
-              <label>Style: 
+              <label>Style:
                 <select id="caption-preset">
                   <!-- Options are populated from /caption-presets at startup -->
                 </select>
@@ -321,7 +516,7 @@
       <section id="view-setup" class="view">
         <header class="view-header">
           <h1>⚙️ Setup & System</h1>
-          <p class="subtitle">Check dependencies, install what's missing, and see the best models for your hardware.</p>
+          <p class="subtitle">Check dependencies, install what's missing, and choose the best-to-lightest models for your hardware.</p>
         </header>
 
         <!-- Hardware card -->
@@ -346,6 +541,7 @@
         <!-- Dependency checklist card -->
         <div class="card">
           <h3>🔧 Dependency Checker</h3>
+          <p class="muted">Ollama is Klipzy's local AI provider. You do not need to build or configure your own server: install Ollama once, and Klipzy connects to its local service when AI analysis or chat is enabled. LM Studio is optional only if you prefer another local provider.</p>
           <p class="muted">Missing something? Click <strong>Install</strong> and the app will install it for you (winget / Homebrew / pip).</p>
           <div id="setup-deps" class="setup-deps">
             <span class="muted">Checking...</span>

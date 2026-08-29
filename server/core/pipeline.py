@@ -6,6 +6,7 @@ Coordinates: Audio Extraction -> Transcription -> Highlight Finding -> Smart Cro
 import os
 import uuid
 from pathlib import Path
+import re
 from typing import List, Optional
 
 from server.core.ffmpeg_tools import (
@@ -48,9 +49,23 @@ class VideoClipperEngine:
         use_llm: bool = False,
         burn_captions: bool = True,
         caption_style: str = "viral_yellow",
+        font_size: Optional[int] = None,
         remove_silence: bool = False,
         bleep_profanity: bool = False,
         mute_profanity: bool = False,
+        # ---- CapCut-style caption fine-tuning (optional; fallback to preset)----
+        font_name: Optional[str] = None,
+        primary_color: Optional[str] = None,
+        highlight_color: Optional[str] = None,
+        outline_color: Optional[str] = None,
+        outline_width: Optional[int] = None,
+        chunk_size: Optional[int] = None,
+        uppercase: Optional[bool] = None,
+        bold: Optional[bool] = None,
+        italic: Optional[bool] = None,
+        position: Optional[int] = None,  # ASS alignment 1-9
+        intro_caption: Optional[str] = None,
+        intro_caption_duration: float = 3.0,
         progress_callback=None,
     ) -> List[ClipResult]:
         """
@@ -109,16 +124,41 @@ class VideoClipperEngine:
         generate_srt(segments, srt_path)
         generate_vtt(segments, vtt_path)
         try:
-            from server.core.caption_styler import generate_animated_ass
-            generate_animated_ass(segments, ass_path)
+            from server.core.caption_styler import generate_karaoke_captions
+            generate_karaoke_captions(
+                segments,
+                ass_path,
+                style_preset=caption_style,
+                font_size=font_size,
+                font_name=font_name,
+                primary_color=primary_color,
+                highlight_color=highlight_color,
+                outline_color=outline_color,
+                outline_width=outline_width,
+                chunk_size=chunk_size,
+                uppercase=uppercase,
+                bold=bold,
+                italic=italic,
+                position=position,
+                intro_caption=intro_caption,
+                intro_caption_duration=intro_caption_duration,
+            )
         except Exception:
             ass_path = None
 
         results: List[ClipResult] = []
         total = len(candidates)
         for idx, clip in enumerate(candidates, start=1):
-            clip_filename = f"clip_{idx}.mp4"
-            output_clip_path = str(job_dir / clip_filename)
+            # Use the detected hook as the human-readable clip name. Keep the
+            # job folder for project cleanup, while each clip gets its own
+            # title folder containing its rendered assets.
+            raw_title = clip.title or clip.hook_text or f"highlight_{idx}"
+            title_slug = re.sub(r"[^A-Za-z0-9 _-]+", "", raw_title).strip()
+            title_slug = re.sub(r"\s+", "_", title_slug)[:70].strip("._- ") or f"highlight_{idx}"
+            clip_dir = job_dir / f"{idx:02d}_{title_slug}"
+            clip_dir.mkdir(parents=True, exist_ok=True)
+            clip_filename = f"{title_slug}.mp4"
+            output_clip_path = str(clip_dir / clip_filename)
 
             clip_progress = 55 + int(35 * (idx - 1) / max(1, total))
             crop_offset = None
@@ -129,16 +169,33 @@ class VideoClipperEngine:
                 )
 
             # Generate clip-specific animated karaoke subtitle
-            clip_ass = str(job_dir / f"clip_{idx}.ass")
-            clip_srt = str(job_dir / f"clip_{idx}.srt")
+            clip_ass = str(clip_dir / f"{title_slug}.ass")
+            clip_srt = str(clip_dir / f"{title_slug}.srt")
             # Segments that overlap the clip window (partial overlap counts so a
             # word straddling the boundary is still captioned).
             clip_segs = [s for s in segments if s.start < clip.end_time and s.end > clip.start_time]
             if clip_segs:
                 generate_srt(clip_segs, clip_srt)
                 try:
-                    from server.core.caption_styler import generate_animated_ass
-                    generate_animated_ass(clip_segs, clip_ass, style_preset=caption_style)
+                    from server.core.caption_styler import generate_karaoke_captions
+                    generate_karaoke_captions(
+                        clip_segs,
+                        clip_ass,
+                        style_preset=caption_style,
+                        font_size=font_size,
+                        font_name=font_name,
+                        primary_color=primary_color,
+                        highlight_color=highlight_color,
+                        outline_color=outline_color,
+                        outline_width=outline_width,
+                        chunk_size=chunk_size,
+                        uppercase=uppercase,
+                        bold=bold,
+                        italic=italic,
+                        position=position,
+                        intro_caption=intro_caption,
+                        intro_caption_duration=intro_caption_duration,
+                    )
                 except Exception:
                     clip_ass = None
             else:

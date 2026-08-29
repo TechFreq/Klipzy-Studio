@@ -5,6 +5,8 @@ Run with: python -m pytest tests/ -v
 
 import sys
 import os
+import re
+from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from server.models import TranscriptSegment, WordTimestamp
@@ -110,8 +112,8 @@ def test_capcut_draft_export(tmp_path):
     assert "9:16" in content
 
 
-def test_animated_ass_generation(tmp_path):
-    from server.core.caption_styler import generate_animated_ass
+def test_karaoke_caption_generation(tmp_path):
+    from server.core.caption_styler import generate_karaoke_captions
     from server.models import TranscriptSegment, WordTimestamp
 
     seg = TranscriptSegment(
@@ -126,16 +128,42 @@ def test_animated_ass_generation(tmp_path):
         ]
     )
     ass_out = tmp_path / "test.ass"
-    generate_animated_ass([seg], str(ass_out))
+    generate_karaoke_captions([seg], str(ass_out))
     assert ass_out.exists()
     content = ass_out.read_text(encoding="utf-8")
     assert "[Script Info]" in content
     assert "\\k" in content
 
 
+def test_karaoke_captions_custom_font_size(tmp_path):
+    from server.core.caption_styler import generate_karaoke_captions
+    from server.models import TranscriptSegment, WordTimestamp
+
+    seg = TranscriptSegment(
+        id=1,
+        start=0.0,
+        end=1.0,
+        text="Big text",
+        words=[
+            WordTimestamp(word="Big", start=0.0, end=0.5),
+            WordTimestamp(word="text", start=0.5, end=1.0),
+        ],
+    )
+    ass_out = tmp_path / "font.ass"
+    generate_karaoke_captions([seg], str(ass_out), style_preset="viral_yellow", font_size=64)
+    content = ass_out.read_text(encoding="utf-8")
+    # The Style line should embed the requested font size.
+    assert re.search(r"Style: Default,.*?,64,", content)
+    # Leaving font_size unset falls back to the preset default.
+    default_out = tmp_path / "default.ass"
+    generate_karaoke_captions([seg], str(default_out), style_preset="viral_yellow")
+    default_content = default_out.read_text(encoding="utf-8")
+    assert not re.search(r"Style: Default,.*?,64,", default_content)
+
+
 def test_caption_presets_library(tmp_path):
     from server.core.caption_presets import CAPTION_PRESETS, get_available_presets
-    from server.core.caption_styler import generate_animated_ass
+    from server.core.caption_styler import generate_karaoke_captions
 
     presets = get_available_presets()
     assert len(presets) >= 20, f"Expected 20+ presets, found {len(presets)}"
@@ -153,7 +181,7 @@ def test_caption_presets_library(tmp_path):
     )
     for p in ["viral_yellow", "neon_green", "cyberpunk_cyan", "mrbeast_impact", "monochrome_chic", "gaming_rgb"]:
         out = tmp_path / f"test_{p}.ass"
-        generate_animated_ass([seg], str(out), style_preset=p)
+        generate_karaoke_captions([seg], str(out), style_preset=p)
         assert out.exists()
         content = out.read_text(encoding="utf-8")
         assert "\\k" in content
@@ -303,3 +331,227 @@ def test_render_custom_rejects_bad_layout_and_ratio():
     })
     assert r.status_code == 400
     assert "layout" in r.json()["detail"]
+
+
+def test_subtitle_time_shifting(tmp_path):
+    from server.core.ffmpeg_tools import _shift_subtitle_times
+
+    ass_path = tmp_path / "sample.ass"
+    ass_path.write_text(
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+        "Dialogue: 0,0:01:05.50,0:01:08.25,Default,,0,0,0,,{\\k50}HELLO {\\k50}WORLD\n",
+        encoding="utf-8"
+    )
+
+    rebased_ass = _shift_subtitle_times(str(ass_path), 60.0)
+    assert os.path.exists(rebased_ass)
+    content = Path(rebased_ass).read_text(encoding="utf-8")
+    assert "Dialogue: 0,0:00:05.50,0:00:08.25,Default" in content
+
+    srt_path = tmp_path / "sample.srt"
+    srt_path.write_text(
+        "1\n"
+        "00:01:10,500 --> 00:01:14,200\n"
+        "Hello World\n",
+        encoding="utf-8"
+    )
+
+    rebased_srt = _shift_subtitle_times(str(srt_path), 60.0)
+    assert os.path.exists(rebased_srt)
+    srt_content = Path(rebased_srt).read_text(encoding="utf-8")
+    assert "00:00:10,500 --> 00:00:14,200" in srt_content
+
+
+def test_project_delete_removes_whole_generated_folder(tmp_path):
+    """Deleting a project must remove the entire output/<job_id> folder (clips,
+    captions, transcripts, temp audio/re-render files) without touching the
+    original source video."""
+    client = _make_client()
+
+    # The source video lives outside the engine output directory.
+    source_video = tmp_path / "podcast.mp4"
+    source_video.write_bytes(b"\x00\x00\x00\x18ftypmp42junk")
+
+    # Simulate a generated clip: output/<job_id>/clip_1.mp4 plus temp files.
+    import server.api.server as srv
+    job_folder = Path(srv.ENGINE.output_dir) / "8fd7a3f2"
+    job_folder.mkdir(parents=True, exist_ok=True)
+    (job_folder / "clip_1.mp4").write_bytes(b"clip-data")
+    (job_folder / "clip_1.srt").write_text("subtitle", encoding="utf-8")
+    (job_folder / "clip_1.ass").write_text("ass", encoding="utf-8")
+    (job_folder / "captions.srt").write_text("captions", encoding="utf-8")
+    (job_folder / "captions.vtt").write_text("captions", encoding="utf-8")
+    (job_folder / "temp_audio.wav").write_bytes(b"wav")
+
+    r = client.post("/project/delete", json={
+        "paths": [
+            str(job_folder / "clip_1.mp4"),
+            str(job_folder / "clip_1.srt"),
+            str(job_folder / "clip_1.ass"),
+            str(job_folder),
+        ]
+    })
+    assert r.status_code == 200
+    assert not job_folder.exists(), "Whole generated job folder should be removed"
+    assert source_video.exists(), "Source video must never be deleted"
+
+
+def test_project_delete_refuses_paths_outside_output_dir(tmp_path):
+    """The delete endpoint must refuse to remove anything outside the engine
+    output directory (e.g. the original source video)."""
+    client = _make_client()
+    outside = tmp_path / "precious.mp4"
+    outside.write_bytes(b"do-not-delete")
+    r = client.post("/project/delete", json={"paths": [str(outside)]})
+    assert r.status_code == 200
+    assert r.json()["deleted"] == []
+    assert outside.exists()
+
+
+def test_output_folder_switch_updates_runtime(tmp_path):
+    """Setting the output folder re-routes new renders/jobs to the chosen
+    folder, and deleting still refuses anything outside it."""
+    client = _make_client()
+
+    # Default is the repo-anchored output dir.
+    r = client.get("/output-folder")
+    assert r.status_code == 200
+    default_folder = Path(r.json()["folder"])
+    assert default_folder.is_dir()
+
+    # Switch to a temp folder; it should be created and reported.
+    new_folder = tmp_path / "my productions"
+    r = client.post("/output-folder", json={"folder": str(new_folder)})
+    assert r.status_code == 200
+    assert Path(r.json()["folder"]) == new_folder.resolve()
+    assert new_folder.is_dir()
+
+    # A clip generated afterward must live under the new folder.
+    import server.api.server as srv
+    job_folder = Path(srv.ENGINE.output_dir) / "deadbeef"
+    job_folder.mkdir(parents=True, exist_ok=True)
+    (job_folder / "clip_1.mp4").write_bytes(b"data")
+    assert job_folder.is_relative_to(new_folder.resolve())
+
+    # Deleting that new-folder clip works.
+    r = client.post("/project/delete", json={"paths": [str(job_folder)]})
+    assert r.status_code == 200
+    assert not job_folder.exists()
+
+
+def test_capcut_style_caption_customization(tmp_path):
+    """Test CapCut-style knobs: custom font, hex colors, outline width, bold, italic, uppercase, position."""
+    from server.core.caption_styler import generate_karaoke_captions
+    from server.models import TranscriptSegment, WordTimestamp
+
+    seg = TranscriptSegment(
+        id=1,
+        start=0.0,
+        end=2.0,
+        text="custom style test",
+        words=[
+            WordTimestamp(word="custom", start=0.0, end=0.7),
+            WordTimestamp(word="style", start=0.7, end=1.4),
+            WordTimestamp(word="test", start=1.4, end=2.0),
+        ]
+    )
+
+    ass_out = tmp_path / "custom_styled.ass"
+    generate_karaoke_captions(
+        [seg],
+        str(ass_out),
+        style_preset="viral_yellow",
+        font_name="Montserrat",
+        font_size=42,
+        primary_color="#00ffcc",
+        highlight_color="#ff007f",
+        outline_color="#1a1a1a",
+        outline_width=5,
+        bold=True,
+        italic=True,
+        uppercase=True,
+        position=5,  # Middle-center
+    )
+
+    assert ass_out.exists()
+    content = ass_out.read_text(encoding="utf-8")
+
+    # Montserrat font embedded
+    assert "Montserrat" in content
+    # Font size 42
+    assert ",42," in content
+    # Bold (-1) and Italic (-1)
+    assert ",-1,-1," in content
+    # Alignment 5 (middle-center)
+    assert ",5," in content
+    # Outline width 5
+    assert ",5,0,0,0," in content or ",5," in content
+    # Text transformed to uppercase in karaoke dialogue lines
+    assert "CUSTOM" in content
+    assert "STYLE" in content
+    assert "TEST" in content
+    # Outline color converted to ASS hex (&H001A1A1A)
+    assert "&H001A1A1A" in content
+    # Highlight color converted to ASS hex in karaoke tag or style
+    assert "&H007F00FF" in content
+
+
+def test_export_subtitles_endpoint_with_custom_styling(tmp_path):
+    """Test that /export/subtitles accepts all new CapCut knobs and burns them."""
+    client = _make_client()
+    ass_out = tmp_path / "endpoint_styled.srt"
+
+    payload = {
+        "output_path": str(ass_out),
+        "words": [
+            {"word": "Hello", "start": 0.0, "end": 0.5},
+            {"word": "World", "start": 0.5, "end": 1.0}
+        ],
+        "style_preset": "neon_green",
+        "font_name": "Impact",
+        "font_size": 36,
+        "primary_color": "#ffffff",
+        "highlight_color": "#ffaa00",
+        "outline_color": "#000000",
+        "outline_width": 4,
+        "uppercase": True,
+        "bold": True,
+        "italic": False,
+        "position": 8,  # Top-center
+        "re_render": False
+    }
+
+    r = client.post("/export/subtitles", json=payload)
+    assert r.status_code == 200
+
+    generated_ass = tmp_path / "endpoint_styled.ass"
+    assert generated_ass.exists()
+    content = generated_ass.read_text(encoding="utf-8")
+    assert "Impact" in content
+    assert ",36," in content
+    assert ",-1,0," in content  # bold=True, italic=False
+    assert ",8," in content  # top-center alignment
+    assert "HELLO" in content
+    assert "WORLD" in content
+
+
+def test_export_subtitles_endpoint(tmp_path):
+    client = _make_client()
+    srt_out = str(tmp_path / "edited.srt")
+    r = client.post("/export/subtitles", json={
+        "output_path": srt_out,
+        "words": [
+            {"word": "Test", "start": 0.0, "end": 0.5},
+            {"word": "Caption", "start": 0.5, "end": 1.2}
+        ],
+        "style_preset": "neon_green",
+        "font_size": 32,
+    })
+    assert r.status_code == 200
+    assert os.path.exists(srt_out)
+    ass_out = str(tmp_path / "edited.ass")
+    assert os.path.exists(ass_out)
+    ass_content = Path(ass_out).read_text(encoding="utf-8")
+    assert "Impact" in ass_content
+    assert ",32," in ass_content

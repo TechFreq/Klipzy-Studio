@@ -140,6 +140,16 @@ ipcMain.handle('select-video', async () => {
 
 ipcMain.handle('server-url', () => `http://127.0.0.1:${SERVER_PORT}`);
 
+ipcMain.handle('select-output-folder', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose where Klipzy Studio saves generated clips',
+    properties: ['openDirectory', 'createDirectory'],
+    buttonLabel: 'Select Folder',
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
+});
+
 ipcMain.handle('select-camera-file', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Select your camera / face-cam recording',

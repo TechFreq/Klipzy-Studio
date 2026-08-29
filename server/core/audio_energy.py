@@ -48,7 +48,7 @@ def detect_highlights_audio_energy(audio_path: str, segments: List[TranscriptSeg
             candidates.append(
                 ClipCandidate(
                     id=f"energy_{i}",
-                    title=f"Energy Highlight #{i}",
+                    title=(seg.text[:52].strip() or f"Energy Highlight {i}"),
                     start_time=seg.start,
                     end_time=seg.end,
                     duration=round(seg.end - seg.start, 2),

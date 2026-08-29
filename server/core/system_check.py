@@ -244,6 +244,27 @@ def recommend_models() -> Dict[str, Dict]:
     yolo["engine"] = "GPU (CUDA)" if vram else ("GPU (MPS)" if torch_info.get("mps") else "CPU")
     ollama["engine"] = "GPU (CUDA)" if (vram and vram >= 8) else "CPU"
 
+    # Keep the recommendation cards actionable: the first model is the best
+    # fit, followed by lighter fallbacks that are still compatible.
+    whisper_choices = [
+        {"model": whisper["model"], "tier": "Best fit", "note": whisper["note"]},
+        {"model": "small", "tier": "Balanced", "note": "Lower VRAM/RAM use with very good accuracy"},
+        {"model": "base", "tier": "Light", "note": "Fast and dependable on most machines"},
+        {"model": "tiny", "tier": "Fastest", "note": "Smallest memory footprint"},
+    ]
+    # Remove duplicates while preserving the hardware-ranked order.
+    seen = set()
+    whisper_choices = [c for c in whisper_choices if not (c["model"] in seen or seen.add(c["model"]))]
+    ollama_choices = [
+        {"model": ollama["model"], "tier": "Best fit", "note": ollama["note"]},
+        {"model": "gemma2:2b", "tier": "Light", "note": "Small and responsive for clip suggestions and chat"},
+        {"model": "llama3.2:3b", "tier": "Quality", "note": "Stronger answers; uses more memory"},
+    ]
+    seen = set()
+    ollama_choices = [c for c in ollama_choices if not (c["model"] in seen or seen.add(c["model"]))]
+    whisper["choices"] = whisper_choices
+    ollama["choices"] = ollama_choices
+
     return {
         "whisper": whisper,
         "yolo": yolo,

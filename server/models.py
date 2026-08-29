@@ -73,9 +73,24 @@ class ProcessRequest(BaseModel):
     use_llm: bool = False
     burn_captions: bool = True
     caption_style: Optional[str] = "viral_yellow"
+    # Explicit override for the ASS caption font size used during initial clip generation.
+    font_size: Optional[int] = None
     remove_silence: bool = False
     bleep_profanity: bool = False
     mute_profanity: bool = False
+# ---- CapCut-style caption fine-tuning (optional; falls back to the preset's values) ----
+    font_name: Optional[str] = None
+    primary_color: Optional[str] = None
+    highlight_color: Optional[str] = None
+    outline_color: Optional[str] = None
+    outline_width: Optional[int] = None
+    chunk_size: Optional[int] = None
+    uppercase: Optional[bool] = None
+    bold: Optional[bool] = None
+    italic: Optional[bool] = None
+    position: Optional[int] = None  # ASS alignment 1-9 (2 = bottom-center, 8 = top-center...)
+    intro_caption: Optional[str] = None
+    intro_caption_duration: float = 3.0
 
 
 class ProcessResponse(BaseModel):
@@ -102,6 +117,26 @@ class SubtitleRegenRequest(BaseModel):
     output_path: str
     words: List[dict] = Field(default_factory=list)
     style_preset: str = "viral_yellow"
+    font_size: Optional[int] = None
+    # ---- CapCut-style caption fine-tuning ---- caps
+    font_name: Optional[str] = None
+    primary_color: Optional[str] = None
+    highlight_color: Optional[str] = None
+    outline_color: Optional[str] = None
+    outline_width: Optional[int] = None
+    chunk_size: Optional[int] = None
+    uppercase: Optional[bool] = None
+    bold: Optional[bool] = None
+    italic: Optional[bool] = None
+    position: Optional[int] = None  # ASS alignment 1-9
+    intro_caption: Optional[str] = None
+    intro_caption_duration: float = 3.0
+    source_video: Optional[str] = None
+    clip_output_file: Optional[str] = None
+    start_seconds: Optional[float] = None
+    end_seconds: Optional[float] = None
+    aspect_ratio: Optional[str] = "9:16"
+    re_render: bool = False
 
 
 class ChatRequest(BaseModel):
@@ -121,6 +156,19 @@ class TrimRequest(BaseModel):
     title: str = ""
     burn_captions: bool = False
     subtitle_path: Optional[str] = None
+    caption_style: Optional[str] = None
+    # ---- Caption fine-tuning (used when burn_captions is True) ---- captions
+    font_name: Optional[str] = None
+    primary_color: Optional[str] = None
+    highlight_color: Optional[str] = None
+    outline_color: Optional[str] = None
+    outline_width: Optional[int] = None
+    chunk_size: Optional[int] = None
+    uppercase: Optional[bool] = None
+    bold: Optional[bool] = None
+    italic: Optional[bool] = None
+    position: Optional[int] = None  # ASS alignment 1-9
+    font_size: Optional[int] = None
 
 
 class TrimResponse(BaseModel):
@@ -142,13 +190,29 @@ class CustomRenderRequest(BaseModel):
     crop_x_offset: Optional[float] = None
     burn_captions: bool = False
     subtitle_path: Optional[str] = None
+    caption_style: Optional[str] = None
+    font_name: Optional[str] = None
+    primary_color: Optional[str] = None
+    highlight_color: Optional[str] = None
+    outline_color: Optional[str] = None
+    outline_width: Optional[int] = None
+    chunk_size: Optional[int] = None
+    uppercase: Optional[bool] = None
+    bold: Optional[bool] = None
+    italic: Optional[bool] = None
+    position: Optional[int] = None  # ASS alignment 1-9
+    font_size: Optional[int] = None
     cam_video: Optional[str] = None
     cam_scale: float = 0.3
     cam_position: str = "bottom-right"
 
 
 class DeleteProjectRequest(BaseModel):
-    """Paths belonging to a saved project that may be safely removed."""
+    """Paths and job folders belonging to a saved project that may be safely removed.
+
+    Only paths inside the engine's output directory are honored by the server;
+    the source video is never deleted.
+    """
     paths: List[str] = Field(default_factory=list)
 
 
@@ -193,6 +257,25 @@ class ExportStandaloneRequest(BaseModel):
 class ExportStandaloneResponse(BaseModel):
     export_path: str
     asset_type: str
+    message: str
+
+
+class ClipBundleRequest(BaseModel):
+    """Export one rendered clip and its matching audio/subtitle assets together."""
+    video_path: str
+    output_dir: str
+    title: str = "clip"
+    format: str = "mp4"
+    srt_path: Optional[str] = None
+    ass_path: Optional[str] = None
+
+
+class ClipBundleResponse(BaseModel):
+    export_dir: str
+    video_path: str
+    audio_path: Optional[str] = None
+    srt_path: Optional[str] = None
+    ass_path: Optional[str] = None
     message: str
 
 

@@ -50,7 +50,7 @@ class HighlightDetector:
                             candidates.append(
                                 ClipCandidate(
                                     id=f"clip_{len(candidates) + 1}",
-                                    title=f"Highlight #{len(candidates) + 1}",
+                                    title=(accumulated_text[0][:52].strip() or f"Highlight {len(candidates) + 1}"),
                                     start_time=current_start,
                                     end_time=seg.end,
                                     duration=round(current_duration, 2),

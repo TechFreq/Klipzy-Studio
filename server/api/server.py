@@ -20,7 +20,7 @@ from server.models import (
     ExportProjectRequest, ExportProjectResponse, SubtitleRegenRequest,
     TrimRequest, TrimResponse, CustomRenderRequest,
     ExportMediaRequest, ExportMediaResponse, ExportCompileRequest, ExportCompileResponse,
-    ExportStandaloneRequest, ExportStandaloneResponse, DeleteProjectRequest,
+    ExportStandaloneRequest, ExportStandaloneResponse, ClipBundleRequest, ClipBundleResponse, DeleteProjectRequest,
     DetectSilenceRequest, DetectSilenceResponse, RemoveSilenceRequest, RemoveSilenceResponse,
     BleepMuteRequest, BleepMuteResponse, CaptionPresetInfo,
 )
@@ -48,8 +48,47 @@ app.add_middleware(
 JOBS: Dict[str, dict] = {}
 _JOBS_ORDER: List[str] = []
 MAX_JOBS = 60
+
+# Where generated clips, captions, transcripts and temp files are saved.
+# Mirrors VideoClipperEngine's repo-anchored default so the folder can be
+# switched at runtime (see /output-folder) without touching the source video.
+DEFAULT_OUTPUT_DIR = str(Path(__file__).resolve().parents[2] / "output")
+DEFAULT_OUTPUT_ROOT = Path(DEFAULT_OUTPUT_DIR).resolve()
+
 ENGINE = VideoClipperEngine()
+# KLIPZY_OUTPUT_DIR is respected at startup only; runtime changes go through
+# the /output-folder endpoint and mutate OUTPUT_ROOT below.
+_env_output = os.environ.get("KLIPZY_OUTPUT_DIR", "").strip()
+if _env_output and Path(_env_output).expanduser().is_absolute():
+    OUTPUT_ROOT = Path(_env_output).expanduser().resolve()
+else:
+    OUTPUT_ROOT = Path(ENGINE.output_dir).resolve()
+
 CHAT = EditChat()
+
+
+def _ensure_output_root():
+    """Return the current runtime output folder, creating it if missing."""
+    global OUTPUT_ROOT
+    OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+    return OUTPUT_ROOT.resolve()
+
+
+def _sync_output_root(root: Path):
+    """Point the global ENGINE and OUTPUT_ROOT at a new output folder.
+
+    Only affects where *new* jobs are written; previously generated clips keep
+    their original paths. The job store is left intact so running jobs continue
+    to write to their own output_dir referenced at creation time.
+    """
+    global OUTPUT_ROOT
+    if not root.is_absolute():
+        root = _ensure_output_root()
+    root = root.resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    OUTPUT_ROOT = root
+    if ENGINE is not None:
+        ENGINE.output_dir = root
 
 
 def _prune_jobs():
@@ -137,6 +176,19 @@ def process_video(req: ProcessRequest):
                 use_llm=req.use_llm,
                 burn_captions=req.burn_captions,
                 caption_style=req.caption_style or "viral_yellow",
+                font_size=req.font_size,
+                font_name=req.font_name,
+                primary_color=req.primary_color,
+                highlight_color=req.highlight_color,
+                outline_color=req.outline_color,
+                outline_width=req.outline_width,
+                chunk_size=req.chunk_size,
+                uppercase=req.uppercase,
+                bold=req.bold,
+                italic=req.italic,
+                position=req.position,
+                intro_caption=req.intro_caption,
+                intro_caption_duration=req.intro_caption_duration,
                 remove_silence=req.remove_silence,
                 bleep_profanity=req.bleep_profanity,
                 mute_profanity=req.mute_profanity,
@@ -234,6 +286,35 @@ def export_media(req: ExportMediaRequest):
         duration=round(float(get_media_info(exported_path).get("format", {}).get("duration", 0.0)), 3),
         message=msg,
     )
+
+
+@app.post("/export/clip-bundle", response_model=ClipBundleResponse)
+def export_clip_bundle(req: ClipBundleRequest):
+    """Save a chosen clip and matching MP3/SRT/ASS files in one named folder."""
+    if not os.path.isfile(req.video_path):
+        raise HTTPException(status_code=400, detail=f"Clip file not found: {req.video_path}")
+    fmt = req.format.lower().lstrip(".")
+    if fmt not in ("mp4", "mov", "mkv", "webm", "gif"):
+        raise HTTPException(status_code=400, detail=f"Unsupported export format: {fmt}")
+    safe = "".join(c for c in req.title if c.isalnum() or c in " _-").strip().replace(" ", "_")[:70] or "clip"
+    export_dir = Path(req.output_dir).expanduser().resolve() / safe
+    export_dir.mkdir(parents=True, exist_ok=True)
+    video_out = export_dir / f"{safe}.{fmt}"
+    try:
+        export_clip_as(req.video_path, str(video_out), fmt)
+        audio_out = export_dir / f"{safe}.mp3"
+        export_standalone_audio(req.video_path, str(audio_out), "mp3")
+        copied = {}
+        for key, source, suffix in (("srt_path", req.srt_path, ".srt"), ("ass_path", req.ass_path, ".ass")):
+            if source and os.path.isfile(source):
+                target = export_dir / f"{safe}{suffix}"
+                shutil.copy2(source, target)
+                copied[key] = str(target)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return ClipBundleResponse(export_dir=str(export_dir), video_path=str(video_out),
+                              audio_path=str(audio_out), srt_path=copied.get("srt_path"),
+                              ass_path=copied.get("ass_path"), message="Clip bundle exported successfully")
 
 
 @app.post("/export/compile", response_model=ExportCompileResponse)
@@ -336,11 +417,12 @@ def export_standalone(req: ExportStandaloneRequest):
 @app.post("/export/subtitles", response_model=ExportProjectResponse)
 def regenerate_subtitles(req: SubtitleRegenRequest):
     """
-    Regenerates per-clip subtitle files (SRT + karaoke ASS) from edited words.
+    Regenerates per-clip subtitle files (SRT + animated karaoke captions) from edited words.
+    Optionally re-renders the clip video to burn the updated subtitles in place.
     Returns the paths to the rewritten files so the renderer can apply them.
     """
-    from server.core.caption_styler import generate_animated_ass
-    from server.core.ffmpeg_tools import generate_srt
+    from server.core.caption_styler import generate_karaoke_captions
+    from server.core.ffmpeg_tools import generate_srt, render_clip
     from server.models import TranscriptSegment, WordTimestamp
 
     words = [
@@ -360,12 +442,72 @@ def regenerate_subtitles(req: SubtitleRegenRequest):
     generate_srt([seg], req.output_path)
 
     ass_path = os.path.splitext(req.output_path)[0] + ".ass"
-    generate_animated_ass([seg], ass_path, style_preset=req.style_preset)
+    generate_karaoke_captions(
+        [seg],
+        ass_path,
+        style_preset=req.style_preset,
+        font_size=req.font_size,
+        font_name=req.font_name,
+        primary_color=req.primary_color,
+        highlight_color=req.highlight_color,
+        outline_color=req.outline_color,
+        outline_width=req.outline_width,
+        chunk_size=req.chunk_size,
+        uppercase=req.uppercase,
+        bold=req.bold,
+        italic=req.italic,
+        position=req.position,
+        intro_caption=req.intro_caption,
+        intro_caption_duration=req.intro_caption_duration,
+    )
+
+    # If requested and video context is provided, re-render the clip to burn updated captions.
+    re_rendered = False
+    if req.re_render and req.clip_output_file and os.path.exists(req.clip_output_file):
+        try:
+            target_file = str(Path(req.clip_output_file).expanduser().resolve())
+            temp_target = str(Path(target_file).with_suffix(f".new.{uuid.uuid4().hex[:6]}.mp4"))
+
+            # Determine input source & segment bounds
+            input_video = req.source_video if (req.source_video and os.path.exists(req.source_video)) else target_file
+            if input_video == target_file or req.start_seconds is None or req.end_seconds is None:
+                # Re-rendering the rendered clip itself: timeline starts at 0
+                render_clip(
+                    input_video=target_file,
+                    output_video=temp_target,
+                    start_time=0.0,
+                    end_time=words[-1].end - words[0].start + 1.0,
+                    aspect_ratio=None,
+                    burn_captions=True,
+                    subtitle_path=ass_path,
+                )
+            else:
+                # Re-rendering from original source video
+                render_clip(
+                    input_video=input_video,
+                    output_video=temp_target,
+                    start_time=req.start_seconds,
+                    end_time=req.end_seconds,
+                    aspect_ratio=req.aspect_ratio or "9:16",
+                    burn_captions=True,
+                    subtitle_path=ass_path,
+                )
+
+            if os.path.isfile(temp_target) and os.path.getsize(temp_target) > 0:
+                shutil.move(temp_target, target_file)
+                re_rendered = True
+        except Exception as e:
+            # Fall back gracefully to saving subtitle files without crashing the response
+            pass
+
+    msg = f"Regenerated subtitles at {req.output_path}"
+    if re_rendered:
+        msg += " and updated burned clip"
 
     return ExportProjectResponse(
         export_path=req.output_path,
         format="srt",
-        message=f"Regenerated subtitles at {req.output_path} (and {ass_path})",
+        message=msg,
     )
 
 @app.get("/caption-presets")
@@ -512,7 +654,7 @@ def render_custom_selection(req: CustomRenderRequest):
         raise HTTPException(status_code=400, detail=f"Unsupported aspect ratio: {req.aspect_ratio}")
 
     out_path = req.output_path or str(
-        ENGINE.output_dir / f"manual_{uuid.uuid4().hex[:8]}" / "clip.mp4"
+        _ensure_output_root() / f"manual_{uuid.uuid4().hex[:8]}" / "clip.mp4"
     )
     if not Path(out_path).suffix:
         out_path += ".mp4"
@@ -546,21 +688,34 @@ def render_custom_selection(req: CustomRenderRequest):
 
 @app.post("/project/delete")
 def delete_project_files(req: DeleteProjectRequest):
-    """Delete only generated files inside the engine output directory."""
-    root = ENGINE.output_dir.resolve()
+    """Delete generated files and folders belonging to a project.
+
+    Only paths inside the engine output directory are removed, so the user's
+    original source video can never be deleted. Generated clip folders are
+    removed wholesale (they contain the rendered clips plus temp audio,
+    caption/transcript files, and re-render temp versions), and empty parents
+    are pruned up to the output root.
+    """
+    if not req.paths:
+        return {"deleted": []}
+    root = _ensure_output_root()
     deleted = []
+    seen = set()
     for raw_path in req.paths:
         try:
             candidate = Path(raw_path).expanduser().resolve()
             candidate.relative_to(root)
         except (OSError, ValueError):
             continue
-        if candidate == root or not candidate.exists():
+        if candidate == root or candidate in seen:
             continue
-        if candidate.is_dir():
-            shutil.rmtree(candidate)
-        else:
-            candidate.unlink()
+        if candidate.exists():
+            if candidate.is_dir():
+                shutil.rmtree(candidate)
+            else:
+                candidate.unlink(missing_ok=True)
+            seen.add(candidate)
+            deleted.append(str(candidate))
         # Remove now-empty generated job folders, but never the output root.
         parent = candidate.parent
         while parent != root and parent.is_relative_to(root):
@@ -569,8 +724,46 @@ def delete_project_files(req: DeleteProjectRequest):
             except OSError:
                 break
             parent = parent.parent
-        deleted.append(str(candidate))
     return {"deleted": deleted}
+
+
+# ----------------------------------------------------------------------
+# Output folder (CapCut-style "save everything to my chosen folder")
+# ----------------------------------------------------------------------
+class OutputFolderRequest(BaseModel):
+    folder: str = ""
+
+
+@app.get("/output-folder")
+def get_output_folder():
+    """Return the folder where generated clips are saved."""
+    return {"folder": str(_ensure_output_root()), "is_default": str(_ensure_output_root()) == str(DEFAULT_OUTPUT_ROOT)}
+
+
+@app.post("/output-folder")
+def set_output_folder(req: OutputFolderRequest):
+    """Switch where generated clips/captions/temp files are written.
+
+    The folder is created if it doesn't exist. The original source video is
+    never moved or touched.
+    """
+    folder = req.folder.strip() if req.folder else ""
+    if folder:
+        root = Path(folder).expanduser()
+        if not root.is_absolute():
+            # A relative path is resolved against the repo root so we never
+            # accidentally resolve against a server cwd that could change.
+            root = Path(DEFAULT_OUTPUT_DIR) / root
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            root = root.resolve()
+        except OSError as e:
+            raise HTTPException(status_code=400, detail=f"Cannot use that output folder: {e}")
+        _sync_output_root(root)
+    else:
+        # Empty folder resets back to the default repo-anchored ./output.
+        _sync_output_root(DEFAULT_OUTPUT_ROOT)
+    return {"folder": str(OUTPUT_ROOT), "is_default": str(OUTPUT_ROOT) == str(DEFAULT_OUTPUT_ROOT)}
 
 
 # ----------------------------------------------------------------------
@@ -598,6 +791,7 @@ def setup_status():
         "torch": sc.detect_torch(),
         "install_commands": sc.get_install_commands(),
         "recommendations": sc.recommend_models(),
+        "output_dir": str(_ensure_output_root()),
     }
 
 

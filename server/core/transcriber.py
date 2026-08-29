@@ -51,7 +51,16 @@ class Transcriber:
         if language:
             options["language"] = language
 
-        result = self._model.transcribe(audio_path, **options)
+        import warnings
+        with warnings.catch_warnings():
+            # Triton DTW / median kernel warnings are expected on Windows where
+            # the full CUDA C/C++ compilation toolkit is not present.
+            warnings.filterwarnings(
+                "ignore",
+                message="Failed to launch Triton kernels.*",
+                category=UserWarning,
+            )
+            result = self._model.transcribe(audio_path, **options)
 
         segments: List[TranscriptSegment] = []
         for s in result.get("segments", []):
