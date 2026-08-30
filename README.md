@@ -1,8 +1,8 @@
 # 🎬 Klipzy Studio
 
-A **local-first, open-source AI video clipper by TechFreq** for Windows and macOS. Turn long videos, podcasts, and streams into ready-to-post vertical Shorts — entirely on your own PC. **No cloud AI, no fees.**
+A **local-first, open-attribution AI video clipper by TechFreq Developments** for Windows and macOS. Turn long videos, podcasts, and streams into ready-to-post vertical Shorts — entirely on your own PC. **No cloud AI, no fees.**
 
-> ⚖️ **100% original code.** This project is inspired by the *features* of similar open-source tools but is built from scratch with its own architecture, UI, and implementation. It is licensed under **MIT** (you can use, modify, and distribute it freely).
+> ⚖️ **100% original code.** This project is built from scratch with its own architecture, UI, and implementation. It is licensed under the **TechFreq Developments Open-Attribution License** (see LICENSE). You are free to use and modify it, provided you give proper credit to TechFreq Developments.
 
 ---
 
@@ -12,7 +12,7 @@ A **local-first, open-source AI video clipper by TechFreq** for Windows and macO
 |---------|-------------|
 | 🎯 **AI Virality & Hook Detection** | Finds the most engaging moments with Virality Scores, Hook strength, and Trend breakdowns |
 | ⚡ **Hardware Acceleration** | Auto GPU video encoding acceleration (NVIDIA NVENC, Apple Silicon VideoToolbox, CPU x264 fallback) |
-| 🎨 **Viral Dynamic Captions** | Word-by-word active karaoke highlights (`.ass` format) with dynamic color styling |
+| 🎨 **Viral Dynamic Captions** | Word-by-word active karaoke highlights (.ass format) with dynamic color styling |
 | ✏️ **Interactive Caption Editor** | Live word timestamp adjusting and subtitle customization |
 | 🎬 **NLE Project Exports** | Export timeline directly to **Adobe Premiere Pro** (XML), **DaVinci Resolve** (EDL), or **CapCut** (Draft) |
 | 🔊 **Audio Energy Detection** | Detects excitement spikes and loudness peaks to catch dramatic moments |
@@ -25,25 +25,25 @@ A **local-first, open-source AI video clipper by TechFreq** for Windows and macO
 
 ## 🏗️ Architecture
 
-```
+`
 ┌─────────────────────────────────────────────────┐
 │  Electron Desktop App (UI)                      │
 │  - Windows / macOS / Linux                      │
 │  - Drag & drop, options, progress, previews     │
 └────────────────────┬────────────────────────────┘
-                     │ localhost HTTP
+                      │ localhost HTTP
 ┌────────────────────▼────────────────────────────┐
 │  Python FastAPI Server                          │
 │  - Job queue & progress polling                 │
 │  - AI Edit Chat                                 │
 └────────────────────┬────────────────────────────┘
-                     │
+                      │
 ┌────────────────────▼────────────────────────────┐
 │  Processing Pipeline                            │
 │  FFmpeg → Whisper → Highlights → Face Track →   │
 │  Render 9:16 + captions                         │
 └─────────────────────────────────────────────────┘
-```
+`
 
 ---
 
@@ -53,13 +53,13 @@ A **local-first, open-source AI video clipper by TechFreq** for Windows and macO
 
 1. **Python 3.10+**
 2. **FFmpeg**
-   - Windows: `winget install Gyan.FFmpeg`
-   - macOS: `brew install ffmpeg`
+   - Windows: winget install Gyan.FFmpeg
+   - macOS: rew install ffmpeg
 3. **Node.js 18+** (for Electron UI — optional, server works standalone)
 
 ### 1. Python Server (core engine)
 
-```bash
+`ash
 python -m venv venv
 
 # Windows
@@ -71,22 +71,22 @@ pip install -r requirements.txt
 
 # Start the API server
 python -m server.api.server
-```
+`
 
-Then open `http://127.0.0.1:8765/docs` for the API docs.
+Then open http://127.0.0.1:8765/docs for the API docs.
 
 ### 2. Electron Desktop App (optional)
 
-```bash
+`ash
 cd ui
 npm install
 npm start
-```
+`
 
 ### 3. One-click launchers
 
-- **Windows**: `scripts\run_windows.bat`
-- **macOS**: `scripts\run_macos.sh`
+- **Windows**: scripts\run_windows.bat
+- **macOS**: scripts\run_macos.sh
 
 ---
 
@@ -99,7 +99,7 @@ npm start
 | Local LLM | **Ollama** + Gemma | MIT | AI edit chat + highlight discovery |
 | Video processing | **FFmpeg** | LGPL/GPL | Extract, cut, crop, burn captions |
 
-> **Note on YOLO/ultralytics**: Ultralytics is AGPL-3.0. If you distribute a modified version of *their* library code you must share it — using it as a dependency is fine. If you prefer permissive licensing, swap in OpenCV's built-in face detector (`cv2.CascadeClassifier`) or MediaPipe (Apache-2.0).
+> **Note on YOLO/ultralytics**: Ultralytics is AGPL-3.0. If you distribute a modified version of *their* library code you must share it — using it as a dependency is fine. If you prefer permissive licensing, swap in OpenCV's built-in face detector (cv2.CascadeClassifier) or MediaPipe (Apache-2.0).
 
 ---
 
@@ -120,6 +120,6 @@ npm start
 
 ## 📄 License
 
-This project is **MIT licensed** — free to use, modify, and distribute, including commercially. See [LICENSE](LICENSE).
+This project is licensed under the **TechFreq Developments Open-Attribution License**. It is free to use and modify, provided that credit is given to **TechFreq Developments** as the original author. See [LICENSE](LICENSE) for full details.
 
 **Third-party notices:** Whisper (MIT), FFmpeg (LGPL/GPL), Ollama (MIT), ultralytics (AGPL-3.0).
