@@ -282,17 +282,45 @@ function bindEvents() {
   dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('dragover');
-    const file = e.dataTransfer.files[0];
-    if (file) selectVideoFile(file);
+    const files = Array.from(e.dataTransfer.files || []).filter(f => f.type.startsWith('video/') || /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(f.name));
+    if (files.length === 1) {
+      selectVideoFile(files[0]);
+    } else if (files.length > 1) {
+      handleBatchVideoDrop(files);
+    }
   });
   fileInput.addEventListener('change', (e) => {
-    if (e.target.files[0]) selectVideoFile(e.target.files[0]);
+    const files = Array.from(e.target.files || []);
+    if (files.length === 1) {
+      selectVideoFile(files[0]);
+    } else if (files.length > 1) {
+      handleBatchVideoDrop(files);
+    }
   });
 
   document.getElementById('change-file').addEventListener('click', () => fileInput.click());
   document.getElementById('save-project').addEventListener('click', saveCurrentProject);
   document.getElementById('project-list').addEventListener('change', (e) => {
     if (e.target.value) openProject(e.target.value);
+  });
+
+  // "📜 Logs" button in the header – opens the logs folder via Electron
+  const openLogsBtn = document.getElementById('open-logs-folder');
+  if (openLogsBtn) {
+    openLogsBtn.addEventListener('click', () => {
+      if (window.clipperAPI && window.clipperAPI.openLogsFolder) {
+        window.clipperAPI.openLogsFolder();
+      } else {
+        showAlert('Logs are written to the "logs" folder next to the app. Server logs land in logs/server.log.');
+      }
+    });
+  }
+
+  // Info tooltips ("❓") are nested inside <label> elements, so a click would
+  // otherwise toggle the checkbox. Stop that so the bubble is purely informational.
+  document.querySelectorAll('.tooltip-toggle').forEach((el) => {
+    el.addEventListener('click', (e) => e.preventDefault());
+    el.addEventListener('mousedown', (e) => e.stopPropagation());
   });
 
   // Output folder (CapCut-style save location)
@@ -339,6 +367,7 @@ function bindEvents() {
 
   // Export-as format actions
   document.getElementById('export-compile')?.addEventListener('click', exportCompileReel);
+  document.getElementById('cancel-active-job-btn')?.addEventListener('click', cancelActiveJob);
 
   // Global font size used by the initial Generate Clip render.
   // Generated clips own the caption controls; keep the legacy generation
@@ -482,6 +511,7 @@ function selectVideoFile(file) {
   selectedVideo = file.path;
   generatedClips = [];
   currentProjectId = null;
+  emojiSuggestionCache.clear();
   document.getElementById('file-name').textContent = file.name;
   document.getElementById('file-info').classList.remove('hidden');
   document.getElementById('project-bar').classList.remove('hidden');
@@ -499,6 +529,38 @@ function selectVideoFile(file) {
   document.getElementById('trim-panel').classList.remove('hidden');
   document.getElementById('cam-path').value = '';
   setWizardStep(1);
+}
+
+async function handleBatchVideoDrop(files) {
+  showToast(`📁 Batch mode: Enqueueing ${files.length} long-form videos...`, 'info');
+  // First video is opened in the editor view
+  selectVideoFile(files[0]);
+  
+  // Submit all files in batch sequentially to the backend queue
+  let queuedCount = 0;
+  for (const file of files) {
+    try {
+      const payload = {
+        video_path: file.path,
+        aspect_ratio: document.getElementById('aspect-ratio').value || '9:16',
+        whisper_model: document.getElementById('whisper-model').value || 'base',
+        use_audio_energy: document.getElementById('audio-energy').checked,
+        use_llm: document.getElementById('use-llm').checked,
+        burn_captions: document.getElementById('burn-captions').checked,
+        caption_style: document.getElementById('caption-preset') ? document.getElementById('caption-preset').value : 'viral_yellow',
+      };
+      const res = await fetch(`${serverUrl}/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        queuedCount++;
+      }
+    } catch (_) {}
+  }
+  showToast(`🚀 Successfully queued ${queuedCount}/${files.length} videos into background processor!`, 'success');
+  setWizardStep(3);
 }
 
 function readProjects() {
@@ -869,6 +931,7 @@ async function pickCameraClip() {
     };
     fileInput.click();
   }
+
   if (camPath) {
     trimState.camVideo = camPath;
     document.getElementById('cam-path').value = camPath;
@@ -924,6 +987,13 @@ async function addTrimmedClip() {
       hook_text: `Manual trim ${fmtTrimTime(data.start_seconds)} - ${fmtTrimTime(data.end_seconds)}`,
       output_file: data.clip_path,
       virality: { hook_score: '-', flow_score: '-', engagement_score: '-', trend_potential: 'Manual' },
+      words: data.words || [],
+      layout: "full",
+      cam_video: null,
+      cam_scale: 0.3,
+      cam_position: "bottom-right",
+      crop_x_offset: null,
+      wordsAreRelative: true,  // Server already rebased words to clip-local (0-based)
     };
     generatedClips.push(clip);
     appendClipCard(clip, generatedClips.length - 1);
@@ -1023,8 +1093,18 @@ async function startClipping() {
   }
 }
 
+let currentActiveJobId = null;
+
 function pollJob(jobId) {
   if (pollTimer) clearInterval(pollTimer);
+  currentActiveJobId = jobId;
+
+  const cancelBtn = document.getElementById('cancel-active-job-btn');
+  if (cancelBtn) {
+    cancelBtn.style.display = 'inline-block';
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = '🛑 Cancel Processing Job';
+  }
 
   let ticking = false;
   pollTimer = setInterval(async () => {
@@ -1071,9 +1151,15 @@ function pollJob(jobId) {
 
       if (data.status === 'completed') {
         clearInterval(pollTimer);
+        currentActiveJobId = null;
         showResults(data.clips);
+      } else if (data.status === 'cancelled') {
+        clearInterval(pollTimer);
+        currentActiveJobId = null;
+        showError('Job was cancelled by user.');
       } else if (data.status === 'failed') {
         clearInterval(pollTimer);
+        currentActiveJobId = null;
         showError(data.error || 'Processing failed');
       }
     } catch (e) {
@@ -1082,6 +1168,25 @@ function pollJob(jobId) {
       ticking = false;
     }
   }, 650);
+}
+
+async function cancelActiveJob() {
+  if (!currentActiveJobId) {
+    showToast('No active job running to cancel.', 'info');
+    return;
+  }
+  const cancelBtn = document.getElementById('cancel-active-job-btn');
+  if (cancelBtn) {
+    cancelBtn.disabled = true;
+    cancelBtn.textContent = '⏳ Cancelling...';
+  }
+  try {
+    const res = await fetch(`${serverUrl}/job/${currentActiveJobId}/cancel`, { method: 'POST' });
+    const data = await res.json();
+    showToast(data.message || 'Cancellation requested', 'info');
+  } catch (err) {
+    showToast(`Failed to cancel job: ${err.message}`, 'error');
+  }
 }
 
 // ------------------------------------------------------------------
@@ -1121,10 +1226,11 @@ function buildClipCard(clip, idx) {
   const title = clip.title || (clip.hook_text ? clip.hook_text.slice(0, 48) : 'Highlight');
   const desc = clip.hook_text || clip.reason || 'AI-selected moment with strong virality signals.';
   const score = clip.score != null ? Number(clip.score).toFixed(1) : '–';
+  const posterAttr = clip.thumbnail_path ? `poster="file://${clip.thumbnail_path}"` : '';
 
   card.innerHTML = `
     <div class="clip-video-wrap">
-      <video preload="metadata" playsinline></video>
+      <video preload="metadata" playsinline ${posterAttr}></video>
       <button class="clip-mute-btn" type="button" data-action="mute" aria-label="Mute preview">🔊</button>
       <span class="clip-hover-hint">Hover to preview</span>
     </div>
@@ -1142,17 +1248,23 @@ function buildClipCard(clip, idx) {
       <div class="clip-desc">${escapeHtml(desc)}</div>
     </div>
     <div class="clip-actions">
+      <button class="btn btn-small" data-action="copy-hook" title="Copy hook title / opening line to clipboard">📋 Copy Hook</button>
+      <button class="btn btn-small" data-action="social-meta" title="Generate AI Social Title, Description, and Hashtags">📱 Social Post</button>
+      <button class="btn btn-small" data-action="pick-thumb" title="Generate AI Thumbnail poster from current video frame">🖼️ Pick Frame</button>
       <button class="btn btn-small" data-action="edit-captions">✏️ Edit Captions</button>
+      <button class="btn btn-small" data-action="multi-aspect" title="Render 9:16 + 1:1 + 4:5 + 16:9 in one pass">📐 Multi-Aspect</button>
+      <button class="btn btn-small" data-action="overlay" title="Add B-roll video cutaway or reaction image">🎭 B-Roll</button>
       <button class="btn btn-small" data-action="snip-silence" title="Auto-cut dead air pauses">✂️ Snip Silence</button>
       <button class="btn btn-small" data-action="bleep" title="Bleep or mute profanity">🔇 Bleep</button>
       <button class="btn btn-small" data-action="open-folder">📂 Open</button>
       <button class="btn btn-small btn-danger" data-action="delete" title="Remove this clip">🗑 Delete</button>
       <select class="export-format-select clip-export-fmt" data-clip-idx="${idx}" title="Clip output format">
-        <option value="mp4">📦 MP4</option>
-        <option value="mov">📦 MOV</option>
-        <option value="mkv">📦 MKV</option>
-        <option value="webm">📦 WebM</option>
-        <option value="gif">📦 GIF</option>
+        <option value="mp4">📦 MP4 (H.264)</option>
+        <option value="webm">🌐 WebM (VP9)</option>
+        <option value="av1">⚡ AV1 (Next-Gen)</option>
+        <option value="mov">🍏 MOV</option>
+        <option value="mkv">🎬 MKV</option>
+        <option value="gif">🖼️ GIF</option>
       </select>
       <button class="btn btn-small btn-export" data-action="export" data-clip-idx="${idx}">🚀 Export</button>
     </div>
@@ -1169,7 +1281,12 @@ function buildClipCard(clip, idx) {
     if (!actionBtn) return;
     const idx2 = parseInt(card.dataset.clipIdx, 10);
     switch (actionBtn.dataset.action) {
+      case 'copy-hook': copyClipHook(idx2); break;
+      case 'social-meta': openSocialMetaModal(idx2); break;
+      case 'pick-thumb': pickClipThumbnail(idx2, video); break;
       case 'edit-captions': openCaptionEditor(idx2); break;
+      case 'multi-aspect': exportMultiAspectPack(idx2); break;
+      case 'overlay': openOverlayModal(idx2); break;
       case 'snip-silence': quickCutSilence(idx2); break;
       case 'bleep': quickBleepClip(idx2); break;
       case 'open-folder': revealInFolder(clip.output_file); break;
@@ -1191,6 +1308,85 @@ function buildClipCard(clip, idx) {
   });
 
   return card;
+}
+
+function copyClipHook(idx) {
+  const clip = generatedClips[idx];
+  if (!clip) return;
+  const hook = (clip.hook_text || clip.title || '').trim();
+  if (!hook) {
+    showAlert('No hook text available for this clip.');
+    return;
+  }
+  navigator.clipboard.writeText(hook).then(() => {
+    showToast(`📋 Copied hook to clipboard: "${hook.slice(0, 40)}..."`, 'success');
+  }).catch(() => {
+    showAlert(`Hook: ${hook}`, 'Clip Hook');
+  });
+}
+
+async function pickClipThumbnail(idx, videoEl) {
+  const clip = generatedClips[idx];
+  if (!clip || !clip.output_file) return;
+  const currentTime = videoEl ? videoEl.currentTime : 0.5;
+  try {
+    const res = await fetch(`${serverUrl}/export/thumbnail`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        video_path: clip.output_file,
+        timestamp: currentTime > 0 ? currentTime : 0.5,
+      })
+    });
+    const data = await res.json();
+    if (res.ok && data.thumbnail_path) {
+      clip.thumbnail_path = data.thumbnail_path;
+      if (videoEl) {
+        videoEl.setAttribute('poster', `file://${data.thumbnail_path}?t=${Date.now()}`);
+      }
+      showToast('🖼️ Thumbnail poster updated from current frame!', 'success');
+      saveCurrentProjectSilently();
+    } else {
+      showAlert(`Thumbnail error: ${data.detail || 'Unknown error'}`);
+    }
+  } catch (err) {
+    showAlert(`Thumbnail request failed: ${err.message}`);
+  }
+}
+
+async function openSocialMetaModal(idx) {
+  const clip = generatedClips[idx];
+  if (!clip) return;
+  
+  try {
+    const res = await fetch(`${serverUrl}/social/metadata`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: clip.title || '',
+        hook_text: clip.hook_text || '',
+        full_text: clip.full_text || clip.reason || '',
+        duration: clip.duration || 0,
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Failed to generate metadata');
+    
+    // Copy directly to clipboard and show full prompt in modal/toast
+    navigator.clipboard.writeText(data.formatted_post).then(() => {
+      showToast('📱 Generated & Copied ready-to-publish social post + hashtags to clipboard!', 'success');
+    }).catch(() => {});
+    
+    showAlert(
+      `📝 TITLE:\n${data.title}\n\n` +
+      `📋 HASHTAGS:\n${data.hashtags.join(' ')}\n\n` +
+      `📦 COMPLETE POST (Copied to Clipboard):\n\n${data.formatted_post}\n\n` +
+      `⚠️ Disclaimer: ${data.disclaimer}`,
+      '📱 AI Social Media Post Bundle'
+    );
+  } catch (err) {
+    showAlert(`Error generating social metadata: ${err.message}`);
+  }
 }
 
 function deleteClip(idx) {
@@ -2195,7 +2391,345 @@ function playErrorSound() {
       o.stop(now + offset + 0.12);
     });
   } catch (e) { /* audio unavailable */ }
+// ------------------------------------------------------------------
+// Multi-Aspect Export Pack (9:16, 1:1, 4:5, 16:9)
+// ------------------------------------------------------------------
+async function exportMultiAspectPack(idx) {
+  const clip = generatedClips[idx];
+  if (!clip) return;
+
+  showToast(`⏳ Rendering Multi-Aspect pack (9:16, 1:1, 4:5, 16:9)...`, 'info');
+  try {
+    const res = await fetch(`${serverUrl}/export/multi-aspect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clip_path: clip.output_file,
+        source_video: selectedVideo,
+        start_seconds: clip.start_time,
+        end_seconds: clip.end_time,
+        title: clip.title,
+        burn_captions: true,
+        subtitle_path: clip.ass_path || clip.srt_path,
+        aspect_ratios: ['9:16', '1:1', '4:5', '16:9'],
+      })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      playSuccessSound();
+      showToast(`✅ Multi-Aspect Pack exported successfully!`, 'success');
+      showAlert(`✅ Multi-Aspect Pack exported:\n${Object.entries(data.exports).map(([k, v]) => `• ${k}: ${v}`).join('\n')}`);
+    } else {
+      playErrorSound();
+      showAlert(`Multi-aspect export failed: ${data.detail}`);
+    }
+  } catch (err) {
+    playErrorSound();
+    showAlert(`Error: ${err.message}`);
+  }
 }
+
+// -----------------------------------------------------------------------
+// Local KEYWORD_EMOJIS map (mirrors server/overlay_manager.py) for
+// client-side emoji enrichment without network round-trips.
+// -----------------------------------------------------------------------
+const KEYWORD_EMOJIS = {
+  money: "💸", cash: "💰", dollar: "💵", rich: "🤑", wealth: "📈",
+  crazy: "🤯", insane: "😱", shocking: "⚡", wild: "🔥",
+  love: "❤️", hate: "💔", heart: "💖", best: "⭐",
+  win: "🏆", winner: "🥇", success: "🚀", goal: "🎯",
+  stop: "🛑", warning: "⚠️", danger: "🚨", secret: "🤫",
+  idea: "💡", think: "🧠", smart: "🧐", truth: "🔍",
+  fire: "🔥", hot: "🌶️", power: "⚡", strong: "💪",
+  food: "🍔", coffee: "☕", drink: "🥤", music: "🎵",
+  laugh: "😂", funny: "🤣", joke: "🎭", cry: "😭",
+  game: "🎮", gaming: "👾", code: "💻", tech: "🤖",
+  ai: "🤖", future: "🔮", magic: "✨", time: "⏳",
+  fast: "⚡", slow: "🐢", car: "🏎️", travel: "✈️",
+};
+
+// Server-side emoji suggestion results cache: keyed by lower-cased word so
+// repeated overlay attempts re-use previous answers instead of re-hitting
+// /tools/suggest-emojis on every burn.
+const emojiSuggestionCache = new Map();
+
+function enrichWordsWithEmojisLocal(words) {
+  if (!words || !words.length) return words;
+  return words.map(w => {
+    const clean = String(w.word).replace(/[^A-Za-z]+/g, '').toLowerCase();
+    const emoji = KEYWORD_EMOJIS[clean];
+    return emoji ? { word: `${w.word} ${emoji}`, start: w.start, end: w.end } : { word: w.word, start: w.start, end: w.end };
+  });
+}
+
+// clip.words carry ABSOLUTE source-video timestamps (Whisper table), but the
+// clip file itself is cut with input-seek (-ss) so its timeline starts at 0.
+// Shift word events to clip-local time so caption burning via /tools/overlay
+// (which applies a 0.0 offset to the 0-based clip) lands captions on-frame.
+// Exception: manual trim clips have wordsAreRelative=true (server already rebased).
+function wordsClipRelative(words, clip) {
+  if (!words || !words.length) return words;
+  if (clip?.wordsAreRelative) return words;  // Already clip-local
+  const offset = (clip && typeof clip.start_time === 'number') ? clip.start_time : 0;
+  if (!offset) return words;
+  return words.map(w => {
+    const start = Math.max(0, (w.start ?? 0) - offset);
+    const end = Math.max(start, (w.end ?? start) - offset);
+    return { word: w.word, start, end };
+  });
+}
+
+// ------------------------------------------------------------------
+// B-Roll / Visual Overlay Modal & Emojis
+// ------------------------------------------------------------------
+let activeOverlayClipIdx = null;
+
+function openOverlayModal(idx) {
+  activeOverlayClipIdx = idx;
+  const clip = generatedClips[idx];
+  if (!clip) return;
+
+  const modal = document.getElementById('overlay-modal');
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeOverlayModal() {
+  activeOverlayClipIdx = null;
+  const modal = document.getElementById('overlay-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+document.getElementById('close-overlay-modal')?.addEventListener('click', closeOverlayModal);
+
+document.getElementById('pick-broll-btn')?.addEventListener('click', async () => {
+  if (window.clipperAPI && window.clipperAPI.selectCameraClip) {
+    const file = await window.clipperAPI.selectCameraClip();
+    if (file) {
+      const input = document.getElementById('overlay-broll-path');
+      if (input) input.value = file;
+    }
+  }
+});
+
+// Helper: prepare emoji-injected ASS path for overlay (returns path or null)
+async function prepareEmojiAssPath(clip, injectEmojis) {
+  if (!injectEmojis) return null;
+  if (!clip.words || !clip.words.length) {
+    showToast('⚠️ No transcript word timing available — skipping emoji injection.', 'info');
+    return null;
+  }
+
+  // clip.words carry ABSOLUTE source-video timestamps, but the clip file
+  // is cut with input-seek so its timeline starts at 0. Rebase to
+  // clip-local time before generating the caption file /tools/overlay
+  // burns (that path applies a 0.0 offset to the 0-based clip).
+  const clipWords = wordsClipRelative(clip.words, clip);
+  const localEnriched = enrichWordsWithEmojisLocal(clipWords);
+
+  // Count real emoji matches explicitly (a .map() always returns a new
+  // array, so any `!==` comparison against the source array is always true
+  // and would make the "no matches" branch dead code).
+  let matchCount = 0;
+  for (let i = 0; i < localEnriched.length; i++) {
+    if (localEnriched[i].word !== (clipWords[i] && clipWords[i].word)) matchCount += 1;
+  }
+  let suggestions = [];
+  let wordsWithEmoji = localEnriched;
+
+  if (matchCount === 0) {
+    // No local matches: consult the server, but cache per-word suggestions
+    // (keyed by lower-cased word) so repeated burns don't re-hit the API.
+    const missingKeys = clipWords
+      .map(w => String(w.word).replace(/[^A-Za-z]+/g, '').toLowerCase())
+      .filter(clean => clean && !emojiSuggestionCache.has(clean));
+    if (missingKeys.length) {
+      const suggestRes = await fetch(`${serverUrl}/tools/suggest-emojis`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          segments: [{ id: 1, start: clip.start_time, end: clip.end_time, text: clip.hook_text || '', words: clipWords }]
+        })
+      });
+      if (suggestRes.ok) {
+        const suggestData = await suggestRes.json();
+        const fetched = (suggestData.suggestions || []).filter(s => s && s.word);
+        for (const s of fetched) {
+          const key = String(s.word).replace(/[^A-Za-z]+/g, '').toLowerCase();
+          if (s.emoji && key) emojiSuggestionCache.set(key, s.emoji);
+        }
+      }
+    }
+
+    // Merge cached suggestions
+    let serverMatchCount = 0;
+    wordsWithEmoji = clipWords.map(w => {
+      const key = String(w.word).replace(/[^A-Za-z]+/g, '').toLowerCase();
+      const emoji = emojiSuggestionCache.get(key);
+      if (emoji) {
+        serverMatchCount += 1;
+        return { word: `${w.word} ${emoji}`, start: w.start, end: w.end };
+      }
+      return { word: w.word, start: w.start, end: w.end };
+    });
+    matchCount = serverMatchCount;
+  }
+
+  if (matchCount > 0) {
+    const outBase = clip.ass_path || clip.srt_path;
+    const outputPath = outBase
+      ? outBase.replace(/\.(ass|srt)$/i, '.srt')
+      : `${clip.output_file}.srt`;
+
+    const captionOpts = collectCaptionOptions();
+    const subRes = await fetch(`${serverUrl}/export/subtitles`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        output_path: outputPath,
+        words: wordsWithEmoji,
+        style_preset: captionOpts.style_preset,
+        font_size: captionOpts.font_size,
+        font_name: captionOpts.font_name,
+        primary_color: captionOpts.primary_color,
+        highlight_color: captionOpts.highlight_color,
+        outline_color: captionOpts.outline_color,
+        outline_width: captionOpts.outline_width,
+        position: captionOpts.position,
+        chunk_size: captionOpts.chunk_size,
+        uppercase: captionOpts.uppercase,
+        bold: captionOpts.bold,
+        italic: captionOpts.italic,
+        intro_caption: captionOpts.intro_caption,
+        intro_caption_duration: captionOpts.intro_caption_duration,
+        source_video: selectedVideo,
+        clip_output_file: clip.output_file,
+        start_seconds: clip.start_time,
+        end_seconds: clip.end_time,
+        aspect_ratio: document.getElementById('clip-aspect-ratio')?.value || '9:16',
+        re_render: false,
+        layout: clip.layout || '',
+        cam_video: clip.cam_video,
+        cam_scale: clip.cam_scale,
+        cam_position: clip.cam_position,
+        crop_x_offset: clip.crop_x_offset,
+      })
+    });
+    const subData = await subRes.json();
+    if (subRes.ok) {
+      // Prefer the server-returned export path (source of truth for where
+      // the regenerated SRT/ASS actually landed) and derive the ASS from it.
+      const srvSrt = subData.export_path || outputPath;
+      clip.srt_path = srvSrt;
+      clip.ass_path = srvSrt.replace(/\.srt$/i, '.ass');
+      let emojiAssPath = clip.ass_path;
+      if (subData.re_rendered) {
+        // Server actually re-burned the captions into the clip file, so the
+        // overlay will run on the already-branded video (no ASS needed).
+        emojiAssPath = null;
+      }
+      showToast(`✨ Emojis injected into captions (${matchCount} keywords)${subData.re_rendered ? ' — burned into clip ✓' : ' — will burn with B-roll!'}`, 'success');
+      return emojiAssPath;
+    } else {
+      showToast(`⚠️ Emoji injection failed: ${subData.detail}`, 'error');
+      return null;
+    }
+  } else {
+    showToast('No high-energy hook keywords detected — no emojis to inject.', 'info');
+    return null;
+  }
+}
+
+document.getElementById('apply-overlay-btn')?.addEventListener('click', async () => {
+  if (activeOverlayClipIdx === null) return;
+  const clip = generatedClips[activeOverlayClipIdx];
+  if (!clip) return;
+
+  const brollPath = document.getElementById('overlay-broll-path')?.value;
+  if (!brollPath) {
+    showAlert('Please choose a B-roll image or video asset first.');
+    return;
+  }
+
+  const startTime = parseFloat(document.getElementById('overlay-start-time')?.value || '0');
+  const duration = parseFloat(document.getElementById('overlay-duration')?.value || '3');
+  const position = document.getElementById('overlay-position')?.value || 'center';
+  const scale = parseFloat(document.getElementById('overlay-scale')?.value || '0.9');
+
+  const btn = document.getElementById('apply-overlay-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '⏳ Burning Overlay...';
+  }
+
+  try {
+    // Prepare emoji-injected ASS path (if enabled) for single-pass B-roll + captions burn
+    const injectEmojis = document.getElementById('inject-emojis-toggle')?.checked || false;
+    const emojiAssPath = await prepareEmojiAssPath(clip, injectEmojis);
+
+    const res = await fetch(`${serverUrl}/tools/overlay`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        video_path: clip.output_file,
+        broll_path: brollPath,
+        start_time: startTime,
+        duration: duration,
+        scale: scale,
+        position: position,
+        // Pass the ASS path so captions + B-roll are burned in ONE encode
+        subtitle_path: emojiAssPath,
+      })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      playSuccessSound();
+      closeOverlayModal();
+      if (data.output_file) clip.output_file = data.output_file;
+      else if (data.output_path) clip.output_file = data.output_path;
+      showResults(generatedClips);
+      showToast('✨ B-Roll Overlay burned into clip!', 'success');
+    } else {
+      playErrorSound();
+      showAlert(`Overlay failed: ${data.detail}`);
+    }
+  } catch (err) {
+    playErrorSound();
+    showAlert(`Overlay error: ${err.message}`);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '✨ Burn B-Roll Overlay';
+    }
+  }
+});
+
+document.getElementById('suggest-emojis-btn')?.addEventListener('click', async () => {
+  if (activeOverlayClipIdx === null) return;
+  const clip = generatedClips[activeOverlayClipIdx];
+  if (!clip || !clip.words || !clip.words.length) {
+    showAlert('No transcript word timing available for this clip.');
+    return;
+  }
+
+  try {
+    const res = await fetch(`${serverUrl}/tools/suggest-emojis`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        segments: [{ id: 1, start: clip.start_time, end: clip.end_time, text: clip.hook_text || '', words: clip.words }]
+      })
+    });
+    const data = await res.json();
+    if (res.ok && data.suggestions && data.suggestions.length) {
+      playSuccessSound();
+      showAlert(`💡 Suggested Emojis based on transcript:\n${data.suggestions.map(s => `• "${s.word}" (${s.timestamp}s) -> ${s.emoji}`).join('\n')}`);
+    } else {
+      showAlert('No high-energy hook keywords detected in this clip segment.');
+    }
+  } catch (err) {
+    showAlert(`Error: ${err.message}`);
+  }
+});
 
 document.addEventListener('click', (e) => {
   if (e.target.closest('button, .btn, .dep-row')) playClick();
@@ -2203,3 +2737,119 @@ document.addEventListener('click', (e) => {
 
 bindEstimator();
 init();
+// ------------------------------------------------------------------
+// Job Queue Manager Modal & Background Poller
+// ------------------------------------------------------------------
+let queuePollerInterval = null;
+
+function openQueueModal() {
+  const modal = document.getElementById('queue-modal');
+  if (modal) modal.classList.remove('hidden');
+  refreshQueueList();
+  if (!queuePollerInterval) {
+    queuePollerInterval = setInterval(refreshQueueList, 2000);
+  }
+}
+
+function closeQueueModal() {
+  const modal = document.getElementById('queue-modal');
+  if (modal) modal.classList.add('hidden');
+  if (queuePollerInterval) {
+    clearInterval(queuePollerInterval);
+    queuePollerInterval = null;
+  }
+}
+
+document.getElementById('open-queue-btn')?.addEventListener('click', openQueueModal);
+document.getElementById('close-queue-modal')?.addEventListener('click', closeQueueModal);
+document.getElementById('refresh-queue-btn')?.addEventListener('click', refreshQueueList);
+
+async function refreshQueueList() {
+  try {
+    const res = await fetch(`${serverUrl}/jobs`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const jobs = data.jobs || [];
+
+    // Update queue badge count (active or queued jobs)
+    const activeCount = jobs.filter(j => j.status === 'queued' || j.status === 'processing').length;
+    const badge = document.getElementById('queue-badge');
+    if (badge) {
+      badge.textContent = String(activeCount);
+      badge.classList.toggle('hidden', activeCount === 0);
+    }
+
+    const summary = document.getElementById('queue-summary-text');
+    if (summary) {
+      summary.textContent = `${activeCount} running / queued (${jobs.length} total in session)`;
+    }
+
+    const list = document.getElementById('queue-list');
+    if (!list) return;
+
+    if (!jobs.length) {
+      list.innerHTML = '<div class="empty-state muted">No jobs currently in queue.</div>';
+      return;
+    }
+
+    list.innerHTML = '';
+    jobs.slice().reverse().forEach(job => {
+      const item = document.createElement('div');
+      item.className = 'queue-item';
+
+      const statusClass = `status-${job.status}`;
+      const isRunning = job.status === 'processing' || job.status === 'queued';
+
+      item.innerHTML = `
+        <div class="queue-item-header">
+          <span class="queue-item-title">Job #${escapeHtml(job.job_id.slice(0, 8))}</span>
+          <span class="queue-item-badge ${statusClass}">${escapeHtml(job.status)}</span>
+        </div>
+        <div class="queue-item-step">${escapeHtml(job.step || 'Waiting in line...')} (${job.progress || 0}%)</div>
+        <div class="queue-progress-bar">
+          <div class="queue-progress-fill" style="width: ${job.progress || 0}%;"></div>
+        </div>
+        <div class="queue-item-actions">
+          ${isRunning ? `<button class="btn btn-small btn-danger" data-cancel-job="${job.job_id}">🛑 Cancel</button>` : ''}
+          ${job.status === 'completed' ? `<button class="btn btn-small btn-primary" data-view-job="${job.job_id}">👁️ View Clips</button>` : ''}
+        </div>
+      `;
+
+      item.querySelector('[data-cancel-job]')?.addEventListener('click', async () => {
+        await fetch(`${serverUrl}/job/${job.job_id}/cancel`, { method: 'POST' });
+        showToast('Cancellation requested', 'info');
+        refreshQueueList();
+      });
+
+      item.querySelector('[data-view-job]')?.addEventListener('click', async () => {
+        const r = await fetch(`${serverUrl}/job/${job.job_id}`);
+        if (r.ok) {
+          const jobData = await r.json();
+          if (jobData.clips) {
+            closeQueueModal();
+            showResults(jobData.clips);
+          }
+        }
+      });
+
+      list.appendChild(item);
+    });
+  } catch (e) { /* server offline or unreachable */ }
+}
+
+// Background badge poller every 5 seconds
+setInterval(async () => {
+  try {
+    const res = await fetch(`${serverUrl}/jobs`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const jobs = data.jobs || [];
+    const activeCount = jobs.filter(j => j.status === 'queued' || j.status === 'processing').length;
+    const badge = document.getElementById('queue-badge');
+    if (badge) {
+      badge.textContent = String(activeCount);
+      badge.classList.toggle('hidden', activeCount === 0);
+    }
+  } catch (e) {}
+}, 5000);
+}
