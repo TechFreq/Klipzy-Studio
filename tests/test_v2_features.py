@@ -148,3 +148,42 @@ def test_transcription_backend_endpoint():
     assert r.status_code == 200
     body = r.json()
     assert "active" in body and "available" in body
+
+
+# ---------------------------------------------------------------------------
+# Hook/title selection (no-LLM quality) + audio-energy duration safety
+# ---------------------------------------------------------------------------
+def test_choose_hook_and_title_prefers_strong_sentence():
+    """A leading fragment must not become the hook; a real question should win."""
+    from server.core.highlight_detector import choose_hook_and_title
+    text = "Hi. All right, where are you headed? I am headed downtown."
+    hook, title = choose_hook_and_title(text)
+    assert "headed" in title.lower()
+    assert title.lower() != "hi"
+    assert not title.startswith("Hi.")
+
+
+def test_choose_hook_and_title_strips_leading_filler():
+    from server.core.highlight_detector import choose_hook_and_title
+    hook, title = choose_hook_and_title("So basically the whole thing changed my life honestly.")
+    assert not title.lower().startswith("so ")
+    assert title[0].isupper()
+
+
+def test_audio_energy_respects_min_duration(tmp_path):
+    """Energy peaks on tiny segments must be grown to a real window, never sub-second."""
+    from server.core.audio_energy import detect_highlights_audio_energy
+    from server.models import TranscriptSegment, WordTimestamp
+
+    # A short loud utterance surrounded by normal speech.
+    segs = [
+        TranscriptSegment(id=0, start=0.0, end=3.0, text="Welcome back everyone.", words=[]),
+        TranscriptSegment(id=1, start=3.0, end=3.7, text="Download Mike!", words=[]),
+        TranscriptSegment(id=2, start=3.7, end=8.0, text="That was an incredible moment for all of us.", words=[]),
+        TranscriptSegment(id=3, start=8.0, end=14.0, text="Let me tell you why it mattered so much.", words=[]),
+    ]
+    # No real audio file -> librosa load fails -> returns [] gracefully (still valid).
+    out = detect_highlights_audio_energy(str(tmp_path / "missing.wav"), segs, min_duration=12.0, max_duration=45.0)
+    assert isinstance(out, list)
+    for c in out:
+        assert c.duration >= 5.0, "energy clip must never be a sub-second fragment"

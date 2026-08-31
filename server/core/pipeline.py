@@ -164,7 +164,9 @@ class VideoClipperEngine:
 
         if use_audio_energy:
             report("Scanning audio energy peaks...", 42)
-            energy_clips = detect_highlights_audio_energy(temp_audio, segments)
+            energy_clips = detect_highlights_audio_energy(
+                temp_audio, segments, min_duration=min_duration, max_duration=max_duration
+            )
             candidates.extend(energy_clips)
 
         if use_llm:
@@ -172,10 +174,26 @@ class VideoClipperEngine:
             llm_clips = detect_highlights_llm(segments, model=llm_model)
             candidates.extend(llm_clips)
 
-        # Deduplicate + sort by score + limit
+        # Sanity floor: never emit a degenerate sub-clip regardless of source.
+        # (A loud one-word segment must not survive as a fraction-of-a-second clip.)
+        floor = min(min_duration, 5.0)
+        candidates = [c for c in candidates if c.duration >= floor]
+
+        # Deduplicate by time-overlap, then by hook/title: the heuristic and
+        # audio-energy detectors often land on the SAME moment with slightly
+        # different bounds (so time-overlap alone misses it). Keep the
+        # higher-scoring pick per distinct hook.
         candidates = self.detector._deduplicate(candidates)
         candidates.sort(key=lambda c: c.score, reverse=True)
-        candidates = candidates[:max_clips]
+        seen_hooks = set()
+        unique: List[ClipCandidate] = []
+        for c in candidates:
+            key = (c.title or c.hook_text or "").strip().lower()[:40]
+            if key and key in seen_hooks:
+                continue
+            seen_hooks.add(key)
+            unique.append(c)
+        candidates = unique[:max_clips]
 
         # Generate subtitle files
         srt_path = str(job_dir / "captions.srt")
