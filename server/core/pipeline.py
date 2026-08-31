@@ -174,6 +174,16 @@ class VideoClipperEngine:
             llm_clips = detect_highlights_llm(segments, model=llm_model)
             candidates.extend(llm_clips)
 
+        # Gameplay fallback: if there's no speech to score (shooters/Warzone,
+        # music-only footage), find the loudest action moments straight from the
+        # audio envelope — gunfights/killstreaks — NVIDIA-Highlights-style.
+        if not candidates:
+            report("No speech found — scanning for action moments...", 44)
+            from server.core.audio_energy import detect_action_highlights
+            candidates = detect_action_highlights(
+                temp_audio, min_duration=min_duration, max_duration=max_duration, top_k=max_clips
+            )
+
         # Sanity floor: never emit a degenerate sub-clip regardless of source.
         # (A loud one-word segment must not survive as a fraction-of-a-second clip.)
         floor = min(min_duration, 5.0)

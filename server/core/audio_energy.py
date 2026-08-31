@@ -109,6 +109,108 @@ def detect_highlights_audio_energy(
     return _deduplicate(candidates)
 
 
+def detect_action_highlights(
+    audio_path: str,
+    min_duration: float = 15.0,
+    max_duration: float = 45.0,
+    top_k: int = 6,
+) -> List[ClipCandidate]:
+    """
+    Transcript-free highlight detection for GAMEPLAY (shooters/Warzone etc.),
+    where there's little or no speech but the action is loud — gunfights,
+    explosions, killstreaks. NVIDIA-Highlights-style: find the loudest sustained
+    moments and cut a clip around each.
+
+    Works purely from the audio envelope, so it needs no captions or faces.
+    Returns [] if librosa/audio is unavailable.
+    """
+    try:
+        import librosa
+        import numpy as np
+    except ImportError:
+        return []
+
+    try:
+        y, sr = librosa.load(audio_path, sr=16000, mono=True)
+    except Exception:
+        return []
+    if y is None or len(y) == 0:
+        return []
+
+    total = len(y) / float(sr)
+    if total < min_duration:
+        # Whole thing is shorter than one clip — just take it all.
+        return [
+            ClipCandidate(
+                id="action_0", title="🎮 Highlight", start_time=0.0, end_time=round(total, 2),
+                duration=round(total, 2), score=7.0, hook_text="Gameplay highlight",
+                full_text="", words=[], reason="Full gameplay segment",
+            )
+        ]
+
+    hop = int(sr * 0.5)
+    rms = librosa.feature.rms(y=y, hop_length=hop)[0]
+    times = librosa.times_like(rms, sr=sr, hop_length=hop)
+    if rms.max() > 0:
+        rms = rms / rms.max()
+
+    # "Action" = energy well above the clip's own baseline.
+    mean, std = float(rms.mean()), float(rms.std())
+    threshold = min(0.9, mean + 0.8 * std)
+
+    # Peak indices, loudest first.
+    peak_order = sorted(range(len(rms)), key=lambda k: rms[k], reverse=True)
+
+    titles = ["🔥 Big Play", "💥 Intense Moment", "🎯 Killstreak", "⚡ Action Spike", "🎮 Highlight", "🏆 Clutch"]
+    picked: List[ClipCandidate] = []
+    windows: List = []  # (start, end)
+
+    for k in peak_order:
+        if rms[k] < threshold:
+            break
+        t = float(times[k])
+        # Center a min-duration window on the peak, with a little more lead-out.
+        half = min_duration / 2.0
+        start = max(0.0, t - half * 0.8)
+        end = min(total, start + min_duration)
+        # Extend while the surrounding audio stays hot (up to max_duration).
+        j = k + 1
+        while (end - start) < max_duration and j < len(rms) and rms[j] >= threshold * 0.7:
+            end = min(total, float(times[j]))
+            j += 1
+        # Guarantee at least min_duration (pull the start back, or push end out)
+        # so a peak near the tail can't yield a stub clip.
+        if (end - start) < min_duration:
+            start = max(0.0, end - min_duration)
+        if (end - start) < min_duration:
+            end = min(total, start + min_duration)
+
+        if any(not (end <= ws or start >= we) for ws, we in windows):
+            continue  # overlaps an already-picked highlight
+        windows.append((start, end))
+
+        score = round(min(10.0, 5.0 + float(rms[k]) * 5.0), 1)
+        picked.append(
+            ClipCandidate(
+                id=f"action_{len(picked)}",
+                title=titles[len(picked) % len(titles)],
+                start_time=round(start, 2),
+                end_time=round(end, 2),
+                duration=round(end - start, 2),
+                score=score,
+                hook_text="Gameplay action moment",
+                full_text="",
+                words=[],
+                reason=f"Audio action peak ({rms[k]:.2f})",
+            )
+        )
+        if len(picked) >= top_k:
+            break
+
+    picked.sort(key=lambda c: c.start_time)
+    return picked
+
+
 def _deduplicate(clips: List[ClipCandidate], overlap_threshold: float = 0.5) -> List[ClipCandidate]:
     selected: List[ClipCandidate] = []
     for c in clips:

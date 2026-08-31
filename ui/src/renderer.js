@@ -841,8 +841,9 @@ function renderProjectGrid() {
       </div>`;
     card.querySelector('[data-open]').addEventListener('click', () => openProject(project.id));
     card.querySelector('[data-del]').addEventListener('click', async () => {
-      const ok = await showConfirm(`Remove "${project.name || 'Untitled project'}" from your projects?`);
+      const ok = await showConfirm(`Delete "${project.name || 'Untitled project'}" and its generated clips? The rendered files are removed too.`);
       if (!ok) return;
+      await deleteProjectFootage(project);   // remove rendered clips, not just the manifest
       writeProjects(readProjects().filter((p) => p.id !== project.id));
       if (currentProjectId === project.id) currentProjectId = null;
       loadProjectList();
@@ -984,10 +985,17 @@ async function deleteCurrentProject() {
   }
   const confirmed = await showConfirm(`Delete project “${project.name}” and its generated files?`);
   if (!confirmed) return;
-  // Collect every generated artifact belonging to this project. Clip folders
-  // (output/<job_id>) contain the rendered clips plus caption/transcript and
-  // temp re-render files; include them and all known per-clip paths so a
-  // deleted project leaves no temp output files behind.
+  await deleteProjectFootage(project);
+  writeProjects(projects.filter((item) => item.id !== currentProjectId));
+  resetWizardToStep1();
+  loadProjectList();
+}
+
+// Collect every generated artifact for a project and ask the server to delete
+// the footage. Shared by the "Delete Project" button and the project-grid trash
+// icon so removing a project always removes its rendered clips too — the server
+// only deletes inside the output folder, never the original source video.
+function projectArtifactPaths(project) {
   const paths = [];
   (project.clips || []).forEach((clip) => {
     if (clip?.output_file) paths.push(clip.output_file);
@@ -995,31 +1003,22 @@ async function deleteCurrentProject() {
     if (clip?.vtt_path) paths.push(clip.vtt_path);
     if (clip?.ass_path) paths.push(clip.ass_path);
     if (clip?.output_file) {
-      // The clip's own generation folder (contains captions, transcripts,
-      // audio, and old versions after re-renders).
       const baseDir = clip.output_file.replace(/\\/g, '/').split('/').slice(0, -1).join('/');
       if (baseDir) paths.push(baseDir);
     }
   });
-  // The project's "commands" and "analysis" folders from the generated clips
-  // area may still hold temp output; remove those too when they are inside
-  // the project job folder.
-  if (project.source) {
-    const stem = project.source.replace(/\\/g, '/').split('/').pop().replace(/\.\w+$/, '');
-    const srcDir = project.source.replace(/\\/g, '/').split('/').slice(0, -1).join('/');
-    [`.klipzy/${stem}`, `${stem}_tools`].forEach((p) => {
-      if (p) paths.push(`${srcDir}/${p}`);
-    });
-  }
+  return paths;
+}
+
+async function deleteProjectFootage(project) {
+  const paths = projectArtifactPaths(project);
+  if (!paths.length) return;
   try {
     await fetch(`${serverUrl}/project/delete`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ paths }),
     });
-  } catch (_) { /* local project deletion still proceeds */ }
-  writeProjects(projects.filter((item) => item.id !== currentProjectId));
-  resetWizardToStep1();
-  loadProjectList();
+  } catch (_) { /* local manifest removal still proceeds */ }
 }
 
 // ------------------------------------------------------------------
@@ -2460,10 +2459,34 @@ async function loadSetupPanel() {
     renderRecommendations(data.recommendations);
     renderDeps(data);
     bindInstallAll();
+    bindClearCache();
     loadAiModels(data);
   } catch (e) {
     document.getElementById('setup-hardware').innerHTML = '<span class="muted">⚠️ Could not reach the server.</span>';
   }
+}
+
+// Clear the transcript cache (frees space; next run re-transcribes).
+function bindClearCache() {
+  const btn = document.getElementById('clear-cache-btn');
+  if (!btn || btn.dataset.bound) return;
+  btn.dataset.bound = '1';
+  btn.addEventListener('click', async () => {
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Clearing…';
+    try {
+      const res = await fetch(`${serverUrl}/api/setup/clear-cache`, { method: 'POST' });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.detail || `Server returned ${res.status}`);
+      showToast(`🧹 Cleared ${d.cleared || 0} cached transcript(s) · ${d.mb_freed || 0} MB freed`, 'success');
+    } catch (e) {
+      showToast(`Could not clear cache: ${e.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  });
 }
 
 // One-click: install every missing dependency, one at a time, with a real

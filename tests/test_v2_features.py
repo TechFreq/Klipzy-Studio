@@ -212,3 +212,30 @@ def test_face_region_motion_is_safe_on_bad_input():
     from server.core.face_tracker import FaceTracker
     # Mismatched / empty regions must not raise, just return 0.0
     assert FaceTracker._face_region_motion(None, None, (0, 0, 10, 10)) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Gameplay action highlights (no transcript) + hardware naming
+# ---------------------------------------------------------------------------
+def test_action_highlights_safe_without_audio(tmp_path):
+    """No/'missing' audio must not raise; returns a list."""
+    from server.core.audio_energy import detect_action_highlights
+    out = detect_action_highlights(str(tmp_path / "missing.wav"), min_duration=12.0, max_duration=30.0)
+    assert isinstance(out, list)
+
+
+def test_detect_cpu_reports_a_name():
+    """CPU detection should surface a brand string (AMD/Intel/Apple) for the UI."""
+    from server.core import system_check as sc
+    cpu = sc.detect_cpu()
+    assert "cores" in cpu
+    assert "name" in cpu  # may be None on exotic platforms, but the key must exist
+
+
+def test_clear_cache_endpoint():
+    from fastapi.testclient import TestClient
+    import server.api.server as srv
+    r = TestClient(srv.app).post("/api/setup/clear-cache")
+    assert r.status_code == 200
+    body = r.json()
+    assert "cleared" in body and "mb_freed" in body

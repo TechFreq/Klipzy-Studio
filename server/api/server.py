@@ -1321,6 +1321,26 @@ def set_ai_model(req: AIModelRequest):
     raise HTTPException(status_code=400, detail=f"Unknown model kind: {req.kind}")
 
 
+@app.post("/api/setup/clear-cache")
+def clear_cache():
+    """Delete the transcript cache (output/.cache/*.json). Safe: it only makes
+    the next run re-transcribe; it never touches rendered clips."""
+    from server.core.pipeline import VideoClipperEngine
+    cache_dir = VideoClipperEngine._transcript_cache_path()
+    cleared, freed = 0, 0
+    try:
+        for f in cache_dir.glob("*.json"):
+            try:
+                freed += f.stat().st_size
+                f.unlink()
+                cleared += 1
+            except OSError:
+                continue
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"cleared": cleared, "mb_freed": round(freed / (1024 * 1024), 2)}
+
+
 @app.get("/api/setup/estimate")
 def setup_estimate(duration: float = 30.0, layout: str = "vertical"):
     """Rough render-time estimate for a clip of the given duration."""

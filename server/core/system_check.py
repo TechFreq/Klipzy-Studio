@@ -147,7 +147,37 @@ def detect_gpu() -> Dict[str, str]:
     # 3) macOS Metal
     if platform.system() == "Darwin":
         return {"name": "Apple Silicon (Metal)", "vram_gb": None}
+    # 4) AMD / Intel GPUs (no CUDA): name them so the UI + recommender are
+    #    accurate. These don't accelerate PyTorch on Windows, but the FFmpeg
+    #    encoder (AMD AMF / Intel QSV) still speeds up rendering.
+    name = _detect_gpu_name_fallback()
+    if name:
+        return {"name": name, "vram_gb": None}
     return {"name": None, "vram_gb": None}
+
+
+def _detect_gpu_name_fallback() -> Optional[str]:
+    """Best-effort GPU name for non-NVIDIA cards (AMD Radeon / Intel Arc/UHD)."""
+    system = platform.system()
+    try:
+        if system == "Windows":
+            out = _run([
+                "powershell", "-NoProfile", "-Command",
+                "(Get-CimInstance Win32_VideoController).Name",
+            ], timeout=6)
+        elif system == "Linux":
+            out = _run(["bash", "-lc", "lspci | grep -Ei 'vga|3d|display'"], timeout=6)
+        else:
+            out = None
+    except Exception:
+        out = None
+    if not out:
+        return None
+    for line in out.splitlines():
+        low = line.lower()
+        if any(k in low for k in ("radeon", "amd", "rx ", "vega", "arc", "intel", "uhd", "iris", "nvidia", "geforce", "rtx", "gtx")):
+            return line.strip()
+    return out.splitlines()[0].strip() or None
 
 
 def detect_cpu() -> Dict[str, str]:
@@ -157,7 +187,28 @@ def detect_cpu() -> Dict[str, str]:
         ram_gb = round(psutil.virtual_memory().total / (1024 ** 3), 1)
     except ImportError:
         ram_gb = None
-    return {"cores": cores, "ram_gb": ram_gb}
+    return {"cores": cores, "ram_gb": ram_gb, "name": _detect_cpu_name()}
+
+
+def _detect_cpu_name() -> Optional[str]:
+    """Human-readable CPU brand (e.g. 'AMD Ryzen 7 5800X', 'Intel Core i7')."""
+    system = platform.system()
+    try:
+        if system == "Windows":
+            out = _run(["powershell", "-NoProfile", "-Command", "(Get-CimInstance Win32_Processor).Name"], timeout=6)
+            if out:
+                return out.splitlines()[0].strip()
+        elif system == "Darwin":
+            out = _run(["sysctl", "-n", "machdep.cpu.brand_string"], timeout=6)
+            if out:
+                return out.strip()
+        elif system == "Linux":
+            out = _run(["bash", "-lc", "grep -m1 'model name' /proc/cpuinfo | cut -d: -f2"], timeout=6)
+            if out:
+                return out.strip()
+    except Exception:
+        pass
+    return platform.processor() or None
 
 
 def detect_torch() -> Dict[str, bool]:
@@ -300,10 +351,18 @@ def recommend_models() -> Dict[str, Dict]:
     # GPU speed they won't get.
     cuda_usable = bool(torch_info.get("cuda"))
     mps_usable = bool(torch_info.get("mps"))
-    gpu_present = bool(vram)
-    gpu_name = gpu.get("name") or "your GPU"
+    gpu_name = gpu.get("name") or ""
+    gpu_present = bool(vram) or bool(gpu_name)
     dormant_gpu = gpu_present and not cuda_usable and not mps_usable
-    unlock_note = f"{gpu_name} detected but PyTorch can't use it yet — install the CUDA build to unlock GPU speed"
+    _is_nvidia = any(k in gpu_name.lower() for k in ("nvidia", "geforce", "rtx", "gtx", "quadro", "tesla"))
+    if _is_nvidia:
+        unlock_note = f"{gpu_name} detected but PyTorch can't use it yet — install the CUDA build to unlock GPU speed"
+    elif gpu_name:
+        # AMD/Intel GPUs don't accelerate PyTorch on Windows, but FFmpeg still
+        # uses them (AMF/QSV) to speed up rendering. Be honest, don't push CUDA.
+        unlock_note = f"{gpu_name}: used for fast video encoding; transcription/AI run on CPU (faster-whisper recommended)"
+    else:
+        unlock_note = "No usable GPU for AI — running on CPU (install faster-whisper for a 3-5x speedup)"
 
     # --- Whisper ---
     if cuda_usable and vram and vram >= 8:
