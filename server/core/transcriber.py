@@ -16,7 +16,47 @@ from server.models import TranscriptSegment, WordTimestamp
 
 def _is_apple_silicon() -> bool:
     """Check if running on macOS Apple Silicon (M-series)."""
-    return sys.platform == "darwin" and os.uname().machine == "arm64"
+    return sys.platform == "darwin" and hasattr(os, "uname") and os.uname().machine == "arm64"
+
+
+def detect_active_backend() -> dict:
+    """
+    Report which transcription backend WOULD be used, without loading a model.
+
+    Mirrors the priority in Transcriber._load_model():
+      mlx (Apple Silicon only) -> faster-whisper -> openai-whisper.
+    Cheap enough (import spec checks) to call from /health.
+    """
+    import importlib.util as _u
+
+    apple_silicon = _is_apple_silicon()
+    have_mlx = _u.find_spec("mlx_whisper") is not None
+    have_faster = _u.find_spec("faster_whisper") is not None
+    have_openai = _u.find_spec("whisper") is not None
+
+    available = []
+    if apple_silicon and have_mlx:
+        available.append("mlx")
+    if have_faster:
+        available.append("faster-whisper")
+    if have_openai:
+        available.append("openai-whisper")
+
+    if apple_silicon and have_mlx:
+        active, note = "mlx", "MLX native acceleration (Apple Silicon)"
+    elif have_faster:
+        active, note = "faster-whisper", "CTranslate2 (3-5x faster than openai-whisper)"
+    elif have_openai:
+        active, note = "openai-whisper", "PyTorch fallback (CUDA/MPS/CPU)"
+    else:
+        active, note = None, "No transcription backend installed"
+
+    return {
+        "active": active,
+        "available": available,
+        "apple_silicon": apple_silicon,
+        "note": note,
+    }
 
 
 class Transcriber:

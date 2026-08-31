@@ -115,3 +115,36 @@ def test_api_suggest_emojis_endpoint():
     data = res.json()
     assert "suggestions" in data
     assert len(data["suggestions"]) >= 2
+
+
+# ---------------------------------------------------------------------------
+# Transcription backend reporter (MLX / faster-whisper / openai-whisper)
+# ---------------------------------------------------------------------------
+def test_detect_active_backend_shape():
+    """The reporter returns a well-formed dict without loading any model."""
+    from server.core.transcriber import detect_active_backend
+
+    info = detect_active_backend()
+    assert set(info) == {"active", "available", "apple_silicon", "note"}
+    assert info["active"] in {"mlx", "faster-whisper", "openai-whisper", None}
+    assert isinstance(info["available"], list)
+    assert isinstance(info["apple_silicon"], bool)
+    # mlx is only ever selected on Apple Silicon
+    if info["active"] == "mlx":
+        assert info["apple_silicon"] is True
+
+
+def test_health_reports_transcription_backend():
+    """/health surfaces the active backend so the UI can display it."""
+    client = TestClient(srv.app)
+    r = client.get("/health")
+    assert r.status_code == 200
+    assert "transcription_backend" in r.json()
+
+
+def test_transcription_backend_endpoint():
+    client = TestClient(srv.app)
+    r = client.get("/transcription-backend")
+    assert r.status_code == 200
+    body = r.json()
+    assert "active" in body and "available" in body

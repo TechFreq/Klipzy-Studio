@@ -252,10 +252,13 @@ class HealthResponse(BaseModel):
     hw_encoder: str
     whisper_loaded: bool
     ollama_available: bool
+    transcription_backend: Optional[str] = None  # mlx | faster-whisper | openai-whisper | None
 
 
 @app.get("/health", response_model=HealthResponse)
 def health():
+    from server.core.transcriber import detect_active_backend
+
     ffmpeg_ok, _ = check_ffmpeg()
     encoder, _ = detect_hw_encoder()
     ollama_ok = False
@@ -276,7 +279,16 @@ def health():
         hw_encoder=encoder,
         whisper_loaded=whisper_ok,
         ollama_available=ollama_ok,
+        transcription_backend=detect_active_backend().get("active"),
     )
+
+
+@app.get("/transcription-backend")
+def transcription_backend():
+    """Which transcription backend is active (mlx / faster-whisper / openai-whisper)
+    plus what else is available. Handy for confirming MLX is engaged on Apple Silicon."""
+    from server.core.transcriber import detect_active_backend
+    return detect_active_backend()
 
 
 @app.post("/process", response_model=ProcessResponse)

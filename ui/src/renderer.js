@@ -647,10 +647,14 @@ async function checkHealth() {
       return;
     }
     const data = await res.json();
+    // Show the active transcription backend (mlx / faster-whisper / openai-whisper)
+    // so it's obvious at a glance which acceleration path is live.
+    const backend = data.transcription_backend;
+    const backendLabel = backend ? ` · ${escapeHtml(backend)}` : '';
     if (data.ffmpeg_available === false) {
-      statusEl.innerHTML = `<span class="dot warn"></span> Running — FFmpeg missing`;
+      statusEl.innerHTML = `<span class="dot warn"></span> Running — FFmpeg missing${backendLabel}`;
     } else {
-      statusEl.innerHTML = `<span class="dot ok"></span> Server ready`;
+      statusEl.innerHTML = `<span class="dot ok"></span> Server ready${backendLabel}`;
     }
   } catch (e) {
     statusEl.innerHTML = `<span class="dot error"></span> Server offline`;
