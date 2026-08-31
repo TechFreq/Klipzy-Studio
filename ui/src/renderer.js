@@ -2362,8 +2362,106 @@ async function loadSetupPanel() {
     renderHardware(data);
     renderRecommendations(data.recommendations);
     renderDeps(data);
+    bindInstallAll();
+    loadAiModels(data);
   } catch (e) {
     document.getElementById('setup-hardware').innerHTML = '<span class="muted">⚠️ Could not reach the server.</span>';
+  }
+}
+
+// One-click: install every missing dependency in a single pass.
+function bindInstallAll() {
+  const btn = document.getElementById('install-all-btn');
+  if (!btn || btn.dataset.bound) return;
+  btn.dataset.bound = '1';
+  btn.addEventListener('click', async () => {
+    const statusEl = document.getElementById('install-all-status');
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Installing everything missing…';
+    if (statusEl) statusEl.textContent = 'Installing missing dependencies — this can take several minutes. You can leave this open.';
+    try {
+      const res = await fetch(`${serverUrl}/api/setup/install-all`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Server returned ${res.status}`);
+      if (!data.attempted) {
+        showAlert('✅ Everything recommended is already installed — nothing to do.');
+      } else {
+        const ok = (data.installed || []).join(', ') || 'none';
+        const failed = (data.failed || []).join(', ') || 'none';
+        showAlert(`Install All finished.\n\n✅ Installed: ${ok}\n❌ Failed: ${failed}`);
+      }
+      loadSetupPanel();
+    } catch (e) {
+      showAlert(`Install All failed: ${e.message}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+      if (statusEl) statusEl.textContent = '';
+    }
+  });
+}
+
+// Populate + wire the "Change AI models" selectors.
+async function loadAiModels(statusData) {
+  // Whisper size: keep in sync with the clip-time #whisper-model select + persist.
+  const whisperSel = document.getElementById('ai-whisper-model');
+  if (whisperSel && !whisperSel.dataset.bound) {
+    whisperSel.dataset.bound = '1';
+    const saved = localStorage.getItem('klipzy.whisperModel');
+    const clipSel = document.getElementById('whisper-model');
+    if (saved) whisperSel.value = saved;
+    else if (clipSel && clipSel.value) whisperSel.value = clipSel.value;
+    whisperSel.addEventListener('change', () => {
+      localStorage.setItem('klipzy.whisperModel', whisperSel.value);
+      const cs = document.getElementById('whisper-model');
+      if (cs) cs.value = whisperSel.value;  // the clipping run reads this select
+      showToast(`Transcription model set to ${whisperSel.value} for the next run`, 'success');
+    });
+  }
+
+  // Ollama model: list what's installed locally, let the user pick the active one.
+  const ollamaSel = document.getElementById('ai-ollama-model');
+  if (!ollamaSel) return;
+  try {
+    const res = await fetch(`${serverUrl}/api/setup/ai-models`);
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    const models = data.installed_ollama_models || [];
+    const active = data.ollama;
+    if (!models.length) {
+      const installed = statusData && statusData.ollama && statusData.ollama.installed;
+      ollamaSel.innerHTML = `<option value="">${installed ? 'No models pulled yet — use “Pull model”' : 'Ollama not installed'}</option>`;
+      ollamaSel.disabled = true;
+    } else {
+      ollamaSel.disabled = false;
+      ollamaSel.innerHTML = models.map((m) =>
+        `<option value="${escapeHtml(m)}"${m === active ? ' selected' : ''}>${escapeHtml(m)}</option>`
+      ).join('');
+      if (active && !models.includes(active)) {
+        ollamaSel.insertAdjacentHTML('afterbegin', `<option value="${escapeHtml(active)}" selected>${escapeHtml(active)} (active)</option>`);
+      }
+    }
+    if (!ollamaSel.dataset.bound) {
+      ollamaSel.dataset.bound = '1';
+      ollamaSel.addEventListener('change', async () => {
+        if (!ollamaSel.value) return;
+        try {
+          const r = await fetch(`${serverUrl}/api/setup/ai-model`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ kind: 'ollama', model: ollamaSel.value }),
+          });
+          if (!r.ok) throw new Error(`Server returned ${r.status}`);
+          showToast(`AI model set to ${ollamaSel.value}`, 'success');
+        } catch (e) {
+          showToast(`Could not set model: ${e.message}`, 'error');
+        }
+      });
+    }
+  } catch (_) {
+    ollamaSel.innerHTML = '<option value="">Could not reach Ollama</option>';
+    ollamaSel.disabled = true;
   }
 }
 

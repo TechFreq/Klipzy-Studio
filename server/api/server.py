@@ -117,6 +117,10 @@ else:
 
 CHAT = EditChat()
 
+# App-wide preferred local LLM (Ollama) model. Set from the Setup panel; used by
+# both the AI Edit Chat and LLM highlight discovery. Whisper is chosen per-job.
+PREFERRED_OLLAMA_MODEL = "gemma2:2b"
+
 
 def _ensure_output_root():
     """Return the current runtime output folder, creating it if missing."""
@@ -194,6 +198,7 @@ def _run_job(job_id: str) -> None:
             language=req.language,
             use_audio_energy=req.use_audio_energy,
             use_llm=req.use_llm,
+            llm_model=PREFERRED_OLLAMA_MODEL,
             burn_captions=req.burn_captions,
             caption_style=req.caption_style or "viral_yellow",
             font_size=req.font_size,
@@ -363,6 +368,7 @@ def list_jobs():
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
+    CHAT.model = PREFERRED_OLLAMA_MODEL  # honor the model chosen in Setup
     return CHAT.chat(
         message=req.message,
         conversation_history=req.conversation_history,
@@ -1182,6 +1188,75 @@ def ollama_pull(model: str = "gemma2:2b"):
         return {"model": model, "error": "Model download timed out after 30 minutes"}
     except Exception as e:
         return {"model": model, "error": str(e)}
+
+
+@app.post("/api/setup/install-all")
+def setup_install_all():
+    """Install every missing recommended dependency in one pass (sequential).
+    Does NOT pull Ollama models — those are large and handled separately."""
+    from server.core import system_check as sc
+
+    commands = sc.get_install_commands()
+    missing = sc.missing_components()
+    results = []
+    for key in missing:
+        cmd = commands.get(key)
+        if not cmd:
+            continue
+        try:
+            r = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=1200,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
+            results.append({
+                "component": key,
+                "command": " ".join(cmd),
+                "returncode": r.returncode,
+                "ok": r.returncode == 0,
+                "stderr": (r.stderr or "")[-500:],
+            })
+        except subprocess.TimeoutExpired:
+            results.append({"component": key, "ok": False, "error": "timed out"})
+        except Exception as e:  # noqa: BLE001
+            results.append({"component": key, "ok": False, "error": str(e)})
+
+    installed_ok = [r["component"] for r in results if r.get("ok")]
+    failed = [r["component"] for r in results if not r.get("ok")]
+    return {
+        "attempted": len(results),
+        "installed": installed_ok,
+        "failed": failed,
+        "already_present": [k for k in commands if k not in missing],
+        "results": results,
+    }
+
+
+class AIModelRequest(BaseModel):
+    kind: str = "ollama"  # currently only "ollama"
+    model: str
+
+
+@app.get("/api/setup/ai-models")
+def get_ai_models():
+    """Current preferred LLM model + the Ollama models installed locally."""
+    from server.core import system_check as sc
+    return {
+        "ollama": PREFERRED_OLLAMA_MODEL,
+        "installed_ollama_models": sc.list_ollama_models(),
+    }
+
+
+@app.post("/api/setup/ai-model")
+def set_ai_model(req: AIModelRequest):
+    """Change the active local LLM model used by chat + highlight discovery."""
+    global PREFERRED_OLLAMA_MODEL
+    model = (req.model or "").strip()
+    if not model:
+        raise HTTPException(status_code=400, detail="model is required")
+    if req.kind == "ollama":
+        PREFERRED_OLLAMA_MODEL = model
+        return {"ok": True, "ollama": PREFERRED_OLLAMA_MODEL}
+    raise HTTPException(status_code=400, detail=f"Unknown model kind: {req.kind}")
 
 
 @app.get("/api/setup/estimate")

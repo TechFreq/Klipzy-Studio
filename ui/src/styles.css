@@ -102,6 +102,9 @@ body {
 .health-status-btn:hover { background: rgba(255, 255, 255, 0.06); }
 .health-status-btn:focus-visible { outline: 2px solid var(--accent, #6366f1); outline-offset: 2px; }
 .health-hint { font-size: 12px; opacity: 0.6; flex: 0 0 auto; }
+.ai-models-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
+@media (max-width: 720px) { .ai-models-grid { grid-template-columns: 1fr; } }
+#install-all-status:not(:empty) { margin: 8px 0; }
 
 /* Main */
 .main { flex: 1; overflow-y: auto; padding: 24px 32px; }

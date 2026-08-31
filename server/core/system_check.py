@@ -206,6 +206,54 @@ def get_install_commands() -> Dict[str, List[str]]:
     commands["librosa"] = ["pip", "install", "librosa", "soundfile"]
     commands["ultralytics"] = ["pip", "install", "ultralytics"]
     return commands
+
+
+def _spec_installed(module: str) -> bool:
+    import importlib.util
+    return importlib.util.find_spec(module) is not None
+
+
+def component_installed(key: str) -> bool:
+    """Is a given install-command component already present?"""
+    if key == "ffmpeg":
+        return detect_ffmpeg().get("ffmpeg", False)
+    if key == "ollama":
+        return detect_ollama().get("installed", False)
+    if key == "pytorch":
+        return detect_torch().get("installed", False)
+    if key == "whisper":
+        return detect_whisper().get("installed", False)
+    if key == "ultralytics":
+        return detect_ultralytics().get("installed", False)
+    if key == "faster-whisper":
+        return _spec_installed("faster_whisper")
+    if key == "mlx-whisper":
+        return _spec_installed("mlx_whisper")
+    if key == "librosa":
+        return _spec_installed("librosa")
+    return False
+
+
+def missing_components() -> List[str]:
+    """Install-command keys for this OS that are not yet installed."""
+    return [k for k in get_install_commands() if not component_installed(k)]
+
+
+def list_ollama_models() -> List[str]:
+    """Names of locally-installed Ollama models (via `ollama list`), best-effort."""
+    exe = shutil.which("ollama")
+    if not exe:
+        info = detect_ollama()
+        exe = info.get("executable") or "ollama"
+    out = _run([exe, "list"], timeout=6)
+    if not out:
+        return []
+    models = []
+    for line in out.splitlines()[1:]:  # skip the header row
+        parts = line.split()
+        if parts and parts[0] and parts[0].upper() != "NAME":
+            models.append(parts[0])
+    return models
 # ----------------------------------------------------------------------
 # Hardware-aware model recommendations
 # ----------------------------------------------------------------------

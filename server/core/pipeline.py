@@ -98,6 +98,7 @@ class VideoClipperEngine:
         language: Optional[str] = None,
         use_audio_energy: bool = True,
         use_llm: bool = False,
+        llm_model: str = "gemma2:2b",
         burn_captions: bool = True,
         caption_style: str = "viral_yellow",
         font_size: Optional[int] = None,
@@ -168,7 +169,7 @@ class VideoClipperEngine:
 
         if use_llm:
             report("Asking local LLM for viral moments...", 46)
-            llm_clips = detect_highlights_llm(segments)
+            llm_clips = detect_highlights_llm(segments, model=llm_model)
             candidates.extend(llm_clips)
 
         # Deduplicate + sort by score + limit

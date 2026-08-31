@@ -644,12 +644,44 @@
 
         <!-- Dependency checklist card -->
         <div class="card">
-          <h3>🔧 Dependency Checker</h3>
+          <div class="card-head-row">
+            <h3>🔧 Dependency Checker</h3>
+            <button class="btn btn-small btn-primary" id="install-all-btn" title="Install every missing dependency in one pass">⚡ Install All Recommended</button>
+          </div>
           <p class="muted">Ollama is Klipzy's local AI provider. You do not need to build or configure your own server: install Ollama once, and Klipzy connects to its local service when AI analysis or chat is enabled. LM Studio is optional only if you prefer another local provider.</p>
-          <p class="muted">Missing something? Click <strong>Install</strong> and the app will install it for you (winget / Homebrew / pip).</p>
+          <p class="muted">Missing something? Click <strong>Install</strong> for one item, or <strong>Install All Recommended</strong> to set up everything missing at once (winget / Homebrew / pip). This can take several minutes.</p>
+          <div id="install-all-status" class="muted small" role="status" aria-live="polite"></div>
           <div id="setup-deps" class="setup-deps">
             <span class="muted">Checking...</span>
           </div>
+        </div>
+
+        <!-- Change AI models card -->
+        <div class="card">
+          <div class="card-head-row">
+            <h3>🧠 AI Models</h3>
+            <span class="muted small">Pick what runs on your machine</span>
+          </div>
+          <p class="muted">Choose the transcription and local-LLM models. The recommended picks above are matched to your hardware; you're free to change them.</p>
+          <div class="ai-models-grid">
+            <label class="option">
+              <span>🎤 Whisper (transcription)</span>
+              <select id="ai-whisper-model">
+                <option value="tiny">tiny — fastest, lowest accuracy</option>
+                <option value="base" selected>base — fast, good default</option>
+                <option value="small">small — better accuracy</option>
+                <option value="medium">medium — high accuracy</option>
+                <option value="large-v3">large-v3 — best, needs a strong GPU</option>
+              </select>
+            </label>
+            <label class="option">
+              <span>🤖 Local LLM (Ollama)</span>
+              <select id="ai-ollama-model" title="Models installed locally via Ollama">
+                <option value="">Loading installed models…</option>
+              </select>
+            </label>
+          </div>
+          <p class="muted small" id="ai-models-note">Whisper size applies to the next clipping run. The LLM model is used by AI Edit Chat and LLM highlight discovery.</p>
         </div>
 
         <!-- Render time estimator -->
