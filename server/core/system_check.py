@@ -45,10 +45,36 @@ def detect_python() -> Dict[str, str]:
     }
 
 
+def ffmpeg_has_subtitles() -> bool:
+    """Does the ffmpeg on PATH actually support burning subtitles?
+
+    A bare 'ffmpeg exists' check is not enough: some builds (e.g. the modular
+    homebrew-ffmpeg tap, or minimal static builds) ship WITHOUT libass, so the
+    'subtitles'/'ass' filters are missing. Caption burning then fails at render
+    time with a confusing 'No option name' / 'No such filter: subtitles' error.
+    We probe the actual filter list so the Setup panel can flag it up front.
+    """
+    if shutil.which("ffmpeg") is None:
+        return False
+    out = _run(["ffmpeg", "-hide_banner", "-filters"], timeout=8) or ""
+    # Filter rows look like: " T.. subtitles         V->V       Render text ..."
+    return any(
+        f" {name} " in out or f" {name}\t" in out
+        for name in ("subtitles", "ass")
+    )
+
+
 def detect_ffmpeg() -> Dict[str, bool]:
+    """Detect ffmpeg/ffprobe presence AND subtitle-burning capability.
+
+    'subtitles' is True only when the installed ffmpeg was built with libass.
+    Without it the app can cut/crop clips but cannot burn captions.
+    """
+    has_ffmpeg = shutil.which("ffmpeg") is not None
     return {
-        "ffmpeg": shutil.which("ffmpeg") is not None,
+        "ffmpeg": has_ffmpeg,
         "ffprobe": shutil.which("ffprobe") is not None,
+        "subtitles": ffmpeg_has_subtitles() if has_ffmpeg else False,
     }
 
 
@@ -233,7 +259,20 @@ def get_install_commands() -> Dict[str, List[str]]:
         commands["ffmpeg"] = ["winget", "install", "Gyan.FFmpeg", "--accept-source-agreements", "--accept-package-agreements"]
         commands["ollama"] = ["winget", "install", "Ollama.Ollama", "--accept-source-agreements", "--accept-package-agreements"]
     elif os_name == "macos":
-        commands["ffmpeg"] = ["brew", "install", "ffmpeg"]
+        # IMPORTANT: homebrew-core's plain "ffmpeg" is now a slim build WITHOUT
+        # libass, so it CANNOT burn subtitles. "ffmpeg-full" bundles libass.
+        # If the slim ffmpeg is already installed it conflicts with ffmpeg-full
+        # (both provide the `ffmpeg` binary), so remove it first. We route this
+        # through `bash -lc` because:
+        #   1) the install runs as a plain arg list (no shell), and we need two
+        #      steps (uninstall-then-install), and
+        #   2) a login shell picks up Homebrew's PATH (/opt/homebrew/bin) even
+        #      when the app is launched from Finder rather than a terminal.
+        # `;` (not `&&`) lets the install proceed when ffmpeg wasn't installed.
+        commands["ffmpeg"] = [
+            "bash", "-lc",
+            "brew uninstall ffmpeg 2>/dev/null; brew install ffmpeg-full",
+        ]
         commands["ollama"] = ["brew", "install", "--cask", "ollama"]
     else:
         commands["ffmpeg"] = ["sudo", "apt", "install", "-y", "ffmpeg"]
@@ -294,7 +333,11 @@ def _spec_installed(module: str) -> bool:
 def component_installed(key: str) -> bool:
     """Is a given install-command component already present?"""
     if key == "ffmpeg":
-        return detect_ffmpeg().get("ffmpeg", False)
+        # Require BOTH the binary AND libass (subtitle) support. A build without
+        # libass can't burn captions, so treat it as "not fully installed" and
+        # let the Setup panel offer to install a capable ffmpeg.
+        ff = detect_ffmpeg()
+        return ff.get("ffmpeg", False) and ff.get("subtitles", False)
     if key == "ollama":
         return detect_ollama().get("installed", False)
     if key == "pytorch":
