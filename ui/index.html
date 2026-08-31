@@ -2,7 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src http://127.0.0.1:8765; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: file:;">
+  <!--
+    img-src must include file: because a <video poster="file://..."> is fetched
+    under img-src, not media-src. Without it every generated thumbnail was
+    silently blocked and clip cards showed no poster frame.
+    connect-src covers both loopback spellings in case the port is remapped.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: file:; media-src 'self' blob: file:; object-src 'none'; base-uri 'none'; form-action 'none';">
   <title>Klipzy Studio</title>
   <link rel="stylesheet" href="src/styles.css" />
 </head>
@@ -21,12 +27,12 @@
         </select>
       </div>
       <nav class="nav">
-        <button class="nav-item active" data-view="clipper">✂️ Shorts Clipper</button>
+        <button class="nav-item active" data-view="clipper">✂️ Long Form to Shorts</button>
         <button class="nav-item" data-view="chat">💬 AI Edit Chat</button>
         <button class="nav-item" data-view="setup">⚙️ Setup</button>
       </nav>
       <div class="sidebar-footer">
-        <div id="health-status" class="health-status">
+        <div id="health-status" class="health-status" role="status" aria-live="polite">
           <span class="dot"></span> Checking server...
         </div>
       </div>
@@ -37,42 +43,45 @@
       <!-- Clipper View -->
       <section id="view-clipper" class="view active">
         <header class="view-header">
-          <h1>Klipzy Studio</h1>
+          <h1>Long Form to Shorts <span class="header-actions">
+            <button class="btn btn-small btn-secondary" id="open-queue-btn" title="View background rendering queue">📋 Queue <span id="queue-badge" class="badge-count hidden">0</span></button>
+            <button class="btn btn-small btn-secondary" id="open-logs-folder" title="Open the logs folder where Klipzy writes server logs">📜 Logs</button>
+          </span></h1>
           <p class="subtitle">Local AI video clipper by TechFreq — turn long videos into viral vertical shorts, 100% on your machine.</p>
         </header>
 
         <!-- Stepper Navigation Bar -->
-        <div class="wizard-stepper" id="wizard-stepper">
-          <div class="wizard-step active" data-step="1" id="wizard-step-btn-1">
+        <div class="wizard-stepper" id="wizard-stepper" role="tablist" aria-label="Clipping workflow steps">
+          <button type="button" class="wizard-step active" data-step="1" id="wizard-step-btn-1" role="tab" aria-selected="true" aria-controls="step-panel-1">
             <span class="step-num">1</span>
             <span class="step-label">📁 Project & Video</span>
-          </div>
-          <div class="step-line"></div>
-          <div class="wizard-step" data-step="2" id="wizard-step-btn-2">
+          </button>
+          <div class="step-line" aria-hidden="true"></div>
+          <button type="button" class="wizard-step" data-step="2" id="wizard-step-btn-2" role="tab" aria-selected="false" aria-controls="step-panel-2">
             <span class="step-num">2</span>
             <span class="step-label">✂️ Clipping & Style</span>
-          </div>
-          <div class="step-line"></div>
-          <div class="wizard-step" data-step="3" id="wizard-step-btn-3">
+          </button>
+          <div class="step-line" aria-hidden="true"></div>
+          <button type="button" class="wizard-step" data-step="3" id="wizard-step-btn-3" role="tab" aria-selected="false" aria-controls="step-panel-3">
             <span class="step-num">3</span>
             <span class="step-label">⚡ Transcribing & Process</span>
-          </div>
-          <div class="step-line"></div>
-          <div class="wizard-step" data-step="4" id="wizard-step-btn-4">
+          </button>
+          <div class="step-line" aria-hidden="true"></div>
+          <button type="button" class="wizard-step" data-step="4" id="wizard-step-btn-4" role="tab" aria-selected="false" aria-controls="step-panel-4">
             <span class="step-num">4</span>
             <span class="step-label">🔥 Generated Clips</span>
-          </div>
+          </button>
         </div>
 
         <!-- STEP 1: Project & Video Input -->
-        <div id="step-panel-1" class="wizard-panel active">
-          <div class="card drop-zone" id="drop-zone">
+        <div id="step-panel-1" class="wizard-panel active" role="tabpanel" aria-labelledby="wizard-step-btn-1">
+          <div class="card drop-zone" id="drop-zone" role="button" tabindex="0" aria-label="Drop video files here or activate to browse for a video">
             <div class="drop-content">
-              <span class="drop-icon">🎞️</span>
-              <h3>Drop a video here or click to browse</h3>
-              <p class="muted">MP4, MOV, MKV, WebM — processed entirely on your device</p>
+              <span class="drop-icon" aria-hidden="true">🎞️</span>
+              <h3>Drop video(s) here or click to browse</h3>
+              <p class="muted">MP4, MOV, MKV, WebM — single video or batch multi-video drop</p>
             </div>
-            <input type="file" id="file-input" accept="video/*" hidden />
+            <input type="file" id="file-input" accept="video/*" multiple hidden aria-hidden="true" tabindex="-1" />
           </div>
 
           <div id="file-info" class="file-info hidden">
@@ -80,7 +89,7 @@
             <button class="btn btn-small" id="change-file">Change</button>
           </div>
           <div id="project-bar" class="project-bar hidden">
-            <input id="project-name" type="text" placeholder="Project name" maxlength="80" />
+            <input id="project-name" type="text" placeholder="Project name" maxlength="80" aria-label="Project name" />
             <button class="btn btn-small btn-primary" id="save-project">💾 Save Project</button>
             <select id="project-list" title="Open saved project"><option value="">Open saved project…</option></select>
             <button class="btn btn-small btn-danger" id="delete-project">🗑 Delete Project</button>
@@ -234,7 +243,11 @@
             </label>
             <label class="toggle">
               <input type="checkbox" id="use-llm" />
-              <span>Use Ollama for AI highlight selection</span>
+              <span>Use Ollama for AI highlight selection
+                <span class="tooltip-toggle" tabindex="0" role="tooltip" aria-label="More info about Ollama" title="">
+                  ❓<span class="tooltip-text">Ollama is a free, local AI model runner (no cloud, no fees).<br><br>What this does: it sends your video transcript to a local AI model (e.g. gemma2:2b) to pick the most viral, dramatic 30-60s moments.<br><br>Check it ONLY if you have Ollama installed and running on this PC.<br><br>If unchecked OR if Ollama isn't running, the app automatically falls back to its built-in fast detector (audio volume spikes + viral hook keywords) — no Ollama needed.</span>
+                </span>
+              </span>
             </label>
           </div>
 
@@ -286,7 +299,7 @@
                     </label>
 
                     <label class="caption-field">
-                      <span>Outline Width (<output id="caption-outline-width-label">3</output>px)</span>
+                      <span>Outline Width (<output id="caption-outline-width-label" for="caption-outline-width">3</output>px)</span>
                       <input type="range" id="caption-outline-width" min="0" max="12" step="1" value="3" />
                     </label>
                   </div>
@@ -308,10 +321,14 @@
                   <span>Top hook (optional)</span>
                   <input id="caption-intro-text" type="text" maxlength="90" placeholder="e.g. The truth about..." />
                 </label>
-                <label class="toggle">
-                  <input type="checkbox" id="caption-intro-enabled" />
-                  <span>Show for first <input id="caption-intro-duration" class="inline-number" type="number" min="1" max="8" step="0.5" value="3" />s</span>
-                </label>
+                <div class="toggle-with-number">
+                  <label class="toggle">
+                    <input type="checkbox" id="caption-intro-enabled" />
+                    <span>Show intro hook for first</span>
+                  </label>
+                  <input id="caption-intro-duration" class="inline-number" type="number" min="1" max="8" step="0.5" value="3" aria-label="Intro hook duration in seconds" />
+                  <span>seconds</span>
+                </div>
                 <label class="caption-field">
                   <span>Position</span>
                   <select id="caption-position">
@@ -390,12 +407,15 @@
               <span class="progress-percent" id="progress-percent">0%</span>
             </div>
             <h3 id="progress-step" class="processing-step-text">Initializing AI models...</h3>
-            <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+            <div class="progress-bar" role="progressbar" id="progress-bar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-labelledby="progress-step"><div id="progress-fill" class="progress-fill"></div></div>
+            <div class="progress-actions" style="margin-top: 14px; display: flex; justify-content: flex-end;">
+              <button class="btn btn-danger btn-small" id="cancel-active-job-btn">🛑 Cancel Processing Job</button>
+            </div>
           </div>
 
           <div class="live-transcription-box">
             <h4>🎙️ Process Log & Transcription Feed</h4>
-            <div id="transcription-log" class="transcription-log">
+            <div id="transcription-log" class="transcription-log" role="log" aria-live="polite" aria-label="Processing log">
               <p class="muted">Waiting for Whisper speech recognition model to transcribe audio...</p>
             </div>
           </div>
@@ -417,7 +437,7 @@
               <button class="btn btn-secondary" id="export-davinci">🎞️ DaVinci (EDL)</button>
               <button class="btn btn-secondary" id="export-capcut">✂️ CapCut</button>
               <span class="export-sep">|</span>
-              <select id="standalone-asset" class="export-format-select" title="Standalone asset export">
+              <select id="standalone-asset" class="export-format-select" title="Standalone asset export" aria-label="Standalone asset export format">
                 <option value="audio_mp3">🎵 Audio Only (MP3 320k)</option>
                 <option value="audio_wav">🎵 Audio Only (WAV 44.1k)</option>
                 <option value="audio_flac">🎵 Audio Only (FLAC Lossless)</option>
@@ -428,11 +448,12 @@
               </select>
               <button class="btn btn-secondary btn-small" id="export-standalone-btn">💾 Export Asset</button>
               <span class="export-sep">|</span>
-              <select id="compile-format" class="export-format-select" title="Reel output format">
+              <select id="compile-format" class="export-format-select" title="Reel output format" aria-label="Reel output format">
                 <option value="mp4">Export All as MP4 Reel</option>
+                <option value="webm">Export All as WebM Reel</option>
+                <option value="av1">Export All as AV1 Reel</option>
                 <option value="mov">Export All as MOV Reel</option>
                 <option value="mkv">Export All as MKV Reel</option>
-                <option value="webm">Export All as WebM Reel</option>
                 <option value="gif">Export All as GIF Reel</option>
               </select>
               <button class="btn btn-primary btn-small" id="export-compile">🎬 Export All as Reel</button>
@@ -444,11 +465,11 @@
     </section>
 
       <!-- Caption Editor Modal -->
-      <div id="caption-modal" class="modal hidden">
+      <div id="caption-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="caption-modal-title">
         <div class="modal-content">
           <div class="modal-header">
-            <h3>📝 Interactive Caption & Subtitle Editor</h3>
-            <button class="modal-close" id="close-caption-modal">&times;</button>
+            <h3 id="caption-modal-title">📝 Interactive Caption & Subtitle Editor</h3>
+            <button class="modal-close" id="close-caption-modal" aria-label="Close caption editor">&times;</button>
           </div>
           <div class="modal-body">
             <p class="muted">Edit word timings and styling before final export:</p>
@@ -471,12 +492,92 @@
           </div>
         </div>
       </div>
+      <!-- Job Queue Manager Modal -->
+      <div id="queue-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="queue-modal-title">
+        <div class="modal-content queue-modal-content">
+          <div class="modal-header">
+            <h3 id="queue-modal-title">📋 Job Queue Manager</h3>
+            <button class="modal-close" id="close-queue-modal" aria-label="Close job queue">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="queue-toolbar">
+              <span class="muted small" id="queue-summary-text">0 jobs running</span>
+              <div class="queue-toolbar-actions">
+                <button class="btn btn-small btn-secondary" id="refresh-queue-btn">🔄 Refresh</button>
+              </div>
+            </div>
+            <div id="queue-list" class="queue-list">
+              <div class="empty-state muted">No jobs currently queued.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- B-Roll & Overlay Modal -->
+      <div id="overlay-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="overlay-modal-title">
+        <div class="modal-content overlay-modal-content">
+          <div class="modal-header">
+            <h3 id="overlay-modal-title">🎭 B-Roll & Visual Overlays</h3>
+            <button class="modal-close" id="close-overlay-modal" aria-label="Close B-Roll overlay editor">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p class="muted">Add a B-roll video cutaway, reaction image, or emoji punch-up to this clip:</p>
+            <div class="overlay-form-grid">
+              <label>B-Roll / Sticker File (PNG, JPG, MP4):
+                <div class="input-row">
+                  <input type="text" id="overlay-broll-path" placeholder="Select image or video..." readonly />
+                  <button class="btn btn-secondary btn-small" id="pick-broll-btn">📂 Choose Asset</button>
+                </div>
+              </label>
+              <div class="form-row-duo">
+                <label>Start Time (s):
+                  <input type="number" id="overlay-start-time" min="0" step="0.5" value="0.0" />
+                </label>
+                <label>Duration (s):
+                  <input type="number" id="overlay-duration" min="0.5" max="60" step="0.5" value="3.0" />
+                </label>
+              </div>
+              <div class="form-row-duo">
+                <label>Position:
+                  <select id="overlay-position">
+                    <option value="center">Center</option>
+                    <option value="top-right">Top Right</option>
+                    <option value="top-left">Top Left</option>
+                    <option value="bottom-right">Bottom Right</option>
+                    <option value="bottom-left">Bottom Left</option>
+                  </select>
+                </label>
+                <label>Scale:
+                  <select id="overlay-scale">
+                    <option value="0.5">50% Frame</option>
+                    <option value="0.75">75% Frame</option>
+                    <option value="0.9" selected>90% Frame</option>
+                    <option value="1.0">100% Fullscreen</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div class="overlay-inject-row">
+              <label class="toggle">
+                <input type="checkbox" id="inject-emojis-toggle" />
+                <span>✨ Inject emojis into captions (right after matched keywords)</span>
+              </label>
+              <p class="muted small">When enabled, the overlay render will add contextual emoji punch-ups (🔥, 💰, 🤯...) into this clip's burned captions wherever hook keywords appear.</p>
+            </div>
+            <div class="overlay-actions">
+              <button class="btn btn-primary" id="apply-overlay-btn">✨ Burn B-Roll Overlay</button>
+              <button class="btn btn-secondary" id="suggest-emojis-btn">💡 Auto-Suggest Emojis</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Custom Alert / Confirm Modal Dialog -->
-      <div id="dialog-modal" class="modal hidden">
+      <div id="dialog-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
         <div class="modal-content dialog-modal-content">
           <div class="modal-header">
             <h3 id="dialog-title">Notification</h3>
-            <button class="modal-close" id="dialog-close">&times;</button>
+            <button class="modal-close" id="dialog-close" aria-label="Close dialog">&times;</button>
           </div>
           <div class="modal-body">
             <p id="dialog-message" class="dialog-message"></p>
@@ -489,7 +590,7 @@
       </div>
 
       <!-- Toast Container -->
-      <div id="toast-container" class="toast-container"></div>
+      <div id="toast-container" class="toast-container" role="status" aria-live="polite" aria-atomic="false"></div>
 
 
       <!-- Chat View -->
@@ -499,13 +600,13 @@
           <p class="subtitle">Get hook ideas, captions, and editing advice from your local AI.</p>
         </header>
         <div class="card chat-container">
-          <div id="chat-messages" class="chat-messages">
+          <div id="chat-messages" class="chat-messages" role="log" aria-live="polite" aria-label="Chat conversation">
             <div class="chat-message bot">
               <div class="bubble">Hi! I'm your AI editing assistant. Ask me for hook ideas, captions, hashtags, or clip timing advice! 🎬</div>
             </div>
           </div>
           <div class="chat-input-row">
-            <input type="text" id="chat-input" placeholder="e.g. Give me a hook for my podcast clip..." />
+            <input type="text" id="chat-input" placeholder="e.g. Give me a hook for my podcast clip..." aria-label="Message to AI edit assistant" />
             <button class="btn btn-primary" id="chat-send">Send</button>
           </div>
           <p class="muted small">Powered by local Ollama (Gemma) with smart fallback.</p>

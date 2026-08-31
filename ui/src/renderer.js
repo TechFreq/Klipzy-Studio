@@ -2,6 +2,24 @@
 // Talks to the local Python FastAPI server
 
 let serverUrl = 'http://127.0.0.1:8765';
+let apiToken = '';
+
+// The backend requires a shared secret on every call (see server/auth.py), which
+// is what stops a random web page from driving this API. Rather than touch all
+// ~30 fetch call sites, wrap fetch once here so the header is attached to any
+// request aimed at our own server - including any added later.
+const nativeFetch = window.fetch.bind(window);
+window.fetch = function klipzyFetch(resource, options) {
+  const url = typeof resource === 'string' ? resource : (resource && resource.url) || '';
+  if (!apiToken || !url.startsWith(serverUrl)) {
+    return nativeFetch(resource, options);
+  }
+  const opts = { ...(options || {}) };
+  const headers = new Headers(opts.headers || {});
+  if (!headers.has('X-Klipzy-Token')) headers.set('X-Klipzy-Token', apiToken);
+  opts.headers = headers;
+  return nativeFetch(resource, opts);
+};
 let selectedVideo = null;
 let pollTimer = null;
 let generatedClips = [];
@@ -18,6 +36,7 @@ function setWizardStep(stepNum) {
     if (stepBtn) {
       stepBtn.classList.toggle('active', i === stepNum);
       stepBtn.classList.toggle('completed', i < stepNum);
+      stepBtn.setAttribute('aria-selected', i === stepNum ? 'true' : 'false');
     }
     if (panel) {
       panel.classList.toggle('active', i === stepNum);
@@ -32,14 +51,25 @@ function resetWizardToStep1() {
   selectedVideo = null;
   generatedClips = [];
   currentProjectId = null;
-  document.getElementById('file-name').textContent = '';
-  document.getElementById('file-info').classList.add('hidden');
-  document.getElementById('project-bar').classList.add('hidden');
-  document.getElementById('project-name').value = '';
-  document.getElementById('trim-panel').classList.add('hidden');
-  document.getElementById('clips-grid').innerHTML = '';
+  currentEditingClip = null;
+  // A running job would otherwise keep polling after the user resets.
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  currentActiveJobId = null;
+  lastLoggedStep = '';
+  const setText = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  const hide = (id) => document.getElementById(id)?.classList.add('hidden');
+  setText('file-name', '');
+  hide('file-info');
+  hide('project-bar');
+  setVal('project-name', '');
+  hide('trim-panel');
+  const grid = document.getElementById('clips-grid');
+  if (grid) grid.innerHTML = '';
   const nextBtn = document.getElementById('step1-next-btn');
   if (nextBtn) nextBtn.disabled = true;
+  const startBtn = document.getElementById('start-clipping');
+  if (startBtn) startBtn.disabled = true;
   setWizardStep(1);
 }
 
@@ -121,18 +151,124 @@ function showConfirm(message, title = 'Please Confirm') {
 }
 
 // ------------------------------------------------------------------
+// Modal accessibility (applies to every .modal generically)
+//
+// The modals are opened/closed all over the file by toggling .hidden. Rather
+// than wire focus handling into each site, observe class changes centrally:
+//  - on open: remember what had focus, move focus into the dialog
+//  - on close: restore focus to the opener
+//  - Escape closes the top-most open modal
+//  - Tab is trapped within the open modal
+// ------------------------------------------------------------------
+let _lastFocusedBeforeModal = null;
+
+function focusableWithin(el) {
+  return Array.from(el.querySelectorAll(
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  )).filter((n) => n.offsetParent !== null);
+}
+
+function initModalA11y() {
+  document.querySelectorAll('.modal').forEach((modal) => {
+    const observer = new MutationObserver(() => {
+      const isOpen = !modal.classList.contains('hidden');
+      if (isOpen && !modal.dataset.a11yOpen) {
+        modal.dataset.a11yOpen = '1';
+        _lastFocusedBeforeModal = document.activeElement;
+        const focusables = focusableWithin(modal);
+        (focusables[0] || modal).focus?.();
+      } else if (!isOpen && modal.dataset.a11yOpen) {
+        delete modal.dataset.a11yOpen;
+        if (_lastFocusedBeforeModal && _lastFocusedBeforeModal.focus) {
+          _lastFocusedBeforeModal.focus();
+          _lastFocusedBeforeModal = null;
+        }
+      }
+    });
+    observer.observe(modal, { attributes: true, attributeFilter: ['class'] });
+  });
+
+  document.addEventListener('keydown', (e) => {
+    const open = Array.from(document.querySelectorAll('.modal:not(.hidden)')).pop();
+    if (!open) return;
+
+    if (e.key === 'Escape') {
+      // Prefer a dedicated close button so any per-modal cleanup still runs.
+      const closeBtn = open.querySelector('.modal-close, [data-modal-close]');
+      if (closeBtn) closeBtn.click();
+      else open.classList.add('hidden');
+      return;
+    }
+
+    if (e.key === 'Tab') {
+      const focusables = focusableWithin(open);
+      if (!focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault(); last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault(); first.focus();
+      }
+    }
+  });
+}
+
+// ------------------------------------------------------------------
 // Init
 // ------------------------------------------------------------------
 async function init() {
   if (window.clipperAPI) {
     serverUrl = await window.clipperAPI.getServerUrl();
+    // Must land before any request goes out, or the backend answers 401.
+    try {
+      apiToken = (await window.clipperAPI.getApiToken()) || '';
+    } catch (_) {
+      apiToken = '';
+    }
+    if (window.clipperAPI.onServerStatus) {
+      window.clipperAPI.onServerStatus(handleServerStatus);
+    }
   }
-  checkHealth();
   bindEvents();
-  loadSetupPanel();
+  initModalA11y();
   loadProjectList();
+  // These all hit the API, so they wait until a token is in hand.
+  checkHealth();
+  loadSetupPanel();
   populateCaptionPresets();
   loadOutputFolder();
+}
+
+// Surfaces backend lifecycle events from the Electron main process. The window
+// now opens before the server is ready, so the user gets told what is going on
+// rather than meeting a UI whose buttons quietly do nothing.
+function handleServerStatus({ state, detail }) {
+  const el = document.getElementById('health-status');
+  const paint = (cls, text) => {
+    if (el) el.innerHTML = `<span class="dot ${cls}"></span> ${escapeHtml(text)}`;
+  };
+
+  if (state === 'starting') {
+    paint('warn', 'Starting AI engine...');
+  } else if (state === 'ready') {
+    // Re-read the token in case we attached to a pre-existing backend.
+    if (window.clipperAPI && window.clipperAPI.getApiToken) {
+      window.clipperAPI.getApiToken().then((t) => {
+        if (t) apiToken = t;
+        checkHealth();
+        loadSetupPanel();
+        populateCaptionPresets();
+        loadOutputFolder();
+      }).catch(() => checkHealth());
+    } else {
+      checkHealth();
+    }
+    if (detail) showToast(detail, 'info');
+  } else if (state === 'failed' || state === 'crashed') {
+    paint('err', state === 'crashed' ? 'AI engine stopped' : 'AI engine unavailable');
+    showError(detail || 'The Python backend is not running.');
+  }
 }
 
 // Kept in sync with the server-side default (server/api/server.py) so the
@@ -265,10 +401,12 @@ function bindEvents() {
   // Navigation
   document.querySelectorAll('.nav-item').forEach((btn) => {
     btn.addEventListener('click', () => {
+      const view = document.getElementById(`view-${btn.dataset.view}`);
+      if (!view) return; // guard against a nav button with no matching section
       document.querySelectorAll('.nav-item').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
-      document.getElementById(`view-${btn.dataset.view}`).classList.add('active');
+      view.classList.add('active');
     });
   });
 
@@ -276,7 +414,12 @@ function bindEvents() {
   const dropZone = document.getElementById('drop-zone');
   const fileInput = document.getElementById('file-input');
 
+  if (dropZone && fileInput) {
   dropZone.addEventListener('click', () => fileInput.click());
+  // Keyboard access: the drop zone is role="button", so Enter/Space open the picker.
+  dropZone.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+  });
   dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
   dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
   dropZone.addEventListener('drop', (e) => {
@@ -297,10 +440,11 @@ function bindEvents() {
       handleBatchVideoDrop(files);
     }
   });
+  }
 
-  document.getElementById('change-file').addEventListener('click', () => fileInput.click());
-  document.getElementById('save-project').addEventListener('click', saveCurrentProject);
-  document.getElementById('project-list').addEventListener('change', (e) => {
+  document.getElementById('change-file')?.addEventListener('click', () => fileInput && fileInput.click());
+  document.getElementById('save-project')?.addEventListener('click', saveCurrentProject);
+  document.getElementById('project-list')?.addEventListener('change', (e) => {
     if (e.target.value) openProject(e.target.value);
   });
 
@@ -331,26 +475,27 @@ function bindEvents() {
   document.getElementById('sidebar-project-list')?.addEventListener('change', (e) => {
     if (e.target.value) openProject(e.target.value);
   });
-  document.getElementById('delete-project').addEventListener('click', deleteCurrentProject);
+  document.getElementById('delete-project')?.addEventListener('click', deleteCurrentProject);
 
   // Start clipping
-  document.getElementById('start-clipping').addEventListener('click', startClipping);
+  document.getElementById('start-clipping')?.addEventListener('click', startClipping);
 
   // Manual trim
-  document.getElementById('add-trim-btn').addEventListener('click', addTrimmedClip);
-  document.getElementById('trim-preview-btn').addEventListener('click', previewTrimSelection);
-  document.getElementById('trim-layout').addEventListener('change', (e) => {
+  document.getElementById('add-trim-btn')?.addEventListener('click', addTrimmedClip);
+  document.getElementById('trim-preview-btn')?.addEventListener('click', previewTrimSelection);
+  document.getElementById('trim-layout')?.addEventListener('change', (e) => {
     const isReaction = e.target.value === 'game_reaction';
-    document.getElementById('cam-options').classList.toggle('hidden', !isReaction);
+    document.getElementById('cam-options')?.classList.toggle('hidden', !isReaction);
     // Reaction PiP is full-frame, so no smart-crop offset needed.
     applyTrimPreviewRatio(e.target.value);
-    document.getElementById('trim-video').style.display = '';
+    const tv = document.getElementById('trim-video');
+    if (tv) tv.style.display = '';
   });
-  document.getElementById('pick-cam-btn').addEventListener('click', pickCameraClip);
-  document.getElementById('trim-video').addEventListener('loadedmetadata', () => {
-    trimState.duration = document.getElementById('trim-video').duration || 0;
+  document.getElementById('pick-cam-btn')?.addEventListener('click', pickCameraClip);
+  document.getElementById('trim-video')?.addEventListener('loadedmetadata', () => {
+    const tv = document.getElementById('trim-video');
+    trimState.duration = (tv && tv.duration) || 0;
     if (trimState.duration) {
-      const third = trimState.duration / 3;
       trimState.start = 0;
       trimState.end = trimState.duration;
       applyTrimPreviewRatio();
@@ -360,8 +505,8 @@ function bindEvents() {
   setupTrimTimeline();
 
   // Chat
-  document.getElementById('chat-send').addEventListener('click', sendChat);
-  document.getElementById('chat-input').addEventListener('keydown', (e) => {
+  document.getElementById('chat-send')?.addEventListener('click', sendChat);
+  document.getElementById('chat-input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') sendChat();
   });
 
@@ -492,12 +637,20 @@ function bindEvents() {
 // ------------------------------------------------------------------
 async function checkHealth() {
   const statusEl = document.getElementById('health-status');
+  if (!statusEl) return;
   try {
     const res = await fetch(`${serverUrl}/health`);
+    // A 4xx/5xx still resolves the promise, so the old code painted "ready"
+    // for a 500. Only a genuine 200 means the backend is actually up.
+    if (!res.ok) {
+      statusEl.innerHTML = `<span class="dot error"></span> Server error (${res.status})`;
+      return;
+    }
     const data = await res.json();
-    statusEl.innerHTML = `<span class="dot ok"></span> Server ready`;
-    if (!data.ffmpeg_available) {
-      statusEl.innerHTML = `<span class="dot error"></span> FFmpeg missing`;
+    if (data.ffmpeg_available === false) {
+      statusEl.innerHTML = `<span class="dot warn"></span> Running — FFmpeg missing`;
+    } else {
+      statusEl.innerHTML = `<span class="dot ok"></span> Server ready`;
     }
   } catch (e) {
     statusEl.innerHTML = `<span class="dot error"></span> Server offline`;
@@ -524,7 +677,7 @@ function selectVideoFile(file) {
 
   // Initialize the manual trimmer with this source.
   const video = document.getElementById('trim-video');
-  video.src = `file://${selectedVideo}`;
+  video.src = fileUrl(selectedVideo);
   trimState.camVideo = null;
   document.getElementById('trim-panel').classList.remove('hidden');
   document.getElementById('cam-path').value = '';
@@ -536,30 +689,38 @@ async function handleBatchVideoDrop(files) {
   // First video is opened in the editor view
   selectVideoFile(files[0]);
   
-  // Submit all files in batch sequentially to the backend queue
+  // Submit all files sequentially to the backend queue. Read the option
+  // controls ONCE, with null-safe access and the same element IDs the single
+  // clip path uses (the old code read a non-existent #aspect-ratio and threw).
+  const val = (id, fallback) => document.getElementById(id)?.value ?? fallback;
+  const checked = (id) => !!document.getElementById(id)?.checked;
+  const payloadBase = {
+    aspect_ratio: val('clip-aspect-ratio', '9:16'),
+    whisper_model: val('whisper-model', 'base'),
+    use_audio_energy: checked('audio-energy'),
+    use_llm: checked('use-llm'),
+    burn_captions: checked('burn-captions'),
+    remove_silence: checked('remove-silence'),
+    bleep_profanity: checked('censor-profanity'),
+    caption_style: val('generated-caption-preset', 'viral_yellow'),
+  };
+
   let queuedCount = 0;
   for (const file of files) {
     try {
-      const payload = {
-        video_path: file.path,
-        aspect_ratio: document.getElementById('aspect-ratio').value || '9:16',
-        whisper_model: document.getElementById('whisper-model').value || 'base',
-        use_audio_energy: document.getElementById('audio-energy').checked,
-        use_llm: document.getElementById('use-llm').checked,
-        burn_captions: document.getElementById('burn-captions').checked,
-        caption_style: document.getElementById('caption-preset') ? document.getElementById('caption-preset').value : 'viral_yellow',
-      };
       const res = await fetch(`${serverUrl}/process`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payloadBase, video_path: file.path }),
       });
-      if (res.ok) {
-        queuedCount++;
-      }
-    } catch (_) {}
+      if (res.ok) queuedCount++;
+    } catch (_) { /* keep going; report the tally at the end */ }
   }
-  showToast(`🚀 Successfully queued ${queuedCount}/${files.length} videos into background processor!`, 'success');
+  if (queuedCount === files.length) {
+    showToast(`🚀 Queued all ${queuedCount} videos into the background processor.`, 'success');
+  } else {
+    showToast(`Queued ${queuedCount}/${files.length} videos. The rest failed — is the server running?`, queuedCount ? 'info' : 'error');
+  }
   setWizardStep(3);
 }
 
@@ -647,7 +808,7 @@ function openProject(id) {
   document.getElementById('project-name').value = project.name || '';
   document.getElementById('start-clipping').disabled = !selectedVideo;
   const video = document.getElementById('trim-video');
-  video.src = `file://${selectedVideo}`;
+  video.src = fileUrl(selectedVideo);
   document.getElementById('trim-panel').classList.remove('hidden');
 
   // Restore caption options if present
@@ -725,8 +886,14 @@ async function deleteCurrentProject() {
   if (!currentProjectId) return showAlert('Save this project first, then it can be deleted.');
   const projects = readProjects();
   const project = projects.find((item) => item.id === currentProjectId);
+  // Check existence BEFORE reading project.name — the old order dereferenced a
+  // possibly-undefined project when currentProjectId pointed at a stale entry.
+  if (!project) {
+    showAlert('That project could no longer be found.');
+    return;
+  }
   const confirmed = await showConfirm(`Delete project “${project.name}” and its generated files?`);
-  if (!project || !confirmed) return;
+  if (!confirmed) return;
   // Collect every generated artifact belonging to this project. Clip folders
   // (output/<job_id>) contain the rendered clips plus caption/transcript and
   // temp re-render files; include them and all known per-clip paths so a
@@ -1082,7 +1249,10 @@ async function startClipping() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.detail || `Server returned ${res.status}`);
+    }
     if (data.job_id) {
       pollJob(data.job_id);
     } else {
@@ -1090,6 +1260,10 @@ async function startClipping() {
     }
   } catch (e) {
     showError(e.message);
+    // The button was disabled when clipping started; re-enable so the user can retry.
+    const btn = document.getElementById('start-clipping');
+    if (btn) { btn.disabled = false; btn.textContent = '🚀 Start Clipping & Transcribing'; }
+    setWizardStep(2);
   }
 }
 
@@ -1107,11 +1281,33 @@ function pollJob(jobId) {
   }
 
   let ticking = false;
+  let consecutiveErrors = 0;
+  const stopPolling = () => {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    currentActiveJobId = null;
+    const cb = document.getElementById('cancel-active-job-btn');
+    if (cb) cb.style.display = 'none';
+  };
+
   pollTimer = setInterval(async () => {
     if (ticking) return;
     ticking = true;
     try {
       const res = await fetch(`${serverUrl}/job/${jobId}`);
+      // Without this, a 404 (job gone) or 500 fell through to the code below
+      // with an empty body, so status never matched a terminal state and the
+      // timer polled forever. Give the server a few misses, then give up.
+      if (!res.ok) {
+        consecutiveErrors++;
+        if (res.status === 404 || consecutiveErrors >= 5) {
+          stopPolling();
+          showError(res.status === 404
+            ? 'The processing job is no longer available on the server.'
+            : `Lost contact with the server (HTTP ${res.status}).`);
+        }
+        return;
+      }
+      consecutiveErrors = 0;
       const data = await res.json();
 
       const stepText = data.step || 'Processing...';
@@ -1123,6 +1319,11 @@ function pollJob(jobId) {
       if (fillEl) fillEl.style.width = `${progressNum}%`;
       const percentEl = document.getElementById('progress-percent');
       if (percentEl) percentEl.textContent = `${progressNum}%`;
+      const barEl = document.getElementById('progress-bar');
+      if (barEl) {
+        barEl.setAttribute('aria-valuenow', String(progressNum));
+        barEl.setAttribute('aria-valuetext', `${progressNum}% — ${stepText}`);
+      }
 
       // Update stage badge
       let stage = 'Processing';
@@ -1150,20 +1351,23 @@ function pollJob(jobId) {
       }
 
       if (data.status === 'completed') {
-        clearInterval(pollTimer);
-        currentActiveJobId = null;
+        stopPolling();
         showResults(data.clips);
       } else if (data.status === 'cancelled') {
-        clearInterval(pollTimer);
-        currentActiveJobId = null;
+        stopPolling();
         showError('Job was cancelled by user.');
       } else if (data.status === 'failed') {
-        clearInterval(pollTimer);
-        currentActiveJobId = null;
+        stopPolling();
         showError(data.error || 'Processing failed');
       }
     } catch (e) {
-      // transient error, keep polling
+      // Network blip (server briefly busy). Tolerate a few, then stop so we
+      // never poll a dead endpoint forever.
+      consecutiveErrors++;
+      if (consecutiveErrors >= 8) {
+        stopPolling();
+        showError('Lost contact with the server while processing.');
+      }
     } finally {
       ticking = false;
     }
@@ -1182,10 +1386,13 @@ async function cancelActiveJob() {
   }
   try {
     const res = await fetch(`${serverUrl}/job/${currentActiveJobId}/cancel`, { method: 'POST' });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `Server returned ${res.status}`);
     showToast(data.message || 'Cancellation requested', 'info');
   } catch (err) {
     showToast(`Failed to cancel job: ${err.message}`, 'error');
+    const cancelBtn = document.getElementById('cancel-active-job-btn');
+    if (cancelBtn) { cancelBtn.disabled = false; cancelBtn.textContent = '🛑 Cancel Processing Job'; }
   }
 }
 
@@ -1205,9 +1412,14 @@ function showResults(clips) {
   const grid = document.getElementById('clips-grid');
   if (grid) {
     grid.innerHTML = '';
-    clips.forEach((clip, idx) => {
+    // Iterate the normalized array, not the raw argument: a completed job with
+    // no `clips` field used to throw here (clips.forEach on undefined).
+    generatedClips.forEach((clip, idx) => {
       grid.appendChild(buildClipCard(clip, idx));
     });
+    if (!generatedClips.length) {
+      grid.innerHTML = '<div class="empty-state muted">No clips were generated. Try lowering the minimum duration or enabling more detectors.</div>';
+    }
   }
 
   // Un-hide the results wrapper (selectVideoFile/reset mark it hidden).
@@ -1226,7 +1438,11 @@ function buildClipCard(clip, idx) {
   const title = clip.title || (clip.hook_text ? clip.hook_text.slice(0, 48) : 'Highlight');
   const desc = clip.hook_text || clip.reason || 'AI-selected moment with strong virality signals.';
   const score = clip.score != null ? Number(clip.score).toFixed(1) : '–';
-  const posterAttr = clip.thumbnail_path ? `poster="file://${clip.thumbnail_path}"` : '';
+  // escapeHtml covers quotes, so a path containing " cannot break out of the
+  // attribute and inject markup (e.g. an onerror handler).
+  const posterAttr = clip.thumbnail_path
+    ? `poster="${escapeHtml(fileUrl(clip.thumbnail_path))}"`
+    : '';
 
   card.innerHTML = `
     <div class="clip-video-wrap">
@@ -1271,7 +1487,7 @@ function buildClipCard(clip, idx) {
   `;
 
   const video = card.querySelector('video');
-  video.src = `file://${clip.output_file}`;
+  video.src = fileUrl(clip.output_file);
   video.muted = true;
   card.addEventListener('mouseenter', () => video.play().catch(() => {}));
   card.addEventListener('mouseleave', () => { video.pause(); video.currentTime = 0; });
@@ -1342,7 +1558,7 @@ async function pickClipThumbnail(idx, videoEl) {
     if (res.ok && data.thumbnail_path) {
       clip.thumbnail_path = data.thumbnail_path;
       if (videoEl) {
-        videoEl.setAttribute('poster', `file://${data.thumbnail_path}?t=${Date.now()}`);
+        videoEl.setAttribute('poster', fileUrl(data.thumbnail_path, true));
       }
       showToast('🖼️ Thumbnail poster updated from current frame!', 'success');
       saveCurrentProjectSilently();
@@ -1842,11 +2058,15 @@ window.openCaptionEditor = function(clipIndex) {
   const words = clip.words && clip.words.length ? clip.words : (clip.hook_text || '').split(' ').map((w, i) => ({ word: w, start: i * 0.4, end: (i + 1) * 0.4 }));
 
   words.forEach((w) => {
+    // Coerce timings defensively: backend word entries occasionally omit
+    // start/end, which used to throw on .toFixed and leave the editor half-built.
+    const start = Number.isFinite(w.start) ? w.start : 0;
+    const end = Number.isFinite(w.end) ? w.end : start;
     const chip = document.createElement('div');
     chip.className = 'word-chip';
     chip.innerHTML =
       `<span class="word-text" contenteditable="true">${escapeHtml(w.word || String(w))}</span> ` +
-      `<small class="word-time" data-start="${w.start}" data-end="${w.end}" style="color:var(--text-muted);">[${w.start.toFixed(1)}s]</small>`;
+      `<small class="word-time" data-start="${escapeHtml(start)}" data-end="${escapeHtml(end)}" style="color:var(--text-muted);">[${start.toFixed(1)}s]</small>`;
     chipsContainer.appendChild(chip);
   });
 
@@ -1947,15 +2167,19 @@ document.getElementById('save-captions-btn')?.addEventListener('click', async ()
       currentEditingClip.words = editedWords;
       if (data.export_path) currentEditingClip.srt_path = data.export_path;
 
-      // Reload the matching video in the clip card to play the updated burned captions
-      const cards = document.querySelectorAll('.clip-card');
-      cards.forEach((card) => {
-        const vid = card.querySelector('video');
-        if (vid && vid.src && vid.src.includes(encodeURIComponent(currentEditingClip.output_file).replace(/%2F/g, '/').replace(/%5C/g, '/')) || (vid && vid.src.endsWith(currentEditingClip.output_file.replace(/\\/g, '/')))) {
-          vid.src = `file://${currentEditingClip.output_file}?t=${Date.now()}`;
+      // Reload the matching clip card so it plays the freshly burned captions.
+      // Match on the card's own index rather than fuzzy src string-matching,
+      // which was both fragile and mis-grouped (&& binds tighter than ||, so
+      // the old condition reloaded the wrong card or none at all).
+      const targetIdx = generatedClips.indexOf(currentEditingClip);
+      if (targetIdx !== -1) {
+        const card = document.querySelector(`.clip-card[data-clip-idx="${targetIdx}"]`);
+        const vid = card && card.querySelector('video');
+        if (vid) {
+          vid.src = fileUrl(currentEditingClip.output_file, true);
           vid.load();
         }
-      });
+      }
       saveCurrentProjectSilently();
       playSuccessSound();
       showAlert(`✅ Captions updated and applied to clip!`);
@@ -2080,10 +2304,35 @@ function appendMessage(role, text) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+// Escapes for BOTH text content and quoted attribute values. The textContent
+// round-trip alone leaves " and ' intact, which made interpolating a value into
+// an attribute (e.g. poster="...") an injection point.
 function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
+  return String(text == null ? '' : text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Builds a usable file:// URL from a Windows or POSIX path.
+//
+// Two traps this avoids:
+//  - Backslashes and spaces/# in paths need normalising and encoding.
+//  - file: URLs have no query component, so the old `?t=<timestamp>` trick for
+//    cache-busting became part of the *path* and the file silently 404'd. A
+//    fragment is ignored by the filesystem layer but still changes the URL
+//    string, so the browser treats it as a new resource.
+function fileUrl(filePath, cacheBust) {
+  if (!filePath) return '';
+  const normalized = String(filePath).replace(/\\/g, '/');
+  const encoded = normalized
+    .split('/')
+    .map((segment) => encodeURIComponent(segment).replace(/%3A/gi, ':'))
+    .join('/');
+  const prefix = encoded.startsWith('/') ? 'file://' : 'file:///';
+  return `${prefix}${encoded}${cacheBust ? `#t=${Date.now()}` : ''}`;
 }
 
 // ------------------------------------------------------------------
@@ -2391,6 +2640,8 @@ function playErrorSound() {
       o.stop(now + offset + 0.12);
     });
   } catch (e) { /* audio unavailable */ }
+}
+
 // ------------------------------------------------------------------
 // Multi-Aspect Export Pack (9:16, 1:1, 4:5, 16:9)
 // ------------------------------------------------------------------
@@ -2735,12 +2986,11 @@ document.addEventListener('click', (e) => {
   if (e.target.closest('button, .btn, .dep-row')) playClick();
 });
 
-bindEstimator();
-init();
 // ------------------------------------------------------------------
 // Job Queue Manager Modal & Background Poller
 // ------------------------------------------------------------------
 let queuePollerInterval = null;
+let queueBadgeInterval = null;
 
 function openQueueModal() {
   const modal = document.getElementById('queue-modal');
@@ -2797,39 +3047,47 @@ async function refreshQueueList() {
       const item = document.createElement('div');
       item.className = 'queue-item';
 
-      const statusClass = `status-${job.status}`;
+      const statusClass = `status-${String(job.status).replace(/[^a-z0-9_-]/gi, '')}`;
       const isRunning = job.status === 'processing' || job.status === 'queued';
+      // Clamp progress to a real 0-100 number before it lands in a style attr.
+      const pct = Math.max(0, Math.min(100, Number(job.progress) || 0));
+      const jobId = String(job.job_id || '');
 
       item.innerHTML = `
         <div class="queue-item-header">
-          <span class="queue-item-title">Job #${escapeHtml(job.job_id.slice(0, 8))}</span>
+          <span class="queue-item-title">Job #${escapeHtml(jobId.slice(0, 8))}</span>
           <span class="queue-item-badge ${statusClass}">${escapeHtml(job.status)}</span>
         </div>
-        <div class="queue-item-step">${escapeHtml(job.step || 'Waiting in line...')} (${job.progress || 0}%)</div>
+        <div class="queue-item-step">${escapeHtml(job.step || 'Waiting in line...')} (${pct}%)</div>
         <div class="queue-progress-bar">
-          <div class="queue-progress-fill" style="width: ${job.progress || 0}%;"></div>
+          <div class="queue-progress-fill" style="width: ${pct}%;"></div>
         </div>
         <div class="queue-item-actions">
-          ${isRunning ? `<button class="btn btn-small btn-danger" data-cancel-job="${job.job_id}">🛑 Cancel</button>` : ''}
-          ${job.status === 'completed' ? `<button class="btn btn-small btn-primary" data-view-job="${job.job_id}">👁️ View Clips</button>` : ''}
+          ${isRunning ? `<button class="btn btn-small btn-danger" data-cancel-job="${escapeHtml(jobId)}">🛑 Cancel</button>` : ''}
+          ${job.status === 'completed' ? `<button class="btn btn-small btn-primary" data-view-job="${escapeHtml(jobId)}">👁️ View Clips</button>` : ''}
         </div>
       `;
 
       item.querySelector('[data-cancel-job]')?.addEventListener('click', async () => {
-        await fetch(`${serverUrl}/job/${job.job_id}/cancel`, { method: 'POST' });
-        showToast('Cancellation requested', 'info');
+        try {
+          await fetch(`${serverUrl}/job/${job.job_id}/cancel`, { method: 'POST' });
+          showToast('Cancellation requested', 'info');
+        } catch (_) {
+          showToast('Could not reach the server to cancel.', 'error');
+        }
         refreshQueueList();
       });
 
       item.querySelector('[data-view-job]')?.addEventListener('click', async () => {
-        const r = await fetch(`${serverUrl}/job/${job.job_id}`);
-        if (r.ok) {
+        try {
+          const r = await fetch(`${serverUrl}/job/${job.job_id}`);
+          if (!r.ok) return;
           const jobData = await r.json();
           if (jobData.clips) {
             closeQueueModal();
             showResults(jobData.clips);
           }
-        }
+        } catch (_) { /* server offline */ }
       });
 
       list.appendChild(item);
@@ -2838,7 +3096,7 @@ async function refreshQueueList() {
 }
 
 // Background badge poller every 5 seconds
-setInterval(async () => {
+queueBadgeInterval = setInterval(async () => {
   try {
     const res = await fetch(`${serverUrl}/jobs`);
     if (!res.ok) return;
@@ -2852,4 +3110,19 @@ setInterval(async () => {
     }
   } catch (e) {}
 }, 5000);
-}
+
+// Initialize on DOM ready. The <script> tag sits at the end of <body>, so the
+// DOM is already parsed; DOMContentLoaded is still the single entry point so
+// initialization can never run twice.
+document.addEventListener('DOMContentLoaded', () => {
+  bindEstimator();
+  init();
+});
+
+// Stop every timer and release the audio context when the window goes away,
+// so a reload or quit does not leave orphaned pollers behind.
+window.addEventListener('beforeunload', () => {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (queuePollerInterval) { clearInterval(queuePollerInterval); queuePollerInterval = null; }
+  if (queueBadgeInterval) { clearInterval(queueBadgeInterval); queueBadgeInterval = null; }
+});

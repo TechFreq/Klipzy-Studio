@@ -1,7 +1,14 @@
 # Klipzy Studio — Full Codebase & Feature Audit
 
 > **Audit date:** 2026-08-28 · **Repo:** `clippy-studio` (local-first AI video clipper)
-> This document is a **verified feature-level audit of the Klipzy Studio codebase**.
+> This document is a **feature-level audit of the Klipzy Studio codebase**.
+>
+> **⚠️ 2026-08-31 update:** A cleanup commit had deleted the entire Python backend,
+> and a brace bug had disabled the renderer. Both were restored from Cline
+> checkpoints and repaired. The feature inventory below is accurate again for the
+> restored tree. Note the licensing line: the project is under the **TechFreq
+> Developments Open-Attribution License** (see LICENSE), not MIT — any "MIT"
+> references in the tables below are historical and superseded by LICENSE.
 
 ---
 

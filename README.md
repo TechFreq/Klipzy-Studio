@@ -1,8 +1,8 @@
 # 🎬 Klipzy Studio
 
-A **local-first, open-attribution AI video clipper by TechFreq Developments** for Windows and macOS. Turn long videos, podcasts, and streams into ready-to-post vertical Shorts — entirely on your own PC. **No cloud AI, no fees.**
+A **local-first AI video clipper by TechFreq Developments** for Windows, macOS, and Linux. Turn long videos, podcasts, and streams into ready-to-post vertical Shorts — entirely on your own machine. **No cloud AI, no fees.**
 
-> ⚖️ **100% original code.** This project is built from scratch with its own architecture, UI, and implementation. It is licensed under the **TechFreq Developments Open-Attribution License** (see LICENSE). You are free to use and modify it, provided you give proper credit to TechFreq Developments.
+> ⚖️ Licensed under the **TechFreq Developments Open-Attribution License** (see [LICENSE](LICENSE)). Free to use and modify, provided you credit TechFreq Developments as the original author.
 
 ---
 
@@ -10,40 +10,43 @@ A **local-first, open-attribution AI video clipper by TechFreq Developments** fo
 
 | Feature | Description |
 |---------|-------------|
-| 🎯 **AI Virality & Hook Detection** | Finds the most engaging moments with Virality Scores, Hook strength, and Trend breakdowns |
-| ⚡ **Hardware Acceleration** | Auto GPU video encoding acceleration (NVIDIA NVENC, Apple Silicon VideoToolbox, CPU x264 fallback) |
-| 🎨 **Viral Dynamic Captions** | Word-by-word active karaoke highlights (.ass format) with dynamic color styling |
-| ✏️ **Interactive Caption Editor** | Live word timestamp adjusting and subtitle customization |
-| 🎬 **NLE Project Exports** | Export timeline directly to **Adobe Premiere Pro** (XML), **DaVinci Resolve** (EDL), or **CapCut** (Draft) |
+| 🎯 **AI Virality & Hook Detection** | Finds the most engaging moments with virality scores, hook strength, and trend breakdowns |
+| ⚡ **Hardware Acceleration** | Auto GPU video encoding (NVIDIA NVENC, Apple Silicon VideoToolbox, x264 CPU fallback) |
+| 🎨 **Viral Dynamic Captions** | 22 word-by-word karaoke caption presets (`.ass`) with dynamic color styling |
+| ✏️ **Interactive Caption Editor** | Live word-timestamp adjusting and subtitle customization |
+| 🎬 **NLE Project Exports** | Export timelines to **Adobe Premiere Pro** (XML), **DaVinci Resolve** (EDL), or **CapCut** (Draft) |
 | 🔊 **Audio Energy Detection** | Detects excitement spikes and loudness peaks to catch dramatic moments |
+| ✂️ **Silence / Dead-Air Cutter** | FFmpeg `silencedetect` jump-cuts to keep energy high |
+| 🔇 **Profanity Filter** | Word-level bleep / mute / caption masking |
+| 🎮 **Gaming / Reaction Layout** | Full gameplay + scalable webcam PiP in any corner |
 | 🤖 **Optional LLM Discovery** | Uses local Ollama (Gemma) to pick viral moments from the transcript |
-| 🗣️ **Speaker-Aware Face Tracking** | Tracks the active speaker so 9:16 vertical crops stay centered on them |
-| 💬 **AI Edit Chat** | Chat with local AI for hook ideas, captions, hashtags, and edit adjustments |
-| 📦 **100% Local & Private** | Everything runs on your machine — Whisper, YOLO, Ollama, FFmpeg — no cloud fees |
+| 🗣️ **Speaker-Aware Face Tracking** | Tracks the active speaker so 9:16 crops stay centered |
+| 💬 **AI Edit Chat** | Chat with local AI for hook ideas, captions, hashtags, and edits |
+| 📦 **100% Local & Private** | Whisper, YOLO, Ollama, FFmpeg all run on your machine — no cloud |
 
 ---
 
 ## 🏗️ Architecture
 
-`
+```
 ┌─────────────────────────────────────────────────┐
-│  Electron Desktop App (UI)                      │
-│  - Windows / macOS / Linux                      │
-│  - Drag & drop, options, progress, previews     │
-└────────────────────┬────────────────────────────┘
-                      │ localhost HTTP
-┌────────────────────▼────────────────────────────┐
-│  Python FastAPI Server                          │
-│  - Job queue & progress polling                 │
-│  - AI Edit Chat                                 │
-└────────────────────┬────────────────────────────┘
-                      │
-┌────────────────────▼────────────────────────────┐
-│  Processing Pipeline                            │
-│  FFmpeg → Whisper → Highlights → Face Track →   │
-│  Render 9:16 + captions                         │
+│  Electron Desktop App (UI)                        │
+│  - Windows / macOS / Linux                        │
+│  - Drag & drop, options, progress, previews       │
+└────────────────────┬──────────────────────────────┘
+                     │ localhost HTTP (token-authenticated)
+┌────────────────────▼──────────────────────────────┐
+│  Python FastAPI Server                            │
+│  - Job queue & progress polling                   │
+│  - AI Edit Chat                                   │
+└────────────────────┬──────────────────────────────┘
+                     │
+┌────────────────────▼──────────────────────────────┐
+│  Processing Pipeline                              │
+│  FFmpeg → Whisper → Highlights → Face Track →     │
+│  Render 9:16 + captions                           │
 └─────────────────────────────────────────────────┘
-`
+```
 
 ---
 
@@ -52,41 +55,59 @@ A **local-first, open-attribution AI video clipper by TechFreq Developments** fo
 ### Prerequisites
 
 1. **Python 3.10+**
-2. **FFmpeg**
-   - Windows: winget install Gyan.FFmpeg
-   - macOS: rew install ffmpeg
-3. **Node.js 18+** (for Electron UI — optional, server works standalone)
+2. **FFmpeg** (with `ffprobe` and `libass`)
+   - Windows: `winget install Gyan.FFmpeg`
+   - macOS: `brew install ffmpeg`
+   - Linux: `sudo apt install ffmpeg libass-dev`
+3. **Node.js 18+** (for the Electron desktop UI — the server also runs standalone)
 
-### 1. Python Server (core engine)
+### Option A — one-click launchers (recommended)
 
-`ash
-python -m venv venv
+- **Windows:** double-click `start_klipzy.bat`, or run `scripts\run_windows.bat`
+- **macOS / Linux:** run `./scripts/run_macos.sh`
+
+These set up the Python virtual environment and UI dependencies on first run, then launch the desktop app (which starts the backend for you).
+
+### Option B — manual
+
+**1. Python server (core engine)**
+
+```bash
+python -m venv .venv
 
 # Windows
-.\venv\Scripts\activate
-# macOS/Linux
-source venv/bin/activate
+.\.venv\Scripts\activate
+# macOS / Linux
+source .venv/bin/activate
 
 pip install -r requirements.txt
 
 # Start the API server
-python -m server.api.server
-`
+python main.py
+```
 
-Then open http://127.0.0.1:8765/docs for the API docs.
+Then open <http://127.0.0.1:8765/docs> for the interactive API docs.
 
-### 2. Electron Desktop App (optional)
+**2. Electron desktop app**
 
-`ash
+```bash
 cd ui
 npm install
 npm start
-`
+```
 
-### 3. One-click launchers
+---
 
-- **Windows**: scripts\run_windows.bat
-- **macOS**: scripts\run_macos.sh
+## 🔒 Local API Security
+
+The backend listens on `127.0.0.1` but is **token-authenticated**: the desktop app
+generates a per-launch secret and sends it in the `X-Klipzy-Token` header. This
+prevents other web pages in your browser from reaching the local API (which can
+launch installers and touch the filesystem).
+
+- `/health` and the `/docs` pages are the only unauthenticated routes.
+- For scripted / headless use, the token is written to `logs/api_token.txt`.
+- Set `KLIPZY_DISABLE_AUTH=1` to turn enforcement off (test suite / at your own risk).
 
 ---
 
@@ -99,27 +120,50 @@ npm start
 | Local LLM | **Ollama** + Gemma | MIT | AI edit chat + highlight discovery |
 | Video processing | **FFmpeg** | LGPL/GPL | Extract, cut, crop, burn captions |
 
-> **Note on YOLO/ultralytics**: Ultralytics is AGPL-3.0. If you distribute a modified version of *their* library code you must share it — using it as a dependency is fine. If you prefer permissive licensing, swap in OpenCV's built-in face detector (cv2.CascadeClassifier) or MediaPipe (Apache-2.0).
+> **Note on YOLO/ultralytics:** Ultralytics is AGPL-3.0. Using it as a dependency is fine; if you distribute a modified version of *their* library you must share it. For permissive licensing, swap in OpenCV's `cv2.CascadeClassifier` or MediaPipe (Apache-2.0).
 
 ---
 
-## 🗺️ Roadmap (feature parity with commercial tools)
+## 🧪 Tests
+
+```bash
+pytest tests/ -v
+```
+
+Covers highlight detection, subtitle generation, NLE exports, aspect-ratio
+reframing, silence detection, profanity filtering, logging, and the API token guard.
+
+---
+
+## 📦 Packaging
+
+See [PACKAGING.md](PACKAGING.md) for building desktop installers and the notes on
+bundling a Python runtime.
+
+---
+
+## 🗺️ Roadmap
 
 - [x] Local transcription + word timestamps
 - [x] Heuristic + audio-energy highlight detection
 - [x] Speaker-aware 9:16 smart crop
-- [x] Caption export (SRT/VTT) + burn-in
+- [x] Caption export (SRT/VTT/ASS) + burn-in
+- [x] Interactive caption editor
+- [x] Manual clip trimmer UI
+- [x] Gaming / reaction layouts
 - [x] AI edit chat (Ollama + fallback)
-- [x] Electron desktop app (Win/macOS)
-- [ ] Twitch/Kick stream import
-- [ ] Manual clip trimmer UI
-- [ ] Gaming/reaction layouts
+- [x] NLE exports (Premiere / DaVinci / CapCut)
+- [x] Silence cutter + profanity filter
+- [x] Electron desktop app (Win/macOS/Linux)
+- [ ] Twitch/Kick stream import (`yt-dlp`)
 - [ ] Auto-posting to TikTok/YouTube
 
 ---
 
 ## 📄 License
 
-This project is licensed under the **TechFreq Developments Open-Attribution License**. It is free to use and modify, provided that credit is given to **TechFreq Developments** as the original author. See [LICENSE](LICENSE) for full details.
+Licensed under the **TechFreq Developments Open-Attribution License**. Free to use
+and modify, provided credit is given to **TechFreq Developments** as the original
+author. See [LICENSE](LICENSE) for full details.
 
 **Third-party notices:** Whisper (MIT), FFmpeg (LGPL/GPL), Ollama (MIT), ultralytics (AGPL-3.0).

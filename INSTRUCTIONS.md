@@ -108,6 +108,11 @@ python main.py
 *The backend starts at `http://127.0.0.1:8765`.*
 
 **Terminal 2 — Start Electron Desktop App:**
+```bash
+cd ui
+npm start
+```
+*The desktop window connects to the backend on `http://127.0.0.1:8765`. It sends a per-launch API token automatically (see the security note in the README).*
 
 ---
 
@@ -261,9 +266,3 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 ---
 
 *Enjoy creating viral shorts with Klipzy Studio!*
-
-
-```bash
-cd ui
-npm start
-```

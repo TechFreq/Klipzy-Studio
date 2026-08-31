@@ -10,8 +10,8 @@
     "dist:mac": "electron-builder --mac",
     "dist:linux": "electron-builder --linux"
   },
-  "author": "TechFreq",
-  "license": "MIT",
+  "author": "TechFreq Developments",
+  "license": "SEE LICENSE IN ../LICENSE",
   "devDependencies": {
     "electron": "^28.0.0",
     "electron-builder": "^24.13.3"
@@ -30,7 +30,8 @@
         "from": "../server",
         "to": "server",
         "filter": [
-          "**/*"
+          "**/*",
+          "!**/__pycache__/**"
         ]
       },
       {
@@ -38,11 +39,8 @@
         "to": "main.py"
       },
       {
-        "from": "../.venv",
-        "to": "venv",
-        "filter": [
-          "**/*"
-        ]
+        "from": "../requirements.txt",
+        "to": "requirements.txt"
       }
     ],
     "win": {
@@ -58,11 +56,12 @@
     },
     "mac": {
       "target": "dmg",
-      "icon": "../assets/icon.icns",
+      "icon": "../assets/icon.png",
       "category": "public.app-category.video"
     },
     "linux": {
       "target": "AppImage",
+      "icon": "../assets/icon.png",
       "category": "AudioVideo"
     }
   }

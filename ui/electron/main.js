@@ -6,10 +6,22 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const net = require('net');
+const crypto = require('crypto');
 
 const SERVER_PORT = 8765;
 let mainWindow = null;
 let serverProcess = null;
+
+// Shared secret for this launch. The Python server requires it in the
+// X-Klipzy-Token header on every request, which stops arbitrary web pages from
+// driving the local API (it can trigger installers and touch the filesystem).
+// Generated here, handed to Python via env, and given to the renderer through
+// the preload bridge. It never touches disk.
+const API_TOKEN = crypto.randomBytes(32).toString('hex');
+
+// Set when the backend was already running before we launched, so we know the
+// token we generated is not the one that server is using.
+let reusedExistingServer = false;
 
 // ------------------------------------------------------------------
 // Python server management
@@ -39,52 +51,107 @@ function isPortFree(port) {
   });
 }
 
+// Tell the renderer how backend startup is going. The window is created before
+// the server is up, so it needs to hear about progress and failures rather than
+// the user staring at a dead UI.
+function reportServerStatus(state, detail) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('server-status', { state, detail: detail || '' });
+  }
+  console.log(`[server-status] ${state}${detail ? ': ' + detail : ''}`);
+}
+
 async function startServer() {
-  // If server already running, reuse it
+  // If a server is already listening, reuse it rather than fighting for the
+  // port. Note that it will have its own token, so the renderer reads the
+  // effective one from disk in that case.
   if (!(await isPortFree(SERVER_PORT))) {
     console.log('Server already running on port', SERVER_PORT);
+    reusedExistingServer = true;
+    reportServerStatus('ready', 'Connected to a backend that was already running.');
     return;
   }
 
   const serverDir = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', '..');
   const pythons = findPython();
+  const attempted = [];
 
   for (const py of pythons) {
     try {
+      reportServerStatus('starting', `Trying ${py}`);
+
       serverProcess = spawn(py, ['-m', 'server.api.server'], {
         cwd: serverDir,
         stdio: 'pipe',
-        env: { ...process.env, PYTHONUNBUFFERED: '1' },
+        env: {
+          ...process.env,
+          PYTHONUNBUFFERED: '1',
+          KLIPZY_API_TOKEN: API_TOKEN,
+          KLIPZY_PORT: String(SERVER_PORT),
+        },
       });
 
+      // A missing interpreter fires 'error'; an interpreter that starts but
+      // cannot import its dependencies just exits. Watch for both, otherwise a
+      // broken install burns the full timeout on every candidate.
       let spawnError = null;
+      let exited = null;
+      let stderrTail = '';
+
       serverProcess.once('error', (error) => {
         spawnError = error;
         console.error('Failed to start Python with', py, error.message);
       });
+      serverProcess.once('exit', (code, signal) => {
+        exited = { code, signal };
+      });
       serverProcess.stdout.on('data', (d) => console.log('[server]', d.toString().trim()));
-      serverProcess.stderr.on('data', (d) => console.error('[server-err]', d.toString().trim()));
+      serverProcess.stderr.on('data', (d) => {
+        const text = d.toString();
+        stderrTail = (stderrTail + text).slice(-2000);
+        console.error('[server-err]', text.trim());
+      });
 
-      // Wait for server to be ready
-      const ready = await waitForServer(30000, () => spawnError !== null);
+      const ready = await waitForServer(30000, () => spawnError !== null || exited !== null);
       if (ready) {
-        console.log('Python server started.');
+        console.log('Python server started with', py);
+        reportServerStatus('ready', '');
+        // If it dies later, say so instead of leaving the UI silently broken.
+        serverProcess.once('exit', (code, signal) => {
+          if (!app.isQuitting) {
+            reportServerStatus(
+              'crashed',
+              `The backend stopped unexpectedly (code ${code ?? 'null'}${signal ? ', signal ' + signal : ''}). Restart Klipzy Studio.`
+            );
+          }
+        });
         return;
       }
+
+      attempted.push(`${py}: ${spawnError ? spawnError.message : exited ? `exited with code ${exited.code}` : 'timed out'}`);
       if (serverProcess && !serverProcess.killed) serverProcess.kill();
+      if (stderrTail.trim()) console.error('[server-err last output]', stderrTail.trim());
     } catch (e) {
+      attempted.push(`${py}: ${e.message || e}`);
       console.error('Failed to start with', py, e.message || e);
     }
   }
-  console.error('Could not start Python server. Is Python + deps installed?');
+
+  serverProcess = null;
+  reportServerStatus(
+    'failed',
+    'Could not start the Python backend. Check that Python 3.10+ is installed and that '
+      + '"pip install -r requirements.txt" has been run. Details: ' + attempted.join(' | ')
+  );
 }
 
-function waitForServer(timeoutMs = 30000, hasSpawnError = () => false) {
+function waitForServer(timeoutMs = 30000, shouldAbort = () => false) {
   return new Promise((resolve) => {
     const start = Date.now();
     const check = async () => {
-      if (hasSpawnError()) return resolve(false);
+      if (shouldAbort()) return resolve(false);
       try {
+        // /health is intentionally exempt from token auth so this poll works.
         const res = await fetch(`http://127.0.0.1:${SERVER_PORT}/health`);
         if (res.ok) return resolve(true);
       } catch (e) { /* not ready yet */ }
@@ -140,6 +207,22 @@ ipcMain.handle('select-video', async () => {
 
 ipcMain.handle('server-url', () => `http://127.0.0.1:${SERVER_PORT}`);
 
+ipcMain.handle('api-token', () => {
+  // Normal path: the token we generated and passed to our own child process.
+  if (!reusedExistingServer) return API_TOKEN;
+
+  // We attached to a backend somebody else started, so its token is whatever
+  // that process wrote to logs/api_token.txt.
+  try {
+    const fs = require('fs');
+    const root = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', '..');
+    return fs.readFileSync(path.join(root, 'logs', 'api_token.txt'), 'utf8').trim();
+  } catch (e) {
+    console.error('Could not read the token of the already-running server:', e.message);
+    return '';
+  }
+});
+
 ipcMain.handle('select-output-folder', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Choose where Klipzy Studio saves generated clips',
@@ -164,21 +247,42 @@ ipcMain.handle('select-camera-file', async () => {
 });
 
 ipcMain.handle('reveal-in-folder', async (_event, filePath) => {
-  if (!filePath || typeof filePath !== 'string') return '/';
+  if (!filePath || typeof filePath !== 'string') return null;
   const { shell } = require('electron');
   shell.showItemInFolder(filePath);
   return filePath;
+});
+
+// Backs the "Logs" button in the header. Server output lands in logs/server.log
+// via server/logging_setup.py.
+ipcMain.handle('open-logs-folder', async () => {
+  const { shell } = require('electron');
+  const fs = require('fs');
+  const root = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', '..');
+  const logsDir = path.join(root, 'logs');
+  try {
+    fs.mkdirSync(logsDir, { recursive: true });
+  } catch (e) { /* already there, or not writable */ }
+  const error = await shell.openPath(logsDir);
+  return error ? { ok: false, error } : { ok: true, path: logsDir };
 });
 
 // ------------------------------------------------------------------
 // App lifecycle
 // ------------------------------------------------------------------
 app.whenReady().then(async () => {
-  await startServer();
+  // Show the window FIRST. Backend startup walks a list of Python candidates
+  // with a timeout each, which previously meant the user could sit in front of
+  // a blank screen for minutes with no explanation.
   createWindow();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+
+  // Start the backend once the page can actually receive status updates.
+  mainWindow.webContents.once('did-finish-load', () => {
+    startServer();
   });
 });
 
@@ -188,8 +292,14 @@ app.on('window-all-closed', () => {
   }
 });
 
+// Distinguishes an intentional shutdown from a backend crash.
+app.on('before-quit', () => {
+  app.isQuitting = true;
+});
+
 app.on('quit', () => {
-  if (serverProcess) {
+  // Only stop a backend we started ourselves; leave a pre-existing one alone.
+  if (serverProcess && !reusedExistingServer) {
     serverProcess.kill();
   }
 });

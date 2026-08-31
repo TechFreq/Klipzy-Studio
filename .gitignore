@@ -25,3 +25,9 @@ Thumbs.db
 
 # Temp
 gitstatus.txt
+
+# Local API token generated at runtime (never commit a secret)
+logs/api_token.txt
+
+# Pre-restore backup of the deleted stub + old UI files (local safety copy)
+_prerestore_backup/
