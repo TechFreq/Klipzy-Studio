@@ -188,24 +188,51 @@ def get_install_commands() -> Dict[str, List[str]]:
         commands["ffmpeg"] = ["sudo", "apt", "install", "-y", "ffmpeg"]
         commands["ollama"] = ["curl", "-fsSL", "https://ollama.com/install.sh", "|", "sh"]
 
+    # CRITICAL: use THIS interpreter's pip (sys.executable -m pip), not a bare
+    # "pip" off PATH. The server runs inside the app's venv; a bare "pip" can
+    # resolve to a different Python (e.g. the Windows Store Python), which
+    # installs packages the running app can never import — so a dependency would
+    # look "installed successfully" yet still show as missing.
+    pip = [sys.executable, "-m", "pip"]
+
     # PyTorch: install the accelerated build for this machine so Whisper & YOLO use the GPU.
     # CUDA 12.6 wheels cover NVIDIA GPUs (RTX 3060 etc) — falls back to CPU for non-NVIDIA.
     if os_name == "windows":
-        commands["pytorch"] = ["pip", "install", "--index-url", "https://download.pytorch.org/whl/cu126", "torch", "torchvision"]
+        commands["pytorch"] = pip + ["install", "--index-url", "https://download.pytorch.org/whl/cu126", "torch", "torchvision"]
     elif os_name == "macos":
-        commands["pytorch"] = ["pip", "install", "torch", "torchvision"]
+        commands["pytorch"] = pip + ["install", "torch", "torchvision"]
     else:
-        commands["pytorch"] = ["pip", "install", "--index-url", "https://download.pytorch.org/whl/cu126", "torch", "torchvision"]
-    commands["whisper"] = ["pip", "install", "openai-whisper"]
+        commands["pytorch"] = pip + ["install", "--index-url", "https://download.pytorch.org/whl/cu126", "torch", "torchvision"]
+    commands["whisper"] = pip + ["install", "openai-whisper"]
     # faster-whisper (CTranslate2) is cross-platform and 3-5x faster than
     # openai-whisper; the transcriber prefers it when present.
-    commands["faster-whisper"] = ["pip", "install", "faster-whisper"]
+    commands["faster-whisper"] = pip + ["install", "faster-whisper"]
     # mlx-whisper is Apple-Silicon-only native acceleration; offer it just on M-series.
     if os_name == "macos" and platform.machine() == "arm64":
-        commands["mlx-whisper"] = ["pip", "install", "mlx-whisper"]
-    commands["librosa"] = ["pip", "install", "librosa", "soundfile"]
-    commands["ultralytics"] = ["pip", "install", "ultralytics"]
+        commands["mlx-whisper"] = pip + ["install", "mlx-whisper"]
+    commands["librosa"] = pip + ["install", "librosa", "soundfile"]
+    commands["ultralytics"] = pip + ["install", "ultralytics"]
     return commands
+
+
+def get_uninstall_commands() -> Dict[str, List[str]]:
+    """Uninstall commands for the pip-managed Python packages only.
+
+    Deliberately excludes ffmpeg / ollama / lmstudio: those are system or GUI
+    apps the user installs via their OS package manager, and auto-removing them
+    (winget/brew/apt) is riskier and out of scope. These pip removals are safe
+    and reversible via the matching install command.
+    """
+    # Same interpreter-pip rule as installs: target the venv the server runs in.
+    pip = [sys.executable, "-m", "pip"]
+    return {
+        "whisper": pip + ["uninstall", "-y", "openai-whisper"],
+        "faster-whisper": pip + ["uninstall", "-y", "faster-whisper"],
+        "mlx-whisper": pip + ["uninstall", "-y", "mlx-whisper"],
+        "ultralytics": pip + ["uninstall", "-y", "ultralytics"],
+        "librosa": pip + ["uninstall", "-y", "librosa", "soundfile"],
+        "pytorch": pip + ["uninstall", "-y", "torch", "torchvision"],
+    }
 
 
 def _spec_installed(module: str) -> bool:

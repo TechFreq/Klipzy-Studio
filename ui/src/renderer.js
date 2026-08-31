@@ -2369,28 +2369,68 @@ async function loadSetupPanel() {
   }
 }
 
-// One-click: install every missing dependency in a single pass.
+// One-click: install every missing dependency, one at a time, with a real
+// progress bar. Installing sequentially via the per-component endpoint lets us
+// show "Installing X (2/5)" and advance the bar as each finishes — no server
+// streaming needed.
 function bindInstallAll() {
   const btn = document.getElementById('install-all-btn');
   if (!btn || btn.dataset.bound) return;
   btn.dataset.bound = '1';
   btn.addEventListener('click', async () => {
     const statusEl = document.getElementById('install-all-status');
+    const progWrap = document.getElementById('install-all-progress');
+    const bar = progWrap ? progWrap.querySelector('.progress-bar') : null;
+    const fill = document.getElementById('install-all-fill');
     const original = btn.textContent;
+
+    const setProgress = (done, total, label) => {
+      const pct = total ? Math.round((done / total) * 100) : 0;
+      if (fill) fill.style.width = `${pct}%`;
+      if (bar) bar.setAttribute('aria-valuenow', String(pct));
+      if (statusEl) statusEl.textContent = label;
+    };
+
     btn.disabled = true;
-    btn.textContent = '⏳ Installing everything missing…';
-    if (statusEl) statusEl.textContent = 'Installing missing dependencies — this can take several minutes. You can leave this open.';
+    btn.textContent = '⏳ Checking what is missing…';
+    if (progWrap) progWrap.classList.remove('hidden');
+    setProgress(0, 1, 'Checking what needs installing…');
+
     try {
-      const res = await fetch(`${serverUrl}/api/setup/install-all`, { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || `Server returned ${res.status}`);
-      if (!data.attempted) {
+      const missRes = await fetch(`${serverUrl}/api/setup/missing`);
+      const missData = await missRes.json().catch(() => ({}));
+      if (!missRes.ok) throw new Error(missData.detail || `Server returned ${missRes.status}`);
+      const missing = missData.missing || [];
+
+      if (!missing.length) {
+        setProgress(1, 1, '');
         showAlert('✅ Everything recommended is already installed — nothing to do.');
-      } else {
-        const ok = (data.installed || []).join(', ') || 'none';
-        const failed = (data.failed || []).join(', ') || 'none';
-        showAlert(`Install All finished.\n\n✅ Installed: ${ok}\n❌ Failed: ${failed}`);
+        return;
       }
+
+      const total = missing.length;
+      const installed = [];
+      const failed = [];
+      for (let i = 0; i < total; i++) {
+        const key = missing[i];
+        btn.textContent = `⏳ Installing ${key} (${i + 1}/${total})…`;
+        setProgress(i, total, `Installing ${key} (${i + 1} of ${total})… this can take a few minutes.`);
+        try {
+          const res = await fetch(`${serverUrl}/api/setup/install`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ component: key }),
+          });
+          const d = await res.json().catch(() => ({}));
+          if (res.ok && !d.error && (d.returncode === 0 || d.returncode === undefined)) installed.push(key);
+          else failed.push(key);
+        } catch (_) {
+          failed.push(key);
+        }
+        setProgress(i + 1, total, `Finished ${i + 1} of ${total}.`);
+      }
+
+      showAlert(`Install All finished.\n\n✅ Installed: ${installed.join(', ') || 'none'}\n❌ Failed: ${failed.join(', ') || 'none'}`);
       loadSetupPanel();
     } catch (e) {
       showAlert(`Install All failed: ${e.message}`);
@@ -2398,6 +2438,8 @@ function bindInstallAll() {
       btn.disabled = false;
       btn.textContent = original;
       if (statusEl) statusEl.textContent = '';
+      if (progWrap) progWrap.classList.add('hidden');
+      if (fill) fill.style.width = '0%';
     }
   });
 }
@@ -2543,9 +2585,27 @@ const DEP_DEF = {
   },
   whisper: {
     label: 'OpenAI Whisper',
-    desc: 'Speech-to-text engine for captions and transcript search',
+    desc: 'Speech-to-text engine — the universal transcription fallback',
     check: (d) => d.whisper && d.whisper.installed,
     statusText: (d) => (d.whisper && d.whisper.installed ? 'Installed' : 'Missing'),
+  },
+  'faster-whisper': {
+    label: 'Faster-Whisper',
+    desc: 'CTranslate2 backend — 3-5x faster transcription on CPU/GPU',
+    check: (d) => d.faster_whisper && d.faster_whisper.installed,
+    statusText: (d) => (d.faster_whisper && d.faster_whisper.installed ? 'Installed' : 'Missing'),
+  },
+  'mlx-whisper': {
+    label: 'MLX-Whisper (Apple Silicon)',
+    desc: 'Native MLX acceleration — fastest transcription on M-series Macs',
+    check: (d) => d.mlx_whisper && d.mlx_whisper.installed,
+    statusText: (d) => (d.mlx_whisper && d.mlx_whisper.installed ? 'Installed' : 'Missing'),
+  },
+  librosa: {
+    label: 'librosa',
+    desc: 'Audio-energy analysis for excitement/loudness highlight detection',
+    check: (d) => d.librosa && d.librosa.installed,
+    statusText: (d) => (d.librosa && d.librosa.installed ? 'Installed' : 'Missing'),
   },
   ollama: {
     label: 'Ollama (Required)',
@@ -2580,11 +2640,17 @@ const DEP_DEF = {
 };
 function renderDeps(data) {
   const cmds = data.install_commands || {};
-  const renderable = ['ollama', 'whisper', 'pytorch', 'ultralytics', 'lmstudio', 'ffmpeg'];
+  const uninstallCmds = data.uninstall_commands || {};
+  // Show every component the server knows how to install, plus the always-relevant
+  // core ones. mlx-whisper only appears when the server offers it (Apple Silicon).
+  const base = ['ollama', 'lmstudio', 'ffmpeg', 'pytorch', 'whisper', 'faster-whisper', 'librosa', 'ultralytics'];
+  if (cmds['mlx-whisper'] || (data.mlx_whisper && data.mlx_whisper.installed)) base.push('mlx-whisper');
+  const renderable = base.filter((key) => DEP_DEF[key]);
   const rows = renderable.map((key) => {
     const def = DEP_DEF[key];
     const ok = def.check(data);
     const cmdAvailable = !!cmds[key];
+    const canUninstall = ok && !!uninstallCmds[key];
     const statusMark = ok ? '✅' : '❌';
     const tag = def.statusText ? def.statusText(data) : (ok ? 'Installed' : 'Missing');
     return `
@@ -2592,20 +2658,47 @@ function renderDeps(data) {
         <div class="dep-info">
           <span class="dep-status">${statusMark}</span>
           <div>
-            <strong>${def.label}</strong>
-            <span class="muted small">${def.desc}</span>
+            <strong>${escapeHtml(def.label)}</strong>
+            <span class="muted small">${escapeHtml(def.desc)}</span>
           </div>
         </div>
         <div class="dep-actions">
           ${ok
             ? `<span class="dep-installed">${escapeHtml(tag)}</span>`
+              + (canUninstall ? ` <button class="btn btn-small btn-ghost" data-uninstall="${escapeHtml(key)}" title="Remove this package">🗑 Uninstall</button>` : '')
             : (cmdAvailable
-              ? `<button class="btn btn-small btn-primary" data-install="${key}">⬇️ Install</button>`
+              ? `<button class="btn btn-small btn-primary" data-install="${escapeHtml(key)}">⬇️ Install</button>`
               : '<span class="muted small">Manual install needed</span>')}
         </div>
       </div>`;
   }).join('');
   document.getElementById('setup-deps').innerHTML = rows;
+
+  // Uninstall buttons (pip packages only)
+  document.querySelectorAll('[data-uninstall]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const key = btn.dataset.uninstall;
+      const confirmed = await showConfirm(`Uninstall ${key}? You can reinstall it later from this panel.`);
+      if (!confirmed) return;
+      btn.disabled = true;
+      btn.textContent = '⏳ Removing…';
+      try {
+        const res = await fetch(`${serverUrl}/api/setup/uninstall`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ component: key }),
+        });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok || d.error) throw new Error(d.error || d.detail || `Server returned ${res.status}`);
+        showToast(d.ok ? `${key} uninstalled` : `${key}: exit ${d.returncode}`, d.ok ? 'success' : 'error');
+        loadSetupPanel();
+      } catch (e) {
+        showAlert(`Uninstall failed: ${e.message}`);
+        btn.disabled = false;
+        btn.textContent = '🗑 Uninstall';
+      }
+    });
+  });
 
   document.querySelectorAll('[data-install]').forEach((btn) => {
     btn.addEventListener('click', async () => {

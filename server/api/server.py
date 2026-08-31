@@ -1136,11 +1136,15 @@ def setup_status():
         "ollama": sc.detect_ollama(),
         "lmstudio": sc.detect_lmstudio(),
         "whisper": sc.detect_whisper(),
+        "faster_whisper": {"installed": sc.component_installed("faster-whisper")},
+        "mlx_whisper": {"installed": sc.component_installed("mlx-whisper")},
+        "librosa": {"installed": sc.component_installed("librosa")},
         "ultralytics": sc.detect_ultralytics(),
         "gpu": sc.detect_gpu(),
         "cpu": sc.detect_cpu(),
         "torch": sc.detect_torch(),
         "install_commands": sc.get_install_commands(),
+        "uninstall_commands": sc.get_uninstall_commands(),
         "recommendations": sc.recommend_models(),
         "output_dir": str(_ensure_output_root()),
     }
@@ -1188,6 +1192,43 @@ def ollama_pull(model: str = "gemma2:2b"):
         return {"model": model, "error": "Model download timed out after 30 minutes"}
     except Exception as e:
         return {"model": model, "error": str(e)}
+
+
+@app.get("/api/setup/missing")
+def setup_missing():
+    """The install-command components not yet present, so the UI can install them
+    one at a time with a real progress bar."""
+    from server.core import system_check as sc
+    commands = sc.get_install_commands()
+    missing = sc.missing_components()
+    return {"missing": missing, "commands": {k: " ".join(commands[k]) for k in missing}}
+
+
+@app.post("/api/setup/uninstall")
+def setup_uninstall(req: SetupInstallRequest):
+    """Uninstall a pip-managed package (whisper / faster-whisper / mlx-whisper /
+    ultralytics / librosa / pytorch). System apps are not removable here."""
+    from server.core import system_check as sc
+    cmd = sc.get_uninstall_commands().get(req.component)
+    if not cmd:
+        raise HTTPException(status_code=400, detail=f"Cannot uninstall '{req.component}' from here")
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=300,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        return {
+            "component": req.component,
+            "command": " ".join(cmd),
+            "returncode": result.returncode,
+            "ok": result.returncode == 0,
+            "stdout": (result.stdout or "")[-2000:],
+            "stderr": (result.stderr or "")[-2000:],
+        }
+    except subprocess.TimeoutExpired:
+        return {"component": req.component, "ok": False, "error": "Uninstall timed out"}
+    except Exception as e:  # noqa: BLE001
+        return {"component": req.component, "ok": False, "error": str(e)}
 
 
 @app.post("/api/setup/install-all")

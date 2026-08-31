@@ -651,6 +651,11 @@
           <p class="muted">Ollama is Klipzy's local AI provider. You do not need to build or configure your own server: install Ollama once, and Klipzy connects to its local service when AI analysis or chat is enabled. LM Studio is optional only if you prefer another local provider.</p>
           <p class="muted">Missing something? Click <strong>Install</strong> for one item, or <strong>Install All Recommended</strong> to set up everything missing at once (winget / Homebrew / pip). This can take several minutes.</p>
           <div id="install-all-status" class="muted small" role="status" aria-live="polite"></div>
+          <div id="install-all-progress" class="install-progress hidden">
+            <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Install progress">
+              <div id="install-all-fill" class="progress-fill"></div>
+            </div>
+          </div>
           <div id="setup-deps" class="setup-deps">
             <span class="muted">Checking...</span>
           </div>
