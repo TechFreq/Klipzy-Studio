@@ -181,7 +181,8 @@ class VideoClipperEngine:
             report("No speech found — scanning for action moments...", 44)
             from server.core.audio_energy import detect_action_highlights
             candidates = detect_action_highlights(
-                temp_audio, min_duration=min_duration, max_duration=max_duration, top_k=max_clips
+                temp_audio, min_duration=min_duration, max_duration=max_duration,
+                top_k=max_clips, video_path=video_path,
             )
 
         # Sanity floor: never emit a degenerate sub-clip regardless of source.

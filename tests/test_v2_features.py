@@ -239,3 +239,19 @@ def test_clear_cache_endpoint():
     assert r.status_code == 200
     body = r.json()
     assert "cleared" in body and "mb_freed" in body
+
+
+def test_motion_envelope_safe_without_video():
+    """Missing/invalid video path must return None, not raise."""
+    from server.core.audio_energy import _motion_envelope
+    assert _motion_envelope(None, [0.0, 0.5, 1.0]) is None
+    assert _motion_envelope("nope.mp4", [0.0, 0.5, 1.0]) is None
+
+
+def test_action_highlights_accepts_video_path(tmp_path):
+    """The fused detector still returns a list when video can't be read."""
+    from server.core.audio_energy import detect_action_highlights
+    out = detect_action_highlights(
+        str(tmp_path / "missing.wav"), min_duration=12.0, max_duration=30.0, video_path="nope.mp4"
+    )
+    assert isinstance(out, list)

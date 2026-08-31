@@ -3,6 +3,7 @@ Audio energy highlight detection (separate module).
 Finds loudness spikes = excitement peaks, mapped onto transcript segments.
 """
 
+import os
 from typing import List
 
 from server.models import ClipCandidate, TranscriptSegment, WordTimestamp
@@ -109,19 +110,80 @@ def detect_highlights_audio_energy(
     return _deduplicate(candidates)
 
 
+def _motion_envelope(video_path, times):
+    """
+    Per-timestamp visual motion (0..1) aligned to `times`, via frame differencing
+    on tiny grayscale frames. High motion = camera swings, explosions, fights.
+    Returns None if OpenCV/video is unavailable. Samples are capped so long
+    videos stay fast, then interpolated onto the full time grid.
+    """
+    try:
+        import cv2
+        import numpy as np
+    except ImportError:
+        return None
+    if not video_path or not os.path.exists(video_path):
+        return None
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return None
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    if w <= 0:
+        cap.release()
+        return None
+
+    n = len(times)
+    max_samples = 400
+    idxs = list(range(n)) if n <= max_samples else [int(i * n / max_samples) for i in range(max_samples)]
+    sample_times = [float(times[i]) for i in idxs]
+
+    prev = None
+    motion = []
+    for t in sample_times:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(t * fps))
+        ret, frame = cap.read()
+        if not ret:
+            motion.append(0.0)
+            continue
+        try:
+            small = cv2.cvtColor(cv2.resize(frame, (160, 90)), cv2.COLOR_BGR2GRAY)
+        except Exception:
+            motion.append(0.0)
+            continue
+        if prev is None:
+            motion.append(0.0)
+        else:
+            motion.append(float(np.mean(np.abs(small.astype("int16") - prev.astype("int16")))))
+        prev = small
+    cap.release()
+
+    try:
+        import numpy as np
+        env = np.interp([float(t) for t in times], sample_times, motion)
+        if env.max() > 0:
+            env = env / env.max()
+        return env
+    except Exception:
+        return None
+
+
 def detect_action_highlights(
     audio_path: str,
     min_duration: float = 15.0,
     max_duration: float = 45.0,
     top_k: int = 6,
+    video_path: str = None,
 ) -> List[ClipCandidate]:
     """
     Transcript-free highlight detection for GAMEPLAY (shooters/Warzone etc.),
-    where there's little or no speech but the action is loud — gunfights,
-    explosions, killstreaks. NVIDIA-Highlights-style: find the loudest sustained
-    moments and cut a clip around each.
+    where there's little or no speech but the action is loud AND busy — gunfights,
+    explosions, killstreaks. NVIDIA-Highlights-style: find the most intense
+    sustained moments and cut a clip around each.
 
-    Works purely from the audio envelope, so it needs no captions or faces.
+    Fuses two local signals: audio loudness (gunfire/explosions) and, when a
+    video path is given, visual motion (frame differencing). Loud + high-motion
+    scores highest. Falls back to audio-only if OpenCV can't read the video.
     Returns [] if librosa/audio is unavailable.
     """
     try:
@@ -154,19 +216,28 @@ def detect_action_highlights(
     if rms.max() > 0:
         rms = rms / rms.max()
 
-    # "Action" = energy well above the clip's own baseline.
-    mean, std = float(rms.mean()), float(rms.std())
+    # Fuse audio loudness with visual motion when the video is available.
+    motion = _motion_envelope(video_path, times) if video_path else None
+    if motion is not None and len(motion) == len(rms):
+        signal = 0.6 * rms + 0.4 * motion
+        if signal.max() > 0:
+            signal = signal / signal.max()
+    else:
+        signal = rms
+
+    # "Action" = intensity well above the clip's own baseline.
+    mean, std = float(signal.mean()), float(signal.std())
     threshold = min(0.9, mean + 0.8 * std)
 
-    # Peak indices, loudest first.
-    peak_order = sorted(range(len(rms)), key=lambda k: rms[k], reverse=True)
+    # Peak indices, most-intense first.
+    peak_order = sorted(range(len(signal)), key=lambda k: signal[k], reverse=True)
 
     titles = ["🔥 Big Play", "💥 Intense Moment", "🎯 Killstreak", "⚡ Action Spike", "🎮 Highlight", "🏆 Clutch"]
     picked: List[ClipCandidate] = []
     windows: List = []  # (start, end)
 
     for k in peak_order:
-        if rms[k] < threshold:
+        if signal[k] < threshold:
             break
         t = float(times[k])
         # Center a min-duration window on the peak, with a little more lead-out.
@@ -175,7 +246,7 @@ def detect_action_highlights(
         end = min(total, start + min_duration)
         # Extend while the surrounding audio stays hot (up to max_duration).
         j = k + 1
-        while (end - start) < max_duration and j < len(rms) and rms[j] >= threshold * 0.7:
+        while (end - start) < max_duration and j < len(signal) and signal[j] >= threshold * 0.7:
             end = min(total, float(times[j]))
             j += 1
         # Guarantee at least min_duration (pull the start back, or push end out)
@@ -189,7 +260,8 @@ def detect_action_highlights(
             continue  # overlaps an already-picked highlight
         windows.append((start, end))
 
-        score = round(min(10.0, 5.0 + float(rms[k]) * 5.0), 1)
+        score = round(min(10.0, 5.0 + float(signal[k]) * 5.0), 1)
+        sig_kind = "audio+motion" if motion is not None else "audio"
         picked.append(
             ClipCandidate(
                 id=f"action_{len(picked)}",
@@ -201,7 +273,7 @@ def detect_action_highlights(
                 hook_text="Gameplay action moment",
                 full_text="",
                 words=[],
-                reason=f"Audio action peak ({rms[k]:.2f})",
+                reason=f"Action peak ({sig_kind} {signal[k]:.2f})",
             )
         )
         if len(picked) >= top_k:
