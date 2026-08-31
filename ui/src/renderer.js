@@ -2106,6 +2106,9 @@ window.exportSingleClip = async function (clipIndex) {
       // /export/clip-bundle returns export_dir + video_path (not export_path):
       // reading export_path here is what produced the "Saved at: undefined" bug.
       const savedPath = data.export_dir || data.video_path || '';
+      // Auto-open the destination the user picked, then show the confirmation
+      // (which also keeps an "Open folder" button for reopening later).
+      if (savedPath) revealInFolder(savedPath);
       showAlert(`✅ ${data.message}\nSaved at: ${savedPath}`, 'Export Complete', savedPath || null);
     } else {
       playErrorSound();

@@ -260,7 +260,22 @@ ipcMain.handle('select-camera-file', async () => {
 ipcMain.handle('reveal-in-folder', async (_event, filePath) => {
   if (!filePath || typeof filePath !== 'string') return null;
   const { shell } = require('electron');
-  shell.showItemInFolder(filePath);
+  const fs = require('fs');
+  try {
+    // A DIRECTORY should be OPENED (show its contents), while a FILE should be
+    // REVEALED (open its parent folder with the file highlighted). Calling
+    // showItemInFolder on a directory only selects it inside its parent, which
+    // is not what "open the export destination" should do — that was the bug.
+    if (fs.statSync(filePath).isDirectory()) {
+      const err = await shell.openPath(filePath);
+      if (err) shell.showItemInFolder(filePath); // fallback if openPath fails
+    } else {
+      shell.showItemInFolder(filePath);
+    }
+  } catch {
+    // Path may not exist / stat failed — best-effort reveal.
+    shell.showItemInFolder(filePath);
+  }
   return filePath;
 });
 
