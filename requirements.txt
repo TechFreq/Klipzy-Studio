@@ -7,7 +7,13 @@ fastapi>=0.100.0
 uvicorn>=0.23.0
 python-multipart>=0.0.6
 
-# Transcription
+# Transcription (3 backends, auto-selected in server/core/transcriber.py)
+#   1. mlx-whisper   - native MLX acceleration, fastest on Apple Silicon (M-series).
+#                      Marker keeps it macOS-arm64 only; a no-op elsewhere.
+#   2. faster-whisper - CTranslate2, 3-5x faster than openai-whisper on CPU/CUDA.
+#   3. openai-whisper - universal fallback.
+mlx-whisper>=0.4.0; sys_platform == "darwin" and platform_machine == "arm64"
+faster-whisper>=1.0.0
 openai-whisper>=20231117
 
 # Audio energy detection

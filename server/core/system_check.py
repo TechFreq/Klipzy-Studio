@@ -197,6 +197,12 @@ def get_install_commands() -> Dict[str, List[str]]:
     else:
         commands["pytorch"] = ["pip", "install", "--index-url", "https://download.pytorch.org/whl/cu126", "torch", "torchvision"]
     commands["whisper"] = ["pip", "install", "openai-whisper"]
+    # faster-whisper (CTranslate2) is cross-platform and 3-5x faster than
+    # openai-whisper; the transcriber prefers it when present.
+    commands["faster-whisper"] = ["pip", "install", "faster-whisper"]
+    # mlx-whisper is Apple-Silicon-only native acceleration; offer it just on M-series.
+    if os_name == "macos" and platform.machine() == "arm64":
+        commands["mlx-whisper"] = ["pip", "install", "mlx-whisper"]
     commands["librosa"] = ["pip", "install", "librosa", "soundfile"]
     commands["ultralytics"] = ["pip", "install", "ultralytics"]
     return commands
@@ -218,7 +224,7 @@ def recommend_models() -> Dict[str, Dict]:
     elif vram and vram >= 4:
         whisper = {"model": "small", "realtime_factor": "~3-6x", "note": "Good accuracy, fits your VRAM comfortably"}
     elif torch_info.get("mps"):
-        whisper = {"model": "base", "realtime_factor": "~2-4x", "note": "Apple Silicon MPS — base is the sweet spot"}
+        whisper = {"model": "base", "realtime_factor": "~2-4x", "note": "Apple Silicon — install mlx-whisper for native MLX acceleration"}
     elif ram >= 16:
         whisper = {"model": "base", "realtime_factor": "~1-3x", "note": "CPU-only: base keeps transcription fast"}
     else:

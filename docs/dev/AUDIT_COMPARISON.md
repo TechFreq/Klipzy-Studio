@@ -127,14 +127,21 @@ ingestion.
 1. **URL / stream ingestion (`yt-dlp`)** — YouTube, Twitch VODs, Kick VODs into the existing pipeline.
 2. **Active-speaker upgrade** — add TalkNet-style active-speaker detection on top of YOLOv8.
 
-### 🟠 Tier 2 — hardware acceleration *(coming soon)*
-3. **Apple Silicon + Intel Mac acceleration** — the server already auto-selects
-   CUDA / MPS / CPU. Extend hardware-aware model selection so the app picks and
-   downloads the right model for the detected chip.
-4. **MLX acceleration on Apple Silicon** — optional MLX-backed transcription /
-   inference path for M-series Macs, chosen automatically when available.
-   *(Ollama remains optional; this is about the app running its own server and
-   fetching the model that best fits the user's hardware.)*
+### 🟠 Tier 2 — hardware acceleration
+**Already implemented** (see `server/core/transcriber.py`, `ffmpeg_tools.py`,
+`system_check.py`):
+- Cross-platform HW **video encoders**: NVENC, Apple **VideoToolbox** (Apple
+  Silicon *and* Intel Mac), Intel **QSV**, AMD **AMF**, Linux **VAAPI**, x264 fallback.
+- **MLX-accelerated transcription** on Apple Silicon via `mlx-whisper` (auto-preferred
+  on M-series), `faster-whisper` on CPU/CUDA, `openai-whisper` fallback — all three
+  now shipped in `requirements.txt` (mlx gated to macOS-arm64).
+- Whisper device auto-select: CUDA → MPS → CPU.
+
+**Still coming soon:**
+3. **Hardware-aware auto model download** — detect the chip and fetch the
+   best-fitting model automatically. *(Ollama remains optional; the app runs its
+   own server and picks the model that fits the user's hardware.)*
+4. **MLX beyond transcription** — extend MLX to highlight/LLM stages on M-series.
 5. **Multi-speaker split-screen** — stack two detected speakers vertically.
 
 ### 🟡 Tier 3 — workflow & integrations

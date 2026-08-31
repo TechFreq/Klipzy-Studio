@@ -157,13 +157,17 @@ and the notes on bundling a Python runtime.
 - [x] Silence cutter + profanity filter
 - [x] Electron desktop app (Win/macOS/Linux)
 - [x] Token-authenticated local API
+- [x] **Cross-platform hardware acceleration** — NVENC (NVIDIA), VideoToolbox
+  (Apple Silicon **and** Intel Mac), Intel QSV, AMD AMF, Linux VAAPI, x264 fallback
+- [x] **MLX-accelerated transcription on Apple Silicon** — `mlx-whisper` is the
+  preferred backend on M-series, auto-selected at runtime, with `faster-whisper`
+  (CTranslate2) elsewhere and `openai-whisper` as the universal fallback
 
 **Coming soon**
 - [ ] URL / stream import — YouTube, Twitch, Kick (`yt-dlp`)
-- [ ] **Apple Silicon + Intel Mac acceleration** — hardware-aware model selection
-  (the app runs its own server and downloads the model that best fits your chip)
-- [ ] **MLX acceleration** on Apple Silicon (M-series) — optional, auto-selected
-  when available; Ollama stays optional
+- [ ] **Hardware-aware auto model download** — detect the chip and fetch the
+  best-fitting model automatically (the app runs its own server; Ollama stays optional)
+- [ ] MLX beyond transcription (highlight/LLM stages on Apple Silicon)
 - [ ] Multi-speaker split-screen
 - [ ] Multilingual subtitles / dubbing
 - [ ] Auto-posting to TikTok / YouTube / Reels
