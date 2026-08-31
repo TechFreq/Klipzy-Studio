@@ -1,5 +1,5 @@
 """
-Core data models for the AI Video Clipper.
+Core data models for Klipzy Studio (Long Form to Shorts).
 Pydantic models shared across the server API and processing pipeline.
 """
 

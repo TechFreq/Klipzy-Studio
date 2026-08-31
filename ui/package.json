@@ -1,7 +1,7 @@
 {
   "name": "klipzy-studio",
   "version": "1.0.0",
-  "description": "Klipzy Studio - local-first AI video clipper by TechFreq",
+  "description": "Klipzy Studio - local-first Long Form to Shorts studio by TechFreq",
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",

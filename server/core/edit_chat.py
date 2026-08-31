@@ -21,7 +21,7 @@ class EditChat:
         history = conversation_history or []
         context = clip_context or {}
 
-        system_prompt = """You are an AI video editing assistant for a local-first short-form video clipper.
+        system_prompt = """You are an AI video editing assistant for a local-first Long Form to Shorts studio.
 You help creators choose clips, write hooks, captions, and titles for TikTok/Shorts/Reels.
 Be concise, practical, and creative. You only know about the current clip context provided.
 """

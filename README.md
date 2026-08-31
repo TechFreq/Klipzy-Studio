@@ -1,6 +1,6 @@
 # 🎬 Klipzy Studio
 
-A **local-first AI video clipper by TechFreq Developments** for Windows, macOS, and Linux. Turn long videos, podcasts, and streams into ready-to-post vertical Shorts — entirely on your own machine. **No cloud AI, no fees.**
+A **local-first Long Form to Shorts studio by TechFreq Developments** for Windows, macOS, and Linux. Turn long videos, podcasts, and streams into ready-to-post vertical Shorts — entirely on your own machine. **No cloud AI, no fees.**
 
 > ⚖️ Licensed under the **TechFreq Developments Open-Attribution License** (see [LICENSE](LICENSE)). Free to use and modify, provided you credit TechFreq Developments as the original author.
 
@@ -144,6 +144,7 @@ and the notes on bundling a Python runtime.
 
 ## 🗺️ Roadmap
 
+**Done**
 - [x] Local transcription + word timestamps
 - [x] Heuristic + audio-energy highlight detection
 - [x] Speaker-aware 9:16 smart crop
@@ -151,12 +152,21 @@ and the notes on bundling a Python runtime.
 - [x] Interactive caption editor
 - [x] Manual clip trimmer UI
 - [x] Gaming / reaction layouts
-- [x] AI edit chat (Ollama + fallback)
+- [x] AI edit chat (Ollama + fallback, Ollama optional)
 - [x] NLE exports (Premiere / DaVinci / CapCut)
 - [x] Silence cutter + profanity filter
 - [x] Electron desktop app (Win/macOS/Linux)
-- [ ] Twitch/Kick stream import (`yt-dlp`)
-- [ ] Auto-posting to TikTok/YouTube
+- [x] Token-authenticated local API
+
+**Coming soon**
+- [ ] URL / stream import — YouTube, Twitch, Kick (`yt-dlp`)
+- [ ] **Apple Silicon + Intel Mac acceleration** — hardware-aware model selection
+  (the app runs its own server and downloads the model that best fits your chip)
+- [ ] **MLX acceleration** on Apple Silicon (M-series) — optional, auto-selected
+  when available; Ollama stays optional
+- [ ] Multi-speaker split-screen
+- [ ] Multilingual subtitles / dubbing
+- [ ] Auto-posting to TikTok / YouTube / Reels
 
 ---
 
