@@ -103,7 +103,7 @@ cd ..
 **Terminal 1 — Start Python FastAPI Backend:**
 ```bash
 # Ensure your virtual environment is active
-python main.py
+python scripts/main.py
 ```
 *The backend starts at `http://127.0.0.1:8765`.*
 

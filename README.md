@@ -83,7 +83,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 # Start the API server
-python main.py
+python scripts/main.py
 ```
 
 Then open <http://127.0.0.1:8765/docs> for the interactive API docs.
@@ -137,8 +137,8 @@ reframing, silence detection, profanity filtering, logging, and the API token gu
 
 ## 📦 Packaging
 
-See [PACKAGING.md](PACKAGING.md) for building desktop installers and the notes on
-bundling a Python runtime.
+See [docs/dev/PACKAGING.md](docs/dev/PACKAGING.md) for building desktop installers
+and the notes on bundling a Python runtime.
 
 ---
 

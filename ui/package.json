@@ -35,7 +35,7 @@
         ]
       },
       {
-        "from": "../main.py",
+        "from": "../scripts/main.py",
         "to": "main.py"
       },
       {
