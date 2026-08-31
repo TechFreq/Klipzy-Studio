@@ -1,0 +1,9 @@
+# Normalize line endings so moving the project between Windows and macOS
+# no longer flags every file as "changed" (CRLF vs LF differences).
+* text=auto
+
+# Force Windows-style line endings for Windows scripts
+*.bat text eol=crlf
+
+# Force Unix-style line endings for shell scripts
+*.sh text eol=lf

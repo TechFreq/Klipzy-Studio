@@ -49,7 +49,17 @@ node --version >nul 2>&1
 if errorlevel 1 goto :no_node
 
 if not exist "ui\node_modules" goto :install_ui
+if not exist "ui\node_modules\electron\path.txt" goto :reinstall_ui
+
+REM Electron built for macOS/Linux points at "Electron.app/..." instead of an
+REM .exe. Running that on Windows fails, so detect it and rebuild for Windows.
+findstr /I ".exe" "ui\node_modules\electron\path.txt" >nul 2>&1
+if errorlevel 1 goto :reinstall_ui
 goto :launch
+
+:reinstall_ui
+echo Detected UI dependencies built for a different OS; rebuilding for Windows...
+rmdir /s /q "ui\node_modules"
 
 :install_ui
 echo Installing UI dependencies...
