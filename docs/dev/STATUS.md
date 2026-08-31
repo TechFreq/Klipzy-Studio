@@ -108,6 +108,18 @@ These are observed bugs/rough edges in the running app. Verify each against
 - [ ] **Add a loading/typing animation** while the AI is responding (chat currently
   shows nothing until the reply lands).
 
+**Queue manager / sidebar / settings access**
+- [ ] **Queue Manager UI needs a rework** — the job-queue modal is functional but
+  rough; make it clearer (status, progress, per-job actions, empty state).
+- [ ] **Sidebar is missing a "Support TechFreq" button/section** — add it to the
+  left sidebar (the support links currently only live in the Setup view).
+- [ ] **Add a Settings / manage access point** — a button (near the server
+  health-check status / sidebar) to open settings for managing all this, similar
+  to how **Clips Kitty** does it. User will share the Clips Kitty settings
+  interface screenshots to match the pattern (like the earlier openclipper/capcut
+  refs). Until then: consolidate Setup + queue + support + model management behind
+  a clear settings entry point.
+
 ## Test footage on this machine
 - `C:\Users\ROGPC\Downloads\Street interviews day 2 Segment 3  BEN DJ MAYO.mp4` — 9:16 talking-head, ~50s (fast hook/title tests).
 - `C:\Users\ROGPC\Downloads\IMG_0499.MOV` — iPhone HEVC vertical, ~24min.
