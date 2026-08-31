@@ -448,6 +448,18 @@ function bindEvents() {
     if (e.target.value) openProject(e.target.value);
   });
 
+  // Clickable server-health footer -> jump to Setup & diagnostics so the user
+  // can see what's healthy, what's missing, and what model suits their hardware.
+  const healthBtn = document.getElementById('health-status-btn');
+  if (healthBtn) {
+    healthBtn.addEventListener('click', () => {
+      const setupNav = document.querySelector('.nav-item[data-view="setup"]');
+      if (setupNav) setupNav.click();      // reuse the normal nav switch
+      loadSetupPanel();                     // refresh diagnostics on the way in
+      document.getElementById('view-setup')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+
   // "📜 Logs" button in the header – opens the logs folder via Electron
   const openLogsBtn = document.getElementById('open-logs-folder');
   if (openLogsBtn) {

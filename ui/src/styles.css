@@ -88,9 +88,20 @@ body {
 
 .sidebar-footer { padding-top: 12px; border-top: 1px solid var(--border); }
 .health-status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); flex: 0 0 auto; }
 .dot.ok { background: var(--success); }
 .dot.error { background: var(--danger); }
+.dot.warn { background: #eab308; }
+/* Clickable health footer -> opens Setup & diagnostics */
+.health-status-btn {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; padding: 6px 8px; margin: 0;
+  background: none; border: none; border-radius: 8px;
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.health-status-btn:hover { background: rgba(255, 255, 255, 0.06); }
+.health-status-btn:focus-visible { outline: 2px solid var(--accent, #6366f1); outline-offset: 2px; }
+.health-hint { font-size: 12px; opacity: 0.6; flex: 0 0 auto; }
 
 /* Main */
 .main { flex: 1; overflow-y: auto; padding: 24px 32px; }

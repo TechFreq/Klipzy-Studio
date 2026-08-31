@@ -162,11 +162,15 @@ and the notes on bundling a Python runtime.
 - [x] **MLX-accelerated transcription on Apple Silicon** — `mlx-whisper` is the
   preferred backend on M-series, auto-selected at runtime, with `faster-whisper`
   (CTranslate2) elsewhere and `openai-whisper` as the universal fallback
+- [x] **Hardware-aware model recommendation** — the Setup panel detects your
+  GPU / VRAM / RAM / chip and *recommends* the best Whisper / YOLO / Ollama model
+  (you choose and install it — nothing is downloaded behind your back)
+- [x] **Live backend readout** — the header shows the active transcription engine;
+  click the status to jump into Setup & diagnostics
 
 **Coming soon**
 - [ ] URL / stream import — YouTube, Twitch, Kick (`yt-dlp`)
-- [ ] **Hardware-aware auto model download** — detect the chip and fetch the
-  best-fitting model automatically (the app runs its own server; Ollama stays optional)
+- [ ] One-click install of the recommended model straight from the Setup card
 - [ ] MLX beyond transcription (highlight/LLM stages on Apple Silicon)
 - [ ] Multi-speaker split-screen
 - [ ] Multilingual subtitles / dubbing

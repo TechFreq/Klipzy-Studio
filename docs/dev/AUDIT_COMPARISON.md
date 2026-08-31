@@ -137,10 +137,17 @@ ingestion.
   now shipped in `requirements.txt` (mlx gated to macOS-arm64).
 - Whisper device auto-select: CUDA → MPS → CPU.
 
+- **Hardware-aware model recommendation** (`system_check.recommend_models`): the
+  Setup panel detects GPU/VRAM/RAM/chip and *recommends* the best Whisper/YOLO/Ollama
+  model. It recommends and lets the user choose/install — it does **not** silently
+  download anything.
+- **Live backend readout**: `/health` + `/transcription-backend` report the active
+  engine; the clickable header status opens Setup & diagnostics.
+
 **Still coming soon:**
-3. **Hardware-aware auto model download** — detect the chip and fetch the
-   best-fitting model automatically. *(Ollama remains optional; the app runs its
-   own server and picks the model that fits the user's hardware.)*
+3. **One-click install of the recommended model** — install the recommended pick
+   directly from the Setup recommendation card (detection already done; this is the
+   install shortcut). *(Ollama remains optional.)*
 4. **MLX beyond transcription** — extend MLX to highlight/LLM stages on M-series.
 5. **Multi-speaker split-screen** — stack two detected speakers vertically.
 

@@ -32,9 +32,12 @@
         <button class="nav-item" data-view="setup">⚙️ Setup</button>
       </nav>
       <div class="sidebar-footer">
-        <div id="health-status" class="health-status" role="status" aria-live="polite">
-          <span class="dot"></span> Checking server...
-        </div>
+        <button id="health-status-btn" class="health-status-btn" title="Open Setup &amp; diagnostics — check dependencies, models, and what's best for your hardware" aria-label="Server status. Open Setup and diagnostics.">
+          <span id="health-status" class="health-status" role="status" aria-live="polite">
+            <span class="dot"></span> Checking server...
+          </span>
+          <span class="health-hint" aria-hidden="true">⚙️</span>
+        </button>
       </div>
     </aside>
 
