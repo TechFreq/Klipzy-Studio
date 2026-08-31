@@ -27,8 +27,27 @@
 | Tests | `tests/test_core.py`, `test_v2_features.py`, `test_logging.py`, `test_auth.py` | ✅ **49 pass** |
 
 **Validation:** 36 Python modules pass `py_compile`; `node --check` passes on all
-three JS files; `pytest tests/` → **49 passed**; a live boot serves 31 routes
+three JS files; `pytest tests/` → **52 passed**; a live boot serves 31 routes
 (no duplicates), 22 caption presets, with token auth enforced.
+
+**End-to-end verified (2026-08-31):** a real 1080p HEVC source was run through the
+actual pipeline (transcribe → highlight → speaker-crop → render → burn captions).
+Output: genuine **1080×1920 H.264 + AAC** clips with burned captions, per-clip
+`.ass/.srt`, and thumbnails, produced in ~29s from a 2-min excerpt via
+`faster-whisper` on CPU (int8). Two real bugs were found and fixed during this run:
+
+- **faster-whisper CUDA crash** — `device="auto"` let CTranslate2 select a CUDA GPU
+  on a machine with CPU-only PyTorch and no CUDA runtime, crashing on
+  `cublas64_12.dll`. Now the device is chosen from actual `torch.cuda` availability,
+  and a failing accelerator falls back to the next backend instead of aborting.
+- **misleading GPU recommendation** — `recommend_models()` claimed GPU/CUDA whenever
+  `nvidia-smi` saw a card, even when the ML stack couldn't use it. Now gated on real
+  CUDA/MPS usability, with a "CPU (GPU idle)" state + an unlock hint.
+
+**Known quality note:** with Ollama disabled, highlight selection is heuristic
+(hook words + audio energy) and can pick weak moments on loosely-structured footage.
+Enabling the local LLM (or the planned active-speaker + scene-signal upgrades)
+improves picks. Not a correctness bug — a selection-quality tradeoff.
 
 ---
 

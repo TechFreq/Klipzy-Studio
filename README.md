@@ -131,7 +131,21 @@ pytest tests/ -v
 ```
 
 Covers highlight detection, subtitle generation, NLE exports, aspect-ratio
-reframing, silence detection, profanity filtering, logging, and the API token guard.
+reframing, silence detection, profanity filtering, logging, the API token guard,
+and the transcription-backend reporter.
+
+**Verified end-to-end:** a real ~24-min 1080p HEVC video runs through the full
+pipeline and produces genuine 1080×1920 (9:16) H.264 clips with burned-in captions
+and thumbnails. On CPU with `faster-whisper`, a 2-minute source yields finished
+clips in well under a minute; expect longer for full-length sources and much
+faster with a CUDA GPU or Apple Silicon (MLX).
+
+> **GPU note:** having an NVIDIA card isn't enough on its own — the ML stack needs
+> the CUDA build of PyTorch. If the Setup panel shows **"CPU (GPU idle)"**, install
+> the CUDA PyTorch build (Setup → Install, or `pip install torch torchvision
+> --index-url https://download.pytorch.org/whl/cu126`) to unlock GPU speed. The app
+> runs correctly on CPU either way — it just picks the fastest backend it can
+> actually use and falls back safely if an accelerator isn't usable.
 
 ---
 
