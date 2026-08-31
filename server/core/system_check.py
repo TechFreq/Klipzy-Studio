@@ -293,37 +293,53 @@ def recommend_models() -> Dict[str, Dict]:
     ram = cpu.get("ram_gb") or 0
     cores = cpu.get("cores") or 0
 
+    # A GPU showing up in nvidia-smi does NOT mean the ML stack can use it: the
+    # user may have CPU-only PyTorch, or (for CTranslate2) be missing the CUDA
+    # runtime DLLs. Recommend based on what will ACTUALLY run, and if a card is
+    # present but dormant, tell the user how to unlock it instead of promising
+    # GPU speed they won't get.
+    cuda_usable = bool(torch_info.get("cuda"))
+    mps_usable = bool(torch_info.get("mps"))
+    gpu_present = bool(vram)
+    gpu_name = gpu.get("name") or "your GPU"
+    dormant_gpu = gpu_present and not cuda_usable and not mps_usable
+    unlock_note = f"{gpu_name} detected but PyTorch can't use it yet — install the CUDA build to unlock GPU speed"
+
     # --- Whisper ---
-    if vram and vram >= 8:
+    if cuda_usable and vram and vram >= 8:
         whisper = {"model": "medium", "realtime_factor": "~4-8x", "note": "Great accuracy/speed balance on your GPU"}
-    elif vram and vram >= 4:
+    elif cuda_usable and vram and vram >= 4:
         whisper = {"model": "small", "realtime_factor": "~3-6x", "note": "Good accuracy, fits your VRAM comfortably"}
-    elif torch_info.get("mps"):
+    elif mps_usable:
         whisper = {"model": "base", "realtime_factor": "~2-4x", "note": "Apple Silicon — install mlx-whisper for native MLX acceleration"}
+    elif dormant_gpu:
+        whisper = {"model": "base", "realtime_factor": "~1-3x", "note": unlock_note}
     elif ram >= 16:
-        whisper = {"model": "base", "realtime_factor": "~1-3x", "note": "CPU-only: base keeps transcription fast"}
+        whisper = {"model": "base", "realtime_factor": "~1-3x", "note": "CPU-only: base keeps transcription fast (install faster-whisper for a 3-5x speedup)"}
     else:
         whisper = {"model": "tiny", "realtime_factor": "~1-2x", "note": "Low-RAM CPU: tiny is fastest"}
 
     # --- YOLO ---
-    if vram and vram >= 6:
+    if cuda_usable and vram and vram >= 6:
         yolo = {"model": "yolov8m.pt", "realtime_factor": "~30-60fps", "note": "Good accuracy for face tracking"}
-    elif vram and vram >= 2:
+    elif cuda_usable and vram and vram >= 2:
         yolo = {"model": "yolov8n.pt", "realtime_factor": "~60-120fps", "note": "Lightweight — perfect for tracking"}
+    elif dormant_gpu:
+        yolo = {"model": "yolov8n.pt", "realtime_factor": "~10-30fps", "note": unlock_note}
     else:
         yolo = {"model": "yolov8n.pt", "realtime_factor": "~10-30fps", "note": "CPU: nano model only"}
 
-    # --- Ollama ---
-    if vram and vram >= 8:
+    # --- Ollama --- (optional; used only for AI chat + LLM highlight picks)
+    if cuda_usable and vram and vram >= 8:
         ollama = {"model": "llama3.2", "note": "3B — fast, smart, fits your GPU"}
     elif ram >= 16:
         ollama = {"model": "gemma2:2b", "note": "2B — runs comfortably on CPU/RAM"}
     else:
         ollama = {"model": "gemma2:2b", "note": "2B — smallest reliable option"}
 
-    whisper["engine"] = "GPU (CUDA)" if vram else ("GPU (MPS)" if torch_info.get("mps") else "CPU")
-    yolo["engine"] = "GPU (CUDA)" if vram else ("GPU (MPS)" if torch_info.get("mps") else "CPU")
-    ollama["engine"] = "GPU (CUDA)" if (vram and vram >= 8) else "CPU"
+    whisper["engine"] = "GPU (CUDA)" if cuda_usable else ("GPU (MPS)" if mps_usable else ("CPU (GPU idle)" if dormant_gpu else "CPU"))
+    yolo["engine"] = whisper["engine"]
+    ollama["engine"] = "GPU (CUDA)" if (cuda_usable and vram and vram >= 8) else "CPU"
 
     # Keep the recommendation cards actionable: the first model is the best
     # fit, followed by lighter fallbacks that are still compatible.

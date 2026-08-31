@@ -65,6 +65,7 @@ class Transcriber:
         self.device = device
         self._model = None
         self._backend = None
+        self._skip_backends = set()  # backends that failed this run; don't retry
 
     def _detect_device(self) -> str:
         """Auto-detect best available compute device (for openai-whisper fallback)."""
@@ -78,13 +79,33 @@ class Transcriber:
             pass
         return "cpu"
 
+    def _faster_device(self):
+        """
+        Pick a SAFE device + compute type for faster-whisper (CTranslate2).
+
+        CTranslate2 does its own CUDA detection independent of PyTorch, and with
+        device="auto" it will happily select a CUDA GPU and then crash if the
+        CUDA runtime DLLs (e.g. cublas64_12.dll) aren't present — which is the
+        case on a machine with an NVIDIA card but CPU-only PyTorch. So only use
+        CUDA when PyTorch confirms a working CUDA build; otherwise CPU int8
+        (fast and dependency-free). CTNranslate2 has no Metal backend, so Apple
+        Silicon uses CPU here (MLX is the preferred M-series path anyway).
+        """
+        try:
+            import torch
+            if torch.cuda.is_available():
+                return "cuda", "float16"
+        except ImportError:
+            pass
+        return "cpu", "int8"
+
     def _load_model(self):
         if self._model is not None:
             return
 
         # 1. MLX-Whisper: preferred on Apple Silicon (M-series macOS)
         # Native MLX acceleration, supports word_timestamps=True
-        if _is_apple_silicon():
+        if _is_apple_silicon() and "mlx" not in self._skip_backends:
             try:
                 import mlx_whisper
                 print(f"Loading MLX-Whisper '{self.model_size}' (Apple Silicon MLX acceleration)...")
@@ -110,14 +131,16 @@ class Transcriber:
                 pass  # fall through to faster-whisper
 
         # 2. Faster-Whisper: CTranslate2 backend, fast on CPU/GPU
-        try:
-            from faster_whisper import WhisperModel
-            print(f"Loading Faster-Whisper '{self.model_size}'...")
-            self._model = WhisperModel(self.model_size, device=self.device or "auto", compute_type="auto")
-            self._backend = "faster"
-            return
-        except ImportError:
-            pass
+        if "faster" not in self._skip_backends:
+            try:
+                from faster_whisper import WhisperModel
+                fw_device, fw_compute = self._faster_device()
+                print(f"Loading Faster-Whisper '{self.model_size}' on {fw_device} ({fw_compute})...")
+                self._model = WhisperModel(self.model_size, device=fw_device, compute_type=fw_compute)
+                self._backend = "faster"
+                return
+            except ImportError:
+                pass
 
         # 3. OpenAI Whisper (PyTorch): fallback with CUDA/MPS/CPU
         try:
@@ -149,12 +172,17 @@ class Transcriber:
                 return self._transcribe_faster(audio_path, language)
             return self._transcribe_openai(audio_path, language)
         except Exception as e:
-            # If MLX fails (model download, runtime error), fall back to next backend
-            if self._backend == "mlx":
-                print(f"MLX-Whisper failed ({e}), falling back to Faster-Whisper...")
+            # Any accelerated backend (MLX or faster-whisper) can fail at runtime
+            # — a model download error, or a CUDA runtime that isn't actually
+            # usable. Mark it skipped and fall back to the next backend instead of
+            # crashing the whole job. openai-whisper is the final, dependency-light
+            # backstop, so a failure there is genuinely fatal.
+            if self._backend in ("mlx", "faster"):
+                print(f"{self._backend}-whisper failed ({e}); falling back to the next backend...")
+                self._skip_backends.add(self._backend)
                 self._backend = None
                 self._model = None
-                self._load_model()  # will pick faster-whisper or openai-whisper
+                self._load_model()
                 return self.transcribe(audio_path, language)
             raise
 
