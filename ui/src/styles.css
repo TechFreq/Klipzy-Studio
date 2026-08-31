@@ -105,6 +105,39 @@ body {
 .ai-models-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
 @media (max-width: 720px) { .ai-models-grid { grid-template-columns: 1fr; } }
 #install-all-status:not(:empty) { margin: 8px 0; }
+
+/* Ready badge on clip cards */
+.ready-badge {
+  font-size: 11px; font-weight: 600; color: #10b981;
+  background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.35);
+  border-radius: 999px; padding: 2px 8px; white-space: nowrap;
+}
+
+/* Per-platform export tiles */
+.clip-platforms { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.platforms-label { font-size: 11px; color: var(--text-muted); margin-right: 2px; }
+.platform-tile {
+  font-size: 11px; padding: 4px 9px; border-radius: 8px; cursor: pointer;
+  background: rgba(255,255,255,0.05); border: 1px solid var(--border, #3a3a44); color: var(--text, #eee);
+}
+.platform-tile:hover { background: rgba(99,102,241,0.18); border-color: var(--accent, #6366f1); }
+.platform-tile:disabled { opacity: 0.5; cursor: default; }
+
+/* CapCut-style recent-projects grid */
+.project-grid-wrap { margin-bottom: 18px; }
+.project-grid-wrap.hidden { display: none; }
+.project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-top: 8px; }
+.project-card { background: var(--card, #1b1d24); border: 1px solid var(--border, #2a2c34); border-radius: 12px; overflow: hidden; }
+.project-thumb { position: relative; aspect-ratio: 9 / 16; background: #0d0e12; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.project-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.project-thumb-fallback { font-size: 34px; opacity: 0.5; }
+.project-thumb-badge { position: absolute; bottom: 6px; right: 6px; font-size: 10px; padding: 2px 6px; border-radius: 6px; background: rgba(0,0,0,0.65); color: #fff; }
+.project-card-body { padding: 8px 10px 10px; }
+.project-card-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.project-card-meta { margin: 2px 0 8px; }
+.project-card-actions { display: flex; gap: 6px; }
+.project-card-actions .btn { flex: 1; }
+.project-card-actions .btn-ghost { flex: 0 0 auto; }
 .install-progress { margin: 8px 0 4px; }
 .install-progress.hidden { display: none; }
 .btn-ghost { background: transparent; border: 1px solid var(--border, #3a3a44); color: var(--text-muted); }

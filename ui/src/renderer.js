@@ -802,6 +802,53 @@ function loadProjectList() {
     sidebarSelect.innerHTML = select.innerHTML;
     if (currentProjectId) sidebarSelect.value = currentProjectId;
   }
+  renderProjectGrid();
+}
+
+// CapCut-style saved-projects grid: thumbnail + name + clip count/duration + Open.
+function renderProjectGrid() {
+  const grid = document.getElementById('project-grid');
+  const wrap = document.getElementById('project-grid-wrap');
+  if (!grid) return;
+  const projects = readProjects().sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  if (!projects.length) {
+    if (wrap) wrap.classList.add('hidden');
+    grid.innerHTML = '';
+    return;
+  }
+  if (wrap) wrap.classList.remove('hidden');
+  grid.innerHTML = '';
+  projects.forEach((project) => {
+    const clips = project.clips || [];
+    const totalSecs = clips.reduce((a, c) => a + (Number(c && c.duration) || 0), 0);
+    const thumb = clips.find((c) => c && c.thumbnail_path);
+    const when = project.updatedAt ? new Date(project.updatedAt).toLocaleDateString() : '';
+    const card = document.createElement('div');
+    card.className = 'project-card';
+    card.innerHTML = `
+      <div class="project-thumb">${thumb
+        ? `<img alt="" src="${escapeHtml(fileUrl(thumb.thumbnail_path))}" loading="lazy" />`
+        : '<span class="project-thumb-fallback" aria-hidden="true">🎬</span>'}
+        <span class="project-thumb-badge">${clips.length} clip${clips.length === 1 ? '' : 's'}</span>
+      </div>
+      <div class="project-card-body">
+        <div class="project-card-name">${escapeHtml(project.name || 'Untitled project')}</div>
+        <div class="project-card-meta muted small">${Math.round(totalSecs)}s · ${escapeHtml(when)}${clips.length ? ' · ✅ Ready' : ''}</div>
+        <div class="project-card-actions">
+          <button class="btn btn-small btn-primary" data-open="${escapeHtml(project.id)}">Open</button>
+          <button class="btn btn-small btn-ghost" data-del="${escapeHtml(project.id)}">🗑</button>
+        </div>
+      </div>`;
+    card.querySelector('[data-open]').addEventListener('click', () => openProject(project.id));
+    card.querySelector('[data-del]').addEventListener('click', async () => {
+      const ok = await showConfirm(`Remove "${project.name || 'Untitled project'}" from your projects?`);
+      if (!ok) return;
+      writeProjects(readProjects().filter((p) => p.id !== project.id));
+      if (currentProjectId === project.id) currentProjectId = null;
+      loadProjectList();
+    });
+    grid.appendChild(card);
+  });
 }
 
 function saveProjectManifest(showMessage = false) {
@@ -1469,6 +1516,16 @@ function showResults(clips) {
   const resultsEl = document.getElementById('results');
   if (resultsEl) resultsEl.classList.remove('hidden');
 
+  // Ready-to-render summary (OpenClipper-style progress readout).
+  const summary = document.getElementById('results-summary');
+  if (summary) {
+    const n = generatedClips.length;
+    const totalSecs = generatedClips.reduce((a, c) => a + (Number(c.duration) || 0), 0);
+    summary.textContent = n
+      ? `✅ ${n} clip${n === 1 ? '' : 's'} ready to export · ${Math.round(totalSecs)}s total · TikTok / Reels / Shorts`
+      : 'No clips yet.';
+  }
+
   setWizardStep(4);
 }
 
@@ -1497,6 +1554,7 @@ function buildClipCard(clip, idx) {
       <div class="clip-headline">
         <div class="clip-title">${escapeHtml(title)}</div>
         <span class="virality-badge">🔥 Virality: ${score}/10</span>
+        <span class="ready-badge" title="Rendered and ready to export/share">✅ Ready</span>
       </div>
       <div class="virality-metrics">
         <span class="metric-pill">Hook: <strong>${escapeHtml(String(v.hook_score))}</strong></span>
@@ -1505,6 +1563,14 @@ function buildClipCard(clip, idx) {
       </div>
       <div class="clip-meta">${escapeHtml(String(clip.duration))}s duration</div>
       <div class="clip-desc">${escapeHtml(desc)}</div>
+      <div class="clip-platforms" role="group" aria-label="Export for platform">
+        <span class="platforms-label">Export for:</span>
+        <button class="platform-tile" data-action="platform" data-platform="TikTok" data-ratio="9:16" title="TikTok — 9:16">🎵 TikTok</button>
+        <button class="platform-tile" data-action="platform" data-platform="Reels" data-ratio="9:16" title="Instagram Reels — 9:16">📸 Reels</button>
+        <button class="platform-tile" data-action="platform" data-platform="Shorts" data-ratio="9:16" title="YouTube Shorts — 9:16">▶️ Shorts</button>
+        <button class="platform-tile" data-action="platform" data-platform="Instagram" data-ratio="4:5" title="Instagram feed — 4:5">🟪 IG Feed</button>
+        <button class="platform-tile" data-action="platform" data-platform="X" data-ratio="1:1" title="X / Twitter — 1:1">✖️ X</button>
+      </div>
     </div>
     <div class="clip-actions">
       <button class="btn btn-small" data-action="copy-hook" title="Copy hook title / opening line to clipboard">📋 Copy Hook</button>
@@ -1555,6 +1621,10 @@ function buildClipCard(clip, idx) {
         actionBtn.textContent = video.muted ? '🔇' : '🔊';
         break;
       case 'export': exportSingleClip(idx2); break;
+      case 'platform':
+        e.stopPropagation();
+        exportForPlatform(idx2, actionBtn.dataset.platform, actionBtn.dataset.ratio, actionBtn);
+        break;
     }
   });
 
@@ -2879,6 +2949,44 @@ function playErrorSound() {
 // ------------------------------------------------------------------
 // Multi-Aspect Export Pack (9:16, 1:1, 4:5, 16:9)
 // ------------------------------------------------------------------
+// Export one clip in a specific platform's preferred aspect ratio. Reuses the
+// proven multi-aspect endpoint with a single ratio so we don't duplicate render
+// logic. 9:16 platforms reuse the clip as-is; feed/landscape get a re-render.
+async function exportForPlatform(idx, platform, ratio, btnEl) {
+  const clip = generatedClips[idx];
+  if (!clip) return;
+  const original = btnEl ? btnEl.textContent : '';
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = '⏳'; }
+  showToast(`⏳ Exporting for ${platform} (${ratio})…`, 'info');
+  try {
+    const res = await fetch(`${serverUrl}/export/multi-aspect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clip_path: clip.output_file,
+        source_video: selectedVideo,
+        start_seconds: clip.start_time,
+        end_seconds: clip.end_time,
+        title: `${clip.title || 'clip'} [${platform}]`,
+        burn_captions: true,
+        subtitle_path: clip.ass_path || clip.srt_path,
+        aspect_ratios: [ratio],
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `Server returned ${res.status}`);
+    playSuccessSound();
+    const out = data.exports ? Object.values(data.exports)[0] : null;
+    showToast(`✅ ${platform} export ready`, 'success');
+    if (out) revealInFolder(out);
+  } catch (err) {
+    playErrorSound();
+    showAlert(`${platform} export failed: ${err.message}`);
+  } finally {
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = original; }
+  }
+}
+
 async function exportMultiAspectPack(idx) {
   const clip = generatedClips[idx];
   if (!clip) return;

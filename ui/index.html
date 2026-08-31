@@ -78,6 +78,13 @@
 
         <!-- STEP 1: Project & Video Input -->
         <div id="step-panel-1" class="wizard-panel active" role="tabpanel" aria-labelledby="wizard-step-btn-1">
+          <div id="project-grid-wrap" class="project-grid-wrap hidden">
+            <div class="card-head-row">
+              <h3>📁 Recent Projects</h3>
+              <span class="muted small">Pick up where you left off</span>
+            </div>
+            <div id="project-grid" class="project-grid"></div>
+          </div>
           <div class="card drop-zone" id="drop-zone" role="button" tabindex="0" aria-label="Drop video files here or activate to browse for a video">
             <div class="drop-content">
               <span class="drop-icon" aria-hidden="true">🎞️</span>
@@ -431,7 +438,7 @@
           <div class="results-header">
             <div>
               <h2>🔥 Viral Clips Generated</h2>
-              <p class="muted">AI-scored and cropped ready for TikTok, Reels & YouTube Shorts</p>
+              <p class="muted" id="results-summary">AI-scored and cropped ready for TikTok, Reels & YouTube Shorts</p>
             </div>
             <div class="export-actions">
               <button class="btn btn-secondary" id="step4-restart-btn">➕ New Clipping Project</button>
