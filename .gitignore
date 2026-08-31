@@ -29,5 +29,8 @@ gitstatus.txt
 # Local API token generated at runtime (never commit a secret)
 logs/api_token.txt
 
+# ML model weights downloaded on first use (YOLO etc.)
+*.pt
+
 # Pre-restore backup of the deleted stub + old UI files (local safety copy)
 _prerestore_backup/

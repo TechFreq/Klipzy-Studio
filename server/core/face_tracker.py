@@ -22,6 +22,126 @@ class FaceTracker:
         except Exception:
             self.model = None
 
+    # ------------------------------------------------------------------
+    # Gaming / reaction layout auto-detection
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _corner_of(cx: float, cy: float, w: int, h: int) -> str:
+        vert = "top" if cy < h / 2.0 else "bottom"
+        horiz = "left" if cx < w / 2.0 else "right"
+        return f"{vert}-{horiz}"
+
+    @staticmethod
+    def _facecam_candidate(boxes, w: int, h: int):
+        """
+        Given person boxes (x1,y1,x2,y2) in one frame, return the most likely
+        webcam-inset as (corner, scale, area), or None. A facecam is small
+        (< ~22% of frame), pushed toward a horizontal edge (not centered), and
+        typically near the top or bottom — i.e. a corner inset over gameplay.
+        """
+        frame_area = float(w * h) or 1.0
+        best = None
+        for (x1, y1, x2, y2) in boxes:
+            bw, bh = (x2 - x1), (y2 - y1)
+            area = bw * bh
+            frac = area / frame_area
+            if frac <= 0.0 or frac >= 0.22:
+                continue  # too big to be a webcam inset
+            cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+            # Must sit toward a side, not centered (a centered talking head is
+            # a normal interview, not gameplay+cam).
+            if w * 0.45 <= cx <= w * 0.55:
+                continue
+            corner = FaceTracker._corner_of(cx, cy, w, h)
+            if best is None or area < best[2]:
+                best = (corner, bw / float(w), area)
+        return best
+
+    def detect_gaming_layout(
+        self,
+        video_path: str,
+        start_time: float = 0.0,
+        end_time: Optional[float] = None,
+        sample_count: int = 12,
+    ) -> Dict:
+        """
+        Heuristic: is this gameplay footage with a webcam facecam in a corner?
+        Samples frames, detects people, and looks for a small person box that
+        stays in the SAME corner across most frames. Returns:
+          {is_gaming, cam_position, cam_scale, confidence}
+        Fully local (YOLO + OpenCV); degrades to is_gaming=False on any problem.
+        """
+        result = {"is_gaming": False, "cam_position": None, "cam_scale": 0.32, "confidence": 0.0}
+        try:
+            import cv2
+            import numpy as np
+        except ImportError:
+            return result
+        if not os.path.exists(video_path):
+            return result
+
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return result
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        if w <= 0 or h <= 0:
+            cap.release()
+            return result
+
+        s_frame = int(start_time * fps)
+        e_frame = int(end_time * fps) if end_time else (total or int(start_time * fps) + int(fps * 60))
+        span = max(1, e_frame - s_frame)
+        step = max(1, span // sample_count)
+
+        self._init_model()
+        corners: Dict[str, int] = {}
+        scales: List[float] = []
+        frames_seen = 0
+
+        for i in range(sample_count):
+            target = s_frame + i * step
+            cap.set(cv2.CAP_PROP_POS_FRAMES, target)
+            ret, frame = cap.read()
+            if not ret or not self.model:
+                continue
+            frames_seen += 1
+            try:
+                res = self.model(frame, verbose=False, classes=[0])
+                boxes = []
+                for b in res[0].boxes:
+                    xyxy = b.xyxy[0].cpu().numpy()
+                    boxes.append((float(xyxy[0]), float(xyxy[1]), float(xyxy[2]), float(xyxy[3])))
+                cand = self._facecam_candidate(boxes, w, h)
+                if cand:
+                    corner, scale, _ = cand
+                    corners[corner] = corners.get(corner, 0) + 1
+                    scales.append(scale)
+            except Exception:
+                continue
+
+        cap.release()
+        if not corners or frames_seen == 0:
+            return result
+
+        top_corner = max(corners, key=corners.get)
+        hits = corners[top_corner]
+        confidence = hits / float(frames_seen)
+        # Gaming if a small corner cam is present in most sampled frames.
+        if confidence >= 0.5:
+            import statistics
+            result.update({
+                "is_gaming": True,
+                "cam_position": top_corner,
+                "cam_scale": round(min(0.45, max(0.18, statistics.median(scales))), 2) if scales else 0.32,
+                "confidence": round(confidence, 2),
+            })
+        else:
+            result["confidence"] = round(confidence, 2)
+        return result
+
     def _calc_target_crop_width(self, width: int, height: int, aspect_ratio: str = "9:16") -> int:
         if aspect_ratio == "9:16":
             ratio = 9.0 / 16.0

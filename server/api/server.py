@@ -769,6 +769,27 @@ def api_detect_silence(req: DetectSilenceRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+class DetectLayoutRequest(BaseModel):
+    video_path: str
+    start_time: float = 0.0
+    end_time: Optional[float] = None
+
+
+@app.post("/tools/detect-layout")
+def api_detect_layout(req: DetectLayoutRequest):
+    """Auto-detect whether footage is gameplay + webcam facecam (reaction layout).
+    Returns {is_gaming, cam_position, cam_scale, confidence} so the UI can switch
+    to the reaction/PiP layout automatically."""
+    if not os.path.exists(req.video_path):
+        raise HTTPException(status_code=400, detail=f"Video not found: {req.video_path}")
+    from server.core.face_tracker import FaceTracker
+    try:
+        return FaceTracker().detect_gaming_layout(req.video_path, req.start_time, req.end_time)
+    except Exception as e:  # noqa: BLE001
+        # Detection is best-effort; never block ingest on it.
+        return {"is_gaming": False, "cam_position": None, "cam_scale": 0.32, "confidence": 0.0, "error": str(e)}
+
+
 @app.post("/tools/remove-silence", response_model=RemoveSilenceResponse)
 def api_remove_silence(req: RemoveSilenceRequest):
     """Auto-cut dead air silence from a video clip."""

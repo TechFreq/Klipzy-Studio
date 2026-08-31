@@ -698,6 +698,33 @@ function selectVideoFile(file) {
   document.getElementById('trim-panel').classList.remove('hidden');
   document.getElementById('cam-path').value = '';
   setWizardStep(1);
+
+  // Auto-detect gameplay + facecam and switch to the reaction layout for the user.
+  autoDetectLayout(selectedVideo);
+}
+
+// Ask the backend whether this looks like gameplay with a corner webcam. If so,
+// flip the layout to Gaming Reaction and preset the camera corner — the user can
+// still change it. Best-effort: silent if the server is offline or unsure.
+async function autoDetectLayout(videoPath) {
+  try {
+    const res = await fetch(`${serverUrl}/tools/detect-layout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video_path: videoPath, start_time: 0, end_time: 120 }),
+    });
+    if (!res.ok) return;
+    const d = await res.json();
+    if (!d.is_gaming) return;
+    const layout = document.getElementById('trim-layout');
+    if (layout) {
+      layout.value = 'game_reaction';
+      layout.dispatchEvent(new Event('change'));  // reveal cam options + ratio
+    }
+    const camPos = document.getElementById('cam-position');
+    if (camPos && d.cam_position) camPos.value = d.cam_position;
+    showToast(`🎮 Gaming + facecam detected (${Math.round((d.confidence || 0) * 100)}%) — switched to Reaction layout`, 'info');
+  } catch (_) { /* detection is optional */ }
 }
 
 async function handleBatchVideoDrop(files) {
