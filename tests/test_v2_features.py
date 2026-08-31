@@ -187,3 +187,28 @@ def test_audio_energy_respects_min_duration(tmp_path):
     assert isinstance(out, list)
     for c in out:
         assert c.duration >= 5.0, "energy clip must never be a sub-second fragment"
+
+
+# ---------------------------------------------------------------------------
+# Active-speaker: head-region motion picks the talker
+# ---------------------------------------------------------------------------
+def test_face_region_motion_detects_movement():
+    """A changing head band reads higher motion than a static one."""
+    import numpy as np
+    from server.core.face_tracker import FaceTracker
+
+    a = np.zeros((200, 200), dtype=np.uint8)
+    moved = a.copy()
+    moved[0:90, :] = 255  # top ~45% (head/mouth band) changes
+    box = (0, 0, 200, 200)
+
+    moving = FaceTracker._face_region_motion(a, moved, box)
+    static = FaceTracker._face_region_motion(a, a.copy(), box)
+    assert moving > static
+    assert static == 0.0
+
+
+def test_face_region_motion_is_safe_on_bad_input():
+    from server.core.face_tracker import FaceTracker
+    # Mismatched / empty regions must not raise, just return 0.0
+    assert FaceTracker._face_region_motion(None, None, (0, 0, 10, 10)) == 0.0

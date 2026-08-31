@@ -36,6 +36,31 @@ class FaceTracker:
         return int(height * ratio)
 
 
+    @staticmethod
+    def _face_region_motion(gray_a, gray_b, xyxy) -> float:
+        """
+        Mean per-pixel motion in the head region of a person box, comparing two
+        nearby frames. Talking mouths + head motion light this up, so it's a
+        cheap, fully-local proxy for "who is the active speaker" — no extra model.
+        Returns 0.0 on any problem.
+        """
+        try:
+            x1, y1, x2, y2 = [int(v) for v in xyxy]
+            h = y2 - y1
+            # Head/face band = top ~45% of the person box (where the mouth is).
+            fy1 = max(0, y1)
+            fy2 = max(fy1 + 1, y1 + int(h * 0.45))
+            fx1 = max(0, x1)
+            fx2 = max(fx1 + 1, x2)
+            ra = gray_a[fy1:fy2, fx1:fx2]
+            rb = gray_b[fy1:fy2, fx1:fx2]
+            if ra.size == 0 or ra.shape != rb.shape:
+                return 0.0
+            import numpy as np
+            return float(np.mean(np.abs(ra.astype("int16") - rb.astype("int16"))))
+        except Exception:
+            return 0.0
+
     def get_speaker_center_x(
         self,
         video_path: str,
@@ -44,8 +69,14 @@ class FaceTracker:
         aspect_ratio: str = "9:16",
     ) -> Optional[int]:
         """
-        Samples frames to find optimal horizontal crop offset for active speaker framing.
-        Handles single and multi-speaker setups with prominence weighting and temporal clustering.
+        Find the optimal horizontal crop offset, biased toward the ACTIVE SPEAKER.
+
+        For each sampled point we grab two adjacent frames, detect people, and
+        measure head-region motion for each. When several people are on screen,
+        the one whose face is moving (talking) wins the frame; if nobody is
+        clearly moving, we fall back to the most prominent (largest) person —
+        the previous behaviour. Picks are aggregated with a motion-weighted
+        median so the crop tracks whoever speaks most across the clip.
         """
         try:
             import cv2
@@ -63,6 +94,14 @@ class FaceTracker:
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        # OpenCV's bundled decoder can't read every codec (notably HEVC/iPhone
+        # .MOV on many builds); it then reports 0x0. Returning None lets the
+        # renderer center-crop instead of slicing the left edge (crop_x=0).
+        if width <= 0 or height <= 0:
+            cap.release()
+            return None
+
         target_crop_width = self._calc_target_crop_width(width, height, aspect_ratio)
 
         if target_crop_width >= width:
@@ -88,32 +127,56 @@ class FaceTracker:
             ret, frame = cap.read()
             if not ret:
                 break
+            # Second frame a beat later for the motion diff (talking cadence).
+            ret2, frame2 = cap.read()
             if not self.model:
                 continue
 
             try:
                 results = self.model(frame, verbose=False, classes=[0])
                 boxes = results[0].boxes
-                if len(boxes) > 0:
-                    scored_boxes = []
-                    for b in boxes:
-                        xyxy = b.xyxy[0].cpu().numpy()
-                        area = float((xyxy[2] - xyxy[0]) * (xyxy[3] - xyxy[1]))
-                        center_x = float((xyxy[0] + xyxy[2]) / 2.0)
-                        scored_boxes.append((area, center_x))
+                if len(boxes) == 0:
+                    continue
 
-                    scored_boxes.sort(key=lambda item: item[0], reverse=True)
-                    top_area, top_center = scored_boxes[0]
+                gray_a = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if ret2 else None
+                gray_b = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY) if ret2 else None
 
-                    if len(scored_boxes) >= 2:
-                        second_area, second_center = scored_boxes[1]
-                        if second_area >= 0.55 * top_area:
-                            speaker_span = abs(top_center - second_center)
-                            if speaker_span <= target_crop_width * 0.85:
-                                top_center = (top_center + second_center) / 2.0
+                scored = []  # (area, center_x, motion)
+                for b in boxes:
+                    xyxy = b.xyxy[0].cpu().numpy()
+                    area = float((xyxy[2] - xyxy[0]) * (xyxy[3] - xyxy[1]))
+                    center_x = float((xyxy[0] + xyxy[2]) / 2.0)
+                    motion = (
+                        self._face_region_motion(gray_a, gray_b, xyxy)
+                        if gray_a is not None else 0.0
+                    )
+                    scored.append((area, center_x, motion))
 
-                    centers_x.append(top_center)
-                    weights.append(top_area)
+                scored.sort(key=lambda s: s[0], reverse=True)  # largest first
+                top_area, top_center, _ = scored[0]
+                pick_center, pick_weight = top_center, top_area
+
+                if len(scored) >= 2:
+                    # Consider only reasonably-sized people as speaker candidates.
+                    big = [s for s in scored if s[0] >= 0.4 * top_area]
+                    motions = [s[2] for s in big]
+                    max_motion = max(motions) if motions else 0.0
+                    second_motion = sorted(motions, reverse=True)[1] if len(motions) > 1 else 0.0
+                    # A clear motion winner = the talker. "Clear" = meaningfully
+                    # more head motion than the next person.
+                    if max_motion >= 1.5 and max_motion >= 1.3 * max(second_motion, 0.01):
+                        talker = max(big, key=lambda s: s[2])
+                        pick_center = talker[1]
+                        pick_weight = talker[0] * (1.0 + talker[2])
+                    else:
+                        # No clear talker: if two similar people are close together,
+                        # frame both (previous behaviour); else keep the largest.
+                        second_area, second_center, _ = scored[1]
+                        if second_area >= 0.55 * top_area and abs(top_center - second_center) <= target_crop_width * 0.85:
+                            pick_center = (top_center + second_center) / 2.0
+
+                centers_x.append(pick_center)
+                weights.append(pick_weight)
             except Exception:
                 continue
 
