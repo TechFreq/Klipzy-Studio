@@ -114,16 +114,21 @@ class Transcriber:
                 if "/" in self.model_size or "\\" in self.model_size:
                     mlx_model_id = self.model_size
                 else:
+                    # Use the "-mlx" suffixed repos: mlx-community publishes
+                    # every size under that name, whereas the bare names are
+                    # inconsistent (e.g. whisper-base / whisper-large-v3 return
+                    # 401/Not Found), which crashed the MLX backend and forced a
+                    # fallback to CPU faster-whisper.
                     mlx_model_map = {
-                        "tiny": "mlx-community/whisper-tiny",
-                        "base": "mlx-community/whisper-base",
-                        "small": "mlx-community/whisper-small",
-                        "medium": "mlx-community/whisper-medium",
-                        "large": "mlx-community/whisper-large-v3",
-                        "large-v2": "mlx-community/whisper-large-v2",
-                        "large-v3": "mlx-community/whisper-large-v3",
+                        "tiny": "mlx-community/whisper-tiny-mlx",
+                        "base": "mlx-community/whisper-base-mlx",
+                        "small": "mlx-community/whisper-small-mlx",
+                        "medium": "mlx-community/whisper-medium-mlx",
+                        "large": "mlx-community/whisper-large-v3-mlx",
+                        "large-v2": "mlx-community/whisper-large-v2-mlx",
+                        "large-v3": "mlx-community/whisper-large-v3-mlx",
                     }
-                    mlx_model_id = mlx_model_map.get(self.model_size, f"mlx-community/whisper-{self.model_size}")
+                    mlx_model_id = mlx_model_map.get(self.model_size, f"mlx-community/whisper-{self.model_size}-mlx")
                 self._model = mlx_model_id  # store model ID string for mlx_whisper.transcribe()
                 self._backend = "mlx"
                 return

@@ -50,7 +50,12 @@ pytest tests/ -q                  # 67 tests
 ## Not done yet (next-session backlog, roughly prioritized)
 1. **Push to GitHub + add CI** (run pytest + `node --check` + an endpoint-contract check
    on every push). This is the #1 safety item — the deletion/brace bugs would've been caught.
-2. **Apple Silicon / MLX** real testing on the Mac (code is in place; unproven on hardware).
+2. ~~**Apple Silicon / MLX** real testing on the Mac~~ — **DONE (2026-08-31).** Verified on
+   M-series hardware: `mlx` + `mlx_whisper` compute on the GPU (Metal), end-to-end
+   transcription confirmed. Fixed the MLX model repo IDs (the bare
+   `mlx-community/whisper-base` / `whisper-large-v3` names 401'd; switched all sizes to
+   the `-mlx` suffixed repos). Also: on macOS the plain Homebrew `ffmpeg` ships WITHOUT
+   libass — the app now installs `ffmpeg-full` and the Setup check verifies libass.
 3. **Active-speaker on horizontal multi-person footage** — verify the talker-tracking on a
    real landscape interview (both current test clips are already vertical).
 4. **Visual kill-feed / event detection** for shooters (beyond audio+motion) — more precise
@@ -59,6 +64,12 @@ pytest tests/ -q                  # 67 tests
    table-stakes gap vs competitors).
 6. **Install-All / big installs** could move to a background job for a nicer UX.
 7. Packaging: real installer needs PyInstaller or embeddable Python (see docs/dev/PACKAGING.md).
+8. **Linux support — UNVERIFIED (roadmap).** The code paths exist but have never been run on
+   a real Linux box: `scripts/run_macos.sh` doubles as the Linux launcher, install commands
+   use `apt`/pip, and transcription falls back to faster-whisper (CPU) since MLX is
+   Apple-only. Needs a real Linux test pass to confirm: FFmpeg **with libass** from `apt`
+   (Debian/Ubuntu builds normally include it), the faster-whisper CPU path, YOLO/ultralytics,
+   and that Electron launches. Until someone runs it there, treat Linux as best-effort.
 
 ## UI/UX fixes reported by user (for next session — mostly `ui/`)
 
