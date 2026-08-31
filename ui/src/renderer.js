@@ -45,6 +45,23 @@ function setWizardStep(stepNum) {
   if (stepNum === 2) {
     refreshPortraitCaptionPreview();
   }
+  // The step-3 spinner should only animate while a job is actually running.
+  // Landing on step 3 with no active job (e.g. navigating back after a finished
+  // run) must not show a perpetual spinner.
+  if (stepNum === 3 && !currentActiveJobId) {
+    setProcessingActive(false);
+  }
+}
+
+// Show/hide the processing spinner so it never spins when idle. When inactive,
+// the step-3 header shows a "done" state instead of an endless spinner.
+function setProcessingActive(active) {
+  const spinner = document.getElementById('processing-spinner');
+  if (spinner) spinner.classList.toggle('hidden', !active);
+  const title = document.getElementById('processing-video-title');
+  if (title && !active) {
+    title.textContent = 'Processing complete. Head to Generated Clips, or start a new project.';
+  }
 }
 
 function resetWizardToStep1() {
@@ -97,7 +114,7 @@ function showToast(message, type = 'info') {
   }, 3200);
 }
 
-function showCustomDialog({ title = 'Notification', message = '', isConfirm = false }) {
+function showCustomDialog({ title = 'Notification', message = '', isConfirm = false, openPath = null }) {
   return new Promise((resolve) => {
     const modal = document.getElementById('dialog-modal');
     const titleEl = document.getElementById('dialog-title');
@@ -105,6 +122,7 @@ function showCustomDialog({ title = 'Notification', message = '', isConfirm = fa
     const cancelBtn = document.getElementById('dialog-cancel-btn');
     const confirmBtn = document.getElementById('dialog-confirm-btn');
     const closeBtn = document.getElementById('dialog-close');
+    const openBtn = document.getElementById('dialog-open-folder-btn');
 
     if (!modal) {
       if (isConfirm) resolve(window.confirm(message));
@@ -123,6 +141,18 @@ function showCustomDialog({ title = 'Notification', message = '', isConfirm = fa
       confirmBtn.textContent = 'OK';
     }
 
+    // Optional "Open folder" affordance — reveals the exported file/folder in
+    // the OS file manager without closing the user out of the dialog.
+    const onOpen = () => revealInFolder(openPath);
+    if (openBtn) {
+      if (openPath) {
+        openBtn.classList.remove('hidden');
+        openBtn.addEventListener('click', onOpen);
+      } else {
+        openBtn.classList.add('hidden');
+      }
+    }
+
     modal.classList.remove('hidden');
 
     function cleanup(val) {
@@ -130,6 +160,7 @@ function showCustomDialog({ title = 'Notification', message = '', isConfirm = fa
       confirmBtn.removeEventListener('click', onConfirm);
       cancelBtn.removeEventListener('click', onCancel);
       closeBtn.removeEventListener('click', onCancel);
+      if (openBtn) openBtn.removeEventListener('click', onOpen);
       resolve(val);
     }
 
@@ -142,8 +173,8 @@ function showCustomDialog({ title = 'Notification', message = '', isConfirm = fa
   });
 }
 
-function showAlert(message, title = 'Notification') {
-  return showCustomDialog({ title, message, isConfirm: false });
+function showAlert(message, title = 'Notification', openPath = null) {
+  return showCustomDialog({ title, message, isConfirm: false, openPath });
 }
 
 function showConfirm(message, title = 'Please Confirm') {
@@ -445,20 +476,20 @@ function bindEvents() {
   document.getElementById('change-file')?.addEventListener('click', () => fileInput && fileInput.click());
   document.getElementById('save-project')?.addEventListener('click', saveCurrentProject);
   document.getElementById('project-list')?.addEventListener('change', (e) => {
+    if (e.target.value === '__new__') { e.target.value = ''; resetWizardToStep1(); return; }
     if (e.target.value) openProject(e.target.value);
   });
 
   // Clickable server-health footer -> jump to Setup & diagnostics so the user
   // can see what's healthy, what's missing, and what model suits their hardware.
   const healthBtn = document.getElementById('health-status-btn');
-  if (healthBtn) {
-    healthBtn.addEventListener('click', () => {
-      const setupNav = document.querySelector('.nav-item[data-view="setup"]');
-      if (setupNav) setupNav.click();      // reuse the normal nav switch
-      loadSetupPanel();                     // refresh diagnostics on the way in
-      document.getElementById('view-setup')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-  }
+  if (healthBtn) healthBtn.addEventListener('click', () => openSettings());
+
+  // Sidebar quick-access: Settings (consolidates deps/models/support), Queue,
+  // and a dedicated Support TechFreq entry.
+  document.getElementById('sidebar-settings-btn')?.addEventListener('click', () => openSettings());
+  document.getElementById('sidebar-queue-btn')?.addEventListener('click', openQueueModal);
+  document.getElementById('sidebar-support-btn')?.addEventListener('click', openSupport);
 
   // "📜 Logs" button in the header – opens the logs folder via Electron
   const openLogsBtn = document.getElementById('open-logs-folder');
@@ -485,6 +516,7 @@ function bindEvents() {
   const resetOutput = document.getElementById('reset-output-folder');
   if (resetOutput) resetOutput.addEventListener('click', resetOutputFolder);
   document.getElementById('sidebar-project-list')?.addEventListener('change', (e) => {
+    if (e.target.value === '__new__') { e.target.value = ''; resetWizardToStep1(); return; }
     if (e.target.value) openProject(e.target.value);
   });
   document.getElementById('delete-project')?.addEventListener('click', deleteCurrentProject);
@@ -498,12 +530,17 @@ function bindEvents() {
   document.getElementById('trim-layout')?.addEventListener('change', (e) => {
     const isReaction = e.target.value === 'game_reaction';
     document.getElementById('cam-options')?.classList.toggle('hidden', !isReaction);
+    if (isReaction) updateCamPositionUI();
+    // Suggested action moments are a gaming-focused affordance.
+    document.getElementById('suggested-moments')?.classList.toggle('hidden', !isReaction);
     // Reaction PiP is full-frame, so no smart-crop offset needed.
     applyTrimPreviewRatio(e.target.value);
     const tv = document.getElementById('trim-video');
     if (tv) tv.style.display = '';
   });
+  document.getElementById('cam-position')?.addEventListener('change', updateCamPositionUI);
   document.getElementById('pick-cam-btn')?.addEventListener('click', pickCameraClip);
+  document.getElementById('suggest-moments-btn')?.addEventListener('click', loadSuggestedMoments);
   document.getElementById('trim-video')?.addEventListener('loadedmetadata', () => {
     const tv = document.getElementById('trim-video');
     trimState.duration = (tv && tv.duration) || 0;
@@ -723,6 +760,7 @@ async function autoDetectLayout(videoPath) {
     }
     const camPos = document.getElementById('cam-position');
     if (camPos && d.cam_position) camPos.value = d.cam_position;
+    document.getElementById('suggested-moments')?.classList.remove('hidden');
     showToast(`🎮 Gaming + facecam detected (${Math.round((d.confidence || 0) * 100)}%) — switched to Reaction layout`, 'info');
   } catch (_) { /* detection is optional */ }
 }
@@ -779,7 +817,7 @@ function writeProjects(projects) {
 function loadProjectList() {
   const select = document.getElementById('project-list');
   if (!select) return;
-  select.innerHTML = '<option value="">Open saved project…</option>';
+  select.innerHTML = '<option value="">Open saved project…</option><option value="__new__">➕ Start New Project</option>';
   readProjects().sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || '')).forEach((project) => {
     const option = document.createElement('option');
     option.value = project.id;
@@ -866,6 +904,12 @@ function saveProjectManifest(showMessage = false) {
     fontSize: globalCaptionFontSize(),
     captionOptions: collectCaptionOptions(),
     outputFolder: document.getElementById('output-folder-input')?.value || '',
+    // Output layout/aspect so reopening a project restores the same 9:16 /
+    // gaming / aspect setup it was created with, not the defaults.
+    aspectRatio: document.getElementById('clip-aspect-ratio')?.value || '9:16',
+    layout: document.getElementById('trim-layout')?.value || 'vertical',
+    camPosition: document.getElementById('cam-position')?.value || 'bottom-right',
+    camScale: document.getElementById('cam-scale')?.value || '0.3',
     updatedAt: new Date().toISOString(),
   };
   currentProjectId = project.id;
@@ -892,6 +936,21 @@ function openProject(id) {
   currentProjectId = project.id;
   selectedVideo = project.source;
   if (project.outputFolder) saveOutputFolder(project.outputFolder);
+  // Restore the output layout/aspect the project was created with.
+  const aspectSel = document.getElementById('clip-aspect-ratio');
+  if (aspectSel && project.aspectRatio) aspectSel.value = project.aspectRatio;
+  const camScaleSel = document.getElementById('cam-scale');
+  if (camScaleSel && project.camScale) camScaleSel.value = project.camScale;
+  const layoutSel = document.getElementById('trim-layout');
+  if (layoutSel && project.layout) {
+    layoutSel.value = project.layout;
+    layoutSel.dispatchEvent(new Event('change'));  // reveal/hide cam-options
+  }
+  const camPosSel = document.getElementById('cam-position');
+  if (camPosSel && project.camPosition) {
+    camPosSel.value = project.camPosition;
+    camPosSel.dispatchEvent(new Event('change'));  // sync cam-clip/scale rows
+  }
   generatedClips = Array.isArray(project.clips) ? project.clips : [];
   document.getElementById('file-name').textContent = project.sourceName || project.source;
   document.getElementById('file-info').classList.remove('hidden');
@@ -1171,6 +1230,78 @@ function previewTrimSelection() {
   video.addEventListener('timeupdate', stopAt);
 }
 
+// Ask the backend for suggested action moments (loud + high-motion) and render
+// them as one-click buttons that load the moment into the trim selection.
+async function loadSuggestedMoments() {
+  if (!selectedVideo) {
+    showToast('Load a video first to detect action moments.', 'info');
+    return;
+  }
+  const btn = document.getElementById('suggest-moments-btn');
+  const list = document.getElementById('suggested-moments-list');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Detecting…'; }
+  if (list) list.innerHTML = '<p class="muted small">Scanning for gunfights, big plays & high-motion moments…</p>';
+  try {
+    const minD = parseFloat(document.getElementById('min-duration')?.value) || 15;
+    const maxD = parseFloat(document.getElementById('max-duration')?.value) || 45;
+    const res = await fetch(`${serverUrl}/tools/suggest-moments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video_path: selectedVideo, min_duration: minD, max_duration: maxD, max_moments: 6 }),
+    });
+    const data = await res.json().catch(() => ({}));
+    const moments = data.moments || [];
+    if (!moments.length) {
+      if (list) list.innerHTML = '<p class="muted small">No standout action moments found. Try the manual trimmer, or lower the minimum duration.</p>';
+      return;
+    }
+    if (list) {
+      list.innerHTML = '';
+      moments.forEach((m, i) => {
+        const b = document.createElement('button');
+        b.className = 'btn btn-small moment-chip';
+        b.type = 'button';
+        b.title = m.reason || 'Suggested moment';
+        b.textContent = `${m.title || `Moment ${i + 1}`} · ${fmtTrimTime(m.start)}–${fmtTrimTime(m.end)} (${Math.round(m.duration)}s)`;
+        b.addEventListener('click', () => applySuggestedMoment(m.start, m.end));
+        list.appendChild(b);
+      });
+    }
+    showToast(`🎯 Found ${moments.length} suggested moment${moments.length === 1 ? '' : 's'} — click one to load it.`, 'success');
+  } catch (err) {
+    if (list) list.innerHTML = `<p class="muted small">Couldn't detect moments: ${escapeHtml(err.message || String(err))}</p>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '✨ Detect moments'; }
+  }
+}
+
+// Load a suggested moment into the trim selection so the user can preview and
+// then "Add Trimmed Clip", or tweak the in/out handles first.
+function applySuggestedMoment(start, end) {
+  const dur = trimState.duration || 0;
+  let s = Math.max(0, Number(start) || 0);
+  let e = dur ? Math.min(dur, Number(end) || 0) : (Number(end) || 0);
+  if (e <= s) e = s + 1;
+  trimState.start = s;
+  trimState.end = e;
+  if (typeof window.updateTrimUI === 'function') window.updateTrimUI();
+  const tv = document.getElementById('trim-video');
+  if (tv) { try { tv.currentTime = s; } catch (_) { /* not seekable yet */ } }
+  showToast(`Loaded moment ${fmtTrimTime(s)}–${fmtTrimTime(e)} into the trimmer.`, 'info');
+}
+
+// "None" camera position = no facecam: the gameplay renders full-frame with no
+// PiP overlay, so the camera-clip picker and size are irrelevant. Hide them and
+// swap the helper hint so the no-facecam gaming path is obvious.
+function updateCamPositionUI() {
+  const pos = document.getElementById('cam-position')?.value;
+  const noCam = pos === 'none';
+  document.getElementById('cam-clip-row')?.classList.toggle('hidden', noCam);
+  document.getElementById('cam-scale-row')?.classList.toggle('hidden', noCam);
+  document.getElementById('cam-facecam-hint')?.classList.toggle('hidden', noCam);
+  document.getElementById('cam-none-hint')?.classList.toggle('hidden', !noCam);
+}
+
 async function pickCameraClip() {
   let camPath = null;
   if (window.clipperAPI && window.clipperAPI.selectCameraClip) {
@@ -1206,15 +1337,19 @@ async function addTrimmedClip() {
   }
 
   const layout = document.getElementById('trim-layout').value;
+  const camPosition = document.getElementById('cam-position').value;
+  // "None" facecam: don't send a camera clip, so the server renders full-frame
+  // gameplay with no PiP overlay even in the game_reaction layout.
+  const useCam = layout === 'game_reaction' && camPosition !== 'none';
   const payload = {
     video_path: selectedVideo,
     start_seconds: trimState.start,
     end_seconds: trimState.end,
     layout,
     aspect_ratio: layout === 'full' ? null : '9:16',
-    cam_video: layout === 'game_reaction' ? trimState.camVideo : null,
+    cam_video: useCam ? trimState.camVideo : null,
     cam_scale: parseFloat(document.getElementById('cam-scale').value || '0.3'),
-    cam_position: document.getElementById('cam-position').value,
+    cam_position: camPosition === 'none' ? 'bottom-right' : camPosition,
   };
 
   const btn = document.getElementById('add-trim-btn');
@@ -1299,6 +1434,7 @@ async function startClipping() {
   }
 
   setWizardStep(3);
+  setProcessingActive(true);  // show the spinner immediately; pollJob keeps it on
 
   const captionOpts = collectCaptionOptions();
 
@@ -1361,6 +1497,7 @@ let currentActiveJobId = null;
 function pollJob(jobId) {
   if (pollTimer) clearInterval(pollTimer);
   currentActiveJobId = jobId;
+  setProcessingActive(true);
 
   const cancelBtn = document.getElementById('cancel-active-job-btn');
   if (cancelBtn) {
@@ -1374,6 +1511,7 @@ function pollJob(jobId) {
   const stopPolling = () => {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     currentActiveJobId = null;
+    setProcessingActive(false);
     const cb = document.getElementById('cancel-active-job-btn');
     if (cb) cb.style.display = 'none';
   };
@@ -1507,7 +1645,7 @@ function showResults(clips) {
       grid.appendChild(buildClipCard(clip, idx));
     });
     if (!generatedClips.length) {
-      grid.innerHTML = '<div class="empty-state muted">No clips were generated. Try lowering the minimum duration or enabling more detectors.</div>';
+      renderClipsEmptyState(grid);
     }
   }
 
@@ -1528,6 +1666,23 @@ function showResults(clips) {
   setWizardStep(4);
 }
 
+// Rich empty-state for the generated-clips grid: gives the user a clear way out
+// (back to options / new project) instead of a dead-end blank page.
+function renderClipsEmptyState(grid) {
+  grid.innerHTML = `
+    <div class="empty-state muted">
+      <div class="empty-state-icon" aria-hidden="true">🎬</div>
+      <h3>No clips yet</h3>
+      <p>No clips were generated. Try lowering the minimum duration or enabling more detectors — or start a fresh project.</p>
+      <div class="empty-state-actions">
+        <button class="btn btn-secondary" id="empty-back-to-options">⬅️ Back to Clipping Options</button>
+        <button class="btn btn-primary" id="empty-new-project">➕ Start New Project</button>
+      </div>
+    </div>`;
+  grid.querySelector('#empty-back-to-options')?.addEventListener('click', () => setWizardStep(2));
+  grid.querySelector('#empty-new-project')?.addEventListener('click', resetWizardToStep1);
+}
+
 function buildClipCard(clip, idx) {
   const card = document.createElement('div');
   card.className = 'clip-card';
@@ -1546,8 +1701,12 @@ function buildClipCard(clip, idx) {
   card.innerHTML = `
     <div class="clip-video-wrap">
       <video preload="metadata" playsinline ${posterAttr}></video>
-      <button class="clip-mute-btn" type="button" data-action="mute" aria-label="Mute preview">🔊</button>
+      <button class="clip-mute-btn" type="button" data-action="mute" aria-label="Unmute preview" title="Unmute preview">🔇</button>
       <span class="clip-hover-hint">Hover to preview</span>
+      <div class="clip-seek-row">
+        <input type="range" class="clip-seek" min="0" max="1000" value="0" step="1" aria-label="Seek clip preview" />
+        <span class="clip-seek-time">0:00 / 0:00</span>
+      </div>
     </div>
     <div class="clip-info">
       <div class="clip-headline">
@@ -1597,8 +1756,51 @@ function buildClipCard(clip, idx) {
   const video = card.querySelector('video');
   video.src = fileUrl(clip.output_file);
   video.muted = true;
+  // The mute button reflects the real state: preview starts muted, so show 🔇.
+  const muteBtn = card.querySelector('.clip-mute-btn');
+  const syncMuteBtn = () => {
+    if (!muteBtn) return;
+    muteBtn.textContent = video.muted ? '🔇' : '🔊';
+    muteBtn.setAttribute('aria-label', video.muted ? 'Unmute preview' : 'Mute preview');
+    muteBtn.setAttribute('title', video.muted ? 'Unmute preview' : 'Mute preview');
+  };
+  syncMuteBtn();
+
+  // Scrub bar: mirror playback position and let the user seek/preview any point.
+  const seek = card.querySelector('.clip-seek');
+  const seekTime = card.querySelector('.clip-seek-time');
+  const fmtClock = (s) => {
+    if (!Number.isFinite(s) || s < 0) s = 0;
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${String(sec).padStart(2, '0')}`;
+  };
+  const updateSeekLabel = () => {
+    if (seekTime) seekTime.textContent = `${fmtClock(video.currentTime)} / ${fmtClock(video.duration)}`;
+  };
+  video.addEventListener('loadedmetadata', updateSeekLabel);
+  video.addEventListener('timeupdate', () => {
+    if (seek && video.duration && !seek.dataset.scrubbing) {
+      seek.value = String(Math.round((video.currentTime / video.duration) * 1000));
+    }
+    updateSeekLabel();
+  });
+  if (seek) {
+    const scrub = () => {
+      if (!video.duration) return;
+      seek.dataset.scrubbing = '1';
+      video.currentTime = (Number(seek.value) / 1000) * video.duration;
+      updateSeekLabel();
+    };
+    // Don't let clicks on the scrubber bubble up to the card action handler.
+    seek.addEventListener('click', (e) => e.stopPropagation());
+    seek.addEventListener('input', scrub);
+    seek.addEventListener('change', () => { delete seek.dataset.scrubbing; });
+    seek.addEventListener('mouseup', () => { delete seek.dataset.scrubbing; });
+  }
+
   card.addEventListener('mouseenter', () => video.play().catch(() => {}));
-  card.addEventListener('mouseleave', () => { video.pause(); video.currentTime = 0; });
+  card.addEventListener('mouseleave', () => { video.pause(); });
 
   card.addEventListener('click', (e) => {
     const actionBtn = e.target.closest('[data-action]');
@@ -1617,7 +1819,9 @@ function buildClipCard(clip, idx) {
       case 'mute':
         e.stopPropagation();
         video.muted = !video.muted;
-        actionBtn.textContent = video.muted ? '🔇' : '🔊';
+        // If the user unmutes while hovering, make sure audio is actually playing.
+        if (!video.muted && video.paused) video.play().catch(() => {});
+        syncMuteBtn();
         break;
       case 'export': exportSingleClip(idx2); break;
       case 'platform':
@@ -1630,9 +1834,9 @@ function buildClipCard(clip, idx) {
   const deleteBtn = card.querySelector('[data-action="delete"]');
   deleteBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
-    const confirmed = await showConfirm(`Delete "${title || 'this clip'}" from the grid?`);
+    const confirmed = await showConfirm(`Delete "${title || 'this clip'}"? This removes it from the project and deletes its rendered files.`);
     if (!confirmed) return;
-    deleteClip(idx);
+    deleteClip(parseInt(card.dataset.clipIdx, 10));
   });
 
   return card;
@@ -1717,15 +1921,44 @@ async function openSocialMetaModal(idx) {
   }
 }
 
-function deleteClip(idx) {
+// Collect the rendered artifacts (video + sidecar subs) for a single clip so a
+// grid deletion can remove the files too, not just the card + manifest entry.
+function clipArtifactPaths(clip) {
+  const paths = [];
+  if (!clip) return paths;
+  if (clip.output_file) paths.push(clip.output_file);
+  if (clip.srt_path) paths.push(clip.srt_path);
+  if (clip.vtt_path) paths.push(clip.vtt_path);
+  if (clip.ass_path) paths.push(clip.ass_path);
+  if (clip.thumbnail_path) paths.push(clip.thumbnail_path);
+  return paths;
+}
+
+async function deleteClip(idx) {
   if (!generatedClips.length) return;
-  generatedClips.splice(idx, 1);
+  const [removed] = generatedClips.splice(idx, 1);
+  // Remove the clip from the saved project AND delete its rendered footage.
+  // The server only deletes inside the output folder, never the source video.
   saveCurrentProjectSilently();
+  const paths = clipArtifactPaths(removed);
+  if (paths.length) {
+    try {
+      await fetch(`${serverUrl}/project/delete`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paths }),
+      });
+    } catch (_) { /* card + manifest removal still proceed */ }
+  }
   const grid = document.getElementById('clips-grid');
   grid.innerHTML = '';
   generatedClips.forEach((clip, i) => grid.appendChild(buildClipCard(clip, i)));
+  const summary = document.getElementById('results-summary');
   if (!generatedClips.length) {
-    document.getElementById('results').classList.add('hidden');
+    renderClipsEmptyState(grid);
+    if (summary) summary.textContent = 'No clips yet.';
+  } else if (summary) {
+    const totalSecs = generatedClips.reduce((a, c) => a + (Number(c.duration) || 0), 0);
+    summary.textContent = `✅ ${generatedClips.length} clip${generatedClips.length === 1 ? '' : 's'} ready to export · ${Math.round(totalSecs)}s total · TikTok / Reels / Shorts`;
   }
 }
 
@@ -1758,7 +1991,7 @@ async function exportProject(format) {
     const data = await res.json();
     if (res.ok) {
       playSuccessSound();
-      showAlert(`✅ ${data.message}\nSaved at: ${data.export_path}`);
+      showAlert(`✅ ${data.message}\nSaved at: ${data.export_path}`, 'Export Complete', data.export_path || null);
     } else {
       playErrorSound();
       showAlert(`Export failed: ${data.detail}`);
@@ -1802,7 +2035,7 @@ async function exportStandaloneAsset() {
     const data = await res.json();
     if (res.ok) {
       playSuccessSound();
-      showAlert(`✅ ${data.message}\nSaved at: ${data.export_path}`);
+      showAlert(`✅ ${data.message}\nSaved at: ${data.export_path}`, 'Export Complete', data.export_path || null);
     } else {
       playErrorSound();
       showAlert(`Standalone export failed: ${data.detail}`);
@@ -1870,7 +2103,10 @@ window.exportSingleClip = async function (clipIndex) {
     const data = await res.json();
     if (res.ok) {
       playSuccessSound();
-      showAlert(`✅ ${data.message}\nSaved at: ${data.export_path}`);
+      // /export/clip-bundle returns export_dir + video_path (not export_path):
+      // reading export_path here is what produced the "Saved at: undefined" bug.
+      const savedPath = data.export_dir || data.video_path || '';
+      showAlert(`✅ ${data.message}\nSaved at: ${savedPath}`, 'Export Complete', savedPath || null);
     } else {
       playErrorSound();
       showAlert(`Export failed: ${data.detail}`);
@@ -1915,7 +2151,7 @@ async function exportCompileReel() {
     const data = await res.json();
     if (res.ok) {
       playSuccessSound();
-      showAlert(`✅ ${data.message}\nSaved at: ${data.export_path}`);
+      showAlert(`✅ ${data.message}\nSaved at: ${data.export_path}`, 'Export Complete', data.export_path || null);
     } else {
       playErrorSound();
       showAlert(`Compile failed: ${data.detail}`);
@@ -2390,10 +2626,14 @@ async function sendChat() {
   const message = input.value.trim();
   if (!message) return;
 
-  const messagesEl = document.getElementById('chat-messages');
+  const sendBtn = document.getElementById('chat-send');
   appendMessage('user', message);
   input.value = '';
+  if (sendBtn) sendBtn.disabled = true;
 
+  // Show an animated "typing" bubble while the local model composes a reply,
+  // so the chat isn't silent between send and response.
+  const typingEl = showTypingIndicator();
   try {
     const res = await fetch(`${serverUrl}/chat`, {
       method: 'POST',
@@ -2401,10 +2641,29 @@ async function sendChat() {
       body: JSON.stringify({ message }),
     });
     const data = await res.json();
+    typingEl?.remove();
     appendMessage('bot', data.reply);
   } catch (e) {
+    typingEl?.remove();
     appendMessage('bot', '⚠️ Could not reach the AI server. Is it running?');
+  } finally {
+    if (sendBtn) sendBtn.disabled = false;
+    input.focus();
   }
+}
+
+// Appends a bot "typing…" bubble with three animated dots and returns the
+// element so the caller can remove it when the real reply arrives.
+function showTypingIndicator() {
+  const messagesEl = document.getElementById('chat-messages');
+  if (!messagesEl) return null;
+  const div = document.createElement('div');
+  div.className = 'chat-message bot chat-typing';
+  div.setAttribute('aria-label', 'Assistant is typing');
+  div.innerHTML = '<div class="bubble typing-bubble"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div>';
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div;
 }
 
 function appendMessage(role, text) {
@@ -2627,10 +2886,13 @@ async function loadAiModels(statusData) {
   }
 }
 
+let supportLinks = {};
+
 function loadSupportLinks() {
   fetch(`${serverUrl}/api/setup/support`)
     .then((r) => r.json())
     .then((s) => {
+      supportLinks = s || {};
       const map = { 'support-paypal': s.paypal, 'support-beacons': s.beacons, 'support-star': s.star, 'support-issues': s.issues };
       Object.entries(map).forEach(([id, url]) => {
         const el = document.getElementById(id);
@@ -2638,6 +2900,29 @@ function loadSupportLinks() {
       });
     })
     .catch(() => {});
+}
+
+// Single entry point for "Settings" — the Setup view already consolidates
+// hardware, dependencies, model management and support, so route there.
+function openSettings() {
+  const setupNav = document.querySelector('.nav-item[data-view="setup"]');
+  if (setupNav) setupNav.click();   // reuse the normal nav switch
+  loadSetupPanel();                 // refresh diagnostics on the way in
+  document.getElementById('view-setup')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Support TechFreq: open the best available external link (my links hub, else
+// donate). If we don't have the URLs yet, fall back to the Setup support card.
+function openSupport() {
+  const url = supportLinks.beacons || supportLinks.paypal || supportLinks.star;
+  if (url && window.open) {
+    window.open(url, '_blank', 'noopener');
+    return;
+  }
+  // Links not loaded yet — make sure they get fetched, then land on Setup.
+  openSettings();
+  loadSupportLinks();
+  showToast('💙 Thanks for supporting TechFreq! Support links are in Setup.', 'info');
 }
 
 function renderHardware(data) {
@@ -3034,7 +3319,8 @@ async function exportMultiAspectPack(idx) {
     if (res.ok) {
       playSuccessSound();
       showToast(`✅ Multi-Aspect Pack exported successfully!`, 'success');
-      showAlert(`✅ Multi-Aspect Pack exported:\n${Object.entries(data.exports).map(([k, v]) => `• ${k}: ${v}`).join('\n')}`);
+      const firstOut = data.exports ? Object.values(data.exports)[0] : null;
+      showAlert(`✅ Multi-Aspect Pack exported:\n${Object.entries(data.exports).map(([k, v]) => `• ${k}: ${v}`).join('\n')}`, 'Export Complete', firstOut || null);
     } else {
       playErrorSound();
       showAlert(`Multi-aspect export failed: ${data.detail}`);
@@ -3388,48 +3674,68 @@ async function refreshQueueList() {
 
     // Update queue badge count (active or queued jobs)
     const activeCount = jobs.filter(j => j.status === 'queued' || j.status === 'processing').length;
-    const badge = document.getElementById('queue-badge');
-    if (badge) {
-      badge.textContent = String(activeCount);
-      badge.classList.toggle('hidden', activeCount === 0);
-    }
+    updateQueueBadges(activeCount);
 
     const summary = document.getElementById('queue-summary-text');
     if (summary) {
-      summary.textContent = `${activeCount} running / queued (${jobs.length} total in session)`;
+      const done = jobs.filter(j => j.status === 'completed').length;
+      const failed = jobs.filter(j => j.status === 'failed' || j.status === 'cancelled').length;
+      const parts = [`${activeCount} active`];
+      if (done) parts.push(`${done} done`);
+      if (failed) parts.push(`${failed} stopped`);
+      summary.textContent = `${parts.join(' · ')} — ${jobs.length} total this session`;
     }
 
     const list = document.getElementById('queue-list');
     if (!list) return;
 
     if (!jobs.length) {
-      list.innerHTML = '<div class="empty-state muted">No jobs currently in queue.</div>';
+      list.innerHTML = `
+        <div class="empty-state muted">
+          <div class="empty-state-icon" aria-hidden="true">📭</div>
+          <h3>Queue is empty</h3>
+          <p>Background rendering jobs appear here. Drop multiple videos at once, or start a clip while another is running, and they'll line up.</p>
+        </div>`;
       return;
     }
+
+    const STATUS_META = {
+      queued: { icon: '⏳', label: 'Queued' },
+      processing: { icon: '⚙️', label: 'Processing' },
+      completed: { icon: '✅', label: 'Completed' },
+      failed: { icon: '❌', label: 'Failed' },
+      cancelled: { icon: '🚫', label: 'Cancelled' },
+    };
 
     list.innerHTML = '';
     jobs.slice().reverse().forEach(job => {
       const item = document.createElement('div');
-      item.className = 'queue-item';
+      const status = String(job.status || '').toLowerCase();
+      const statusClass = `status-${status.replace(/[^a-z0-9_-]/gi, '')}`;
+      item.className = `queue-item ${statusClass}`;
 
-      const statusClass = `status-${String(job.status).replace(/[^a-z0-9_-]/gi, '')}`;
-      const isRunning = job.status === 'processing' || job.status === 'queued';
+      const isRunning = status === 'processing' || status === 'queued';
       // Clamp progress to a real 0-100 number before it lands in a style attr.
       const pct = Math.max(0, Math.min(100, Number(job.progress) || 0));
       const jobId = String(job.job_id || '');
+      const meta = STATUS_META[status] || { icon: '•', label: job.status || 'Unknown' };
+      const clipCount = Array.isArray(job.clips) ? job.clips.length : (job.clip_count || null);
+      const srcName = job.source_name || job.video_name || (job.video_path
+        ? String(job.video_path).replace(/\\/g, '/').split('/').pop()
+        : `Job #${jobId.slice(0, 8)}`);
 
       item.innerHTML = `
         <div class="queue-item-header">
-          <span class="queue-item-title">Job #${escapeHtml(jobId.slice(0, 8))}</span>
-          <span class="queue-item-badge ${statusClass}">${escapeHtml(job.status)}</span>
+          <span class="queue-item-title" title="${escapeHtml(srcName)}">${escapeHtml(srcName)}</span>
+          <span class="queue-item-badge ${statusClass}">${meta.icon} ${escapeHtml(meta.label)}</span>
         </div>
-        <div class="queue-item-step">${escapeHtml(job.step || 'Waiting in line...')} (${pct}%)</div>
-        <div class="queue-progress-bar">
+        <div class="queue-item-step">${escapeHtml(job.step || (isRunning ? 'Waiting in line…' : ''))}${isRunning ? ` · ${pct}%` : (clipCount != null ? ` · ${clipCount} clip${clipCount === 1 ? '' : 's'}` : '')}</div>
+        <div class="queue-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}">
           <div class="queue-progress-fill" style="width: ${pct}%;"></div>
         </div>
         <div class="queue-item-actions">
           ${isRunning ? `<button class="btn btn-small btn-danger" data-cancel-job="${escapeHtml(jobId)}">🛑 Cancel</button>` : ''}
-          ${job.status === 'completed' ? `<button class="btn btn-small btn-primary" data-view-job="${escapeHtml(jobId)}">👁️ View Clips</button>` : ''}
+          ${status === 'completed' ? `<button class="btn btn-small btn-primary" data-view-job="${escapeHtml(jobId)}">👁️ View Clips</button>` : ''}
         </div>
       `;
 
@@ -3468,13 +3774,20 @@ queueBadgeInterval = setInterval(async () => {
     const data = await res.json();
     const jobs = data.jobs || [];
     const activeCount = jobs.filter(j => j.status === 'queued' || j.status === 'processing').length;
-    const badge = document.getElementById('queue-badge');
+    updateQueueBadges(activeCount);
+  } catch (e) {}
+}, 5000);
+
+// Keep both the header and sidebar queue badges in sync.
+function updateQueueBadges(activeCount) {
+  ['queue-badge', 'sidebar-queue-badge'].forEach((id) => {
+    const badge = document.getElementById(id);
     if (badge) {
       badge.textContent = String(activeCount);
       badge.classList.toggle('hidden', activeCount === 0);
     }
-  } catch (e) {}
-}, 5000);
+  });
+}
 
 // Initialize on DOM ready. The <script> tag sits at the end of <body>, so the
 // DOM is already parsed; DOMContentLoaded is still the single entry point so

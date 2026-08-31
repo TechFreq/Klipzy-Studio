@@ -8,17 +8,41 @@ from typing import Optional, List, Dict, Tuple
 import os
 
 
+def _models_dir() -> str:
+    """Repo-root ``models/`` directory for ML weights (YOLO etc.).
+
+    Resolved relative to this file (server/core/face_tracker.py -> repo root)
+    so the weight loads from the same place no matter what working directory
+    the server was launched from. Created on demand.
+    """
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    path = os.path.join(root, "models")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 class FaceTracker:
     def __init__(self, model_name: str = "yolov8n.pt"):
         self.model = None
         self.model_name = model_name
+
+    def _resolve_model_path(self) -> str:
+        """Absolute path to the weight inside ``models/``.
+
+        If the user passed a full path that already exists, keep it. Otherwise
+        pin the weight to ``models/`` so ultralytics downloads/loads it there
+        instead of dropping it in the current working directory.
+        """
+        if os.path.isabs(self.model_name) and os.path.exists(self.model_name):
+            return self.model_name
+        return os.path.join(_models_dir(), os.path.basename(self.model_name))
 
     def _init_model(self):
         if self.model is not None:
             return
         try:
             from ultralytics import YOLO
-            self.model = YOLO(self.model_name)
+            self.model = YOLO(self._resolve_model_path())
         except Exception:
             self.model = None
 

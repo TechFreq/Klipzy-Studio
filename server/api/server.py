@@ -34,7 +34,7 @@ from server.core.export_tools import export_fcpxml, export_edl, export_capcut_dr
 from server.core.ffmpeg_tools import (
     check_ffmpeg, get_media_info, get_video_duration, detect_hw_encoder, render_clip,
     export_clip_as, concat_clips, export_standalone_audio,
-    extract_best_thumbnail,
+    extract_best_thumbnail, extract_audio,
 )
 from server.logging_setup import setup_logging
 from server.auth import (
@@ -788,6 +788,59 @@ def api_detect_layout(req: DetectLayoutRequest):
     except Exception as e:  # noqa: BLE001
         # Detection is best-effort; never block ingest on it.
         return {"is_gaming": False, "cam_position": None, "cam_scale": 0.32, "confidence": 0.0, "error": str(e)}
+
+
+class SuggestMomentsRequest(BaseModel):
+    """Ask for transcript-free "action moments" (gunfights/explosions/big plays)
+    fused from audio loudness + visual motion — the semi-automatic gaming path."""
+    video_path: str
+    min_duration: float = 15.0
+    max_duration: float = 45.0
+    max_moments: int = 6
+
+
+@app.post("/tools/suggest-moments")
+def api_suggest_moments(req: SuggestMomentsRequest):
+    """Return suggested clippable action moments for gameplay footage so the UI
+    can offer one-click "clip this" buttons. Best-effort and fully local: fuses
+    audio energy (gunfire/explosions) with visual motion (frame differencing).
+    Returns {moments: [{start, end, duration, title, score, reason}]}."""
+    if not os.path.exists(req.video_path):
+        raise HTTPException(status_code=400, detail=f"Video not found: {req.video_path}")
+
+    from server.core.audio_energy import detect_action_highlights
+
+    # Extract a mono 16kHz WAV into a short-lived temp folder under the output
+    # root, then hand both audio + video to the fused detector.
+    tmp_dir = _ensure_output_root() / f"_suggest_{uuid.uuid4().hex[:8]}"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    tmp_audio = str(tmp_dir / "audio.wav")
+    try:
+        extract_audio(req.video_path, tmp_audio)
+        clips = detect_action_highlights(
+            audio_path=tmp_audio,
+            min_duration=req.min_duration,
+            max_duration=req.max_duration,
+            top_k=max(1, min(req.max_moments, 12)),
+            video_path=req.video_path,
+        )
+        moments = [
+            {
+                "start": c.start_time,
+                "end": c.end_time,
+                "duration": c.duration,
+                "title": c.title,
+                "score": c.score,
+                "reason": c.reason,
+            }
+            for c in clips
+        ]
+        return {"moments": moments, "count": len(moments)}
+    except Exception as e:  # noqa: BLE001
+        # Suggestions are optional; never hard-fail the UI.
+        return {"moments": [], "count": 0, "error": str(e)}
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @app.post("/tools/remove-silence", response_model=RemoveSilenceResponse)

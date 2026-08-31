@@ -1,0 +1,2 @@
+# ML model weights (YOLO etc.) live here.
+# The weights themselves (*.pt) are gitignored and auto-downloaded on first use.

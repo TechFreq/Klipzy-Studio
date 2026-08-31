@@ -61,6 +61,18 @@ pytest tests/ -q                  # 67 tests
 7. Packaging: real installer needs PyInstaller or embeddable Python (see docs/dev/PACKAGING.md).
 
 ## UI/UX fixes reported by user (for next session — mostly `ui/`)
+
+> **Session update 2026-08-31:** All 16 UI/UX items below were implemented
+> (`ui/renderer.js` + `index.html` + `styles.css`, plus an Electron
+> `setWindowOpenHandler` so support links open in the real browser, and a new
+> `/tools/suggest-moments` backend endpoint fusing audio energy + visual motion
+> for the gaming "suggested moments" buttons). `node --check` clean; 67 tests
+> pass. Also moved the loose `yolov8n.pt` into `models/` and pinned
+> `FaceTracker` to load weights from there regardless of CWD.
+>
+> Notable root cause: the "Export undefined" bug was `/export/clip-bundle`
+> returning `export_dir`/`video_path` while the renderer read `data.export_path`.
+
 These are observed bugs/rough edges in the running app. Verify each against
 `ui/src/renderer.js` + `ui/index.html` + `ui/src/styles.css`.
 

@@ -32,6 +32,11 @@
         <button class="nav-item" data-view="setup">⚙️ Setup</button>
       </nav>
       <div class="sidebar-footer">
+        <div class="sidebar-quick-actions">
+          <button id="sidebar-settings-btn" class="sidebar-action-btn" title="Open Settings — dependencies, models, queue & support">⚙️ Settings</button>
+          <button id="sidebar-queue-btn" class="sidebar-action-btn" title="Open the background rendering queue">📋 Queue <span id="sidebar-queue-badge" class="badge-count hidden">0</span></button>
+          <button id="sidebar-support-btn" class="sidebar-action-btn support" title="Support TechFreq — donate, links & GitHub">💙 Support TechFreq</button>
+        </div>
         <button id="health-status-btn" class="health-status-btn" title="Open Setup &amp; diagnostics — check dependencies, models, and what's best for your hardware" aria-label="Server status. Open Setup and diagnostics.">
           <span id="health-status" class="health-status" role="status" aria-live="polite">
             <span class="dot"></span> Checking server...
@@ -152,22 +157,23 @@
 
               <div id="cam-options" class="cam-options hidden">
                 <label class="option">
-                  <span>Reaction camera clip</span>
-                  <div class="cam-row">
-                    <input type="text" id="cam-path" placeholder="No camera clip selected" readonly />
-                    <button class="btn btn-small" id="pick-cam-btn">📹 Choose</button>
-                  </div>
-                </label>
-                <label class="option">
                   <span>Camera position</span>
                   <select id="cam-position">
+                    <option value="none">None — no facecam (full-frame gameplay)</option>
                     <option value="bottom-right" selected>Bottom Right</option>
                     <option value="bottom-left">Bottom Left</option>
                     <option value="top-right">Top Right</option>
                     <option value="top-left">Top Left</option>
                   </select>
                 </label>
-                <label class="option">
+                <label class="option" id="cam-clip-row">
+                  <span>Reaction camera clip</span>
+                  <div class="cam-row">
+                    <input type="text" id="cam-path" placeholder="No camera clip selected" readonly />
+                    <button class="btn btn-small" id="pick-cam-btn">📹 Choose</button>
+                  </div>
+                </label>
+                <label class="option" id="cam-scale-row">
                   <span>Camera size</span>
                   <select id="cam-scale">
                     <option value="0.2">Small (20%)</option>
@@ -175,11 +181,22 @@
                     <option value="0.4">Large (40%)</option>
                   </select>
                 </label>
-                <p class="muted small">Pick a webcam or face-cam recording that plays alongside your gameplay for a classic reaction layout.</p>
+                <p class="muted small" id="cam-facecam-hint">Pick a webcam or face-cam recording that plays alongside your gameplay for a classic reaction layout.</p>
+                <p class="muted small hidden" id="cam-none-hint">No facecam: the clip renders as full-frame gameplay with no picture-in-picture overlay.</p>
               </div>
               <div class="trim-actions">
                 <button class="btn btn-primary" id="add-trim-btn">➕ Add Trimmed Clip</button>
                 <button class="btn btn-secondary" id="trim-preview-btn">▶ Preview Selection</button>
+              </div>
+
+              <!-- Suggested action moments (semi-automatic gaming path) -->
+              <div id="suggested-moments" class="suggested-moments hidden">
+                <div class="suggested-moments-head">
+                  <span>🎯 Suggested action moments</span>
+                  <button class="btn btn-small btn-secondary" id="suggest-moments-btn" title="Detect gunfights, big plays & high-motion moments">✨ Detect moments</button>
+                </div>
+                <p class="muted small" id="suggested-moments-hint">Auto-find the most clippable moments (loud + high-motion) so you don't have to hunt for them.</p>
+                <div id="suggested-moments-list" class="suggested-moments-list"></div>
               </div>
             </div>
           </div>
@@ -404,7 +421,7 @@
       <div id="step-panel-3" class="wizard-panel">
         <div class="card processing-card">
           <div class="processing-header">
-            <div class="spinner-large"></div>
+            <div class="spinner-large" id="processing-spinner"></div>
             <div>
               <h2>⚡ AI Video Processing & Transcription</h2>
               <p class="muted" id="processing-video-title">Analyzing audio tracks, extracting transcriptions, and scoring viral clips...</p>
@@ -592,6 +609,7 @@
           <div class="modal-body">
             <p id="dialog-message" class="dialog-message"></p>
             <div class="dialog-actions">
+              <button class="btn btn-secondary hidden" id="dialog-open-folder-btn">📂 Open folder</button>
               <button class="btn btn-secondary hidden" id="dialog-cancel-btn">Cancel</button>
               <button class="btn btn-primary" id="dialog-confirm-btn">OK</button>
             </div>

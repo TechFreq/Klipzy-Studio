@@ -184,6 +184,17 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, '..', 'index.html'));
 
+  // Open external links (support/donate/GitHub, and anything with target=_blank)
+  // in the user's real browser instead of a bare in-app Electron window.
+  const { shell } = require('electron');
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) {
+      shell.openExternal(url);
+      return { action: 'deny' };
+    }
+    return { action: 'deny' };
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
