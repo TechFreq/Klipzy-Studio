@@ -60,6 +60,54 @@ pytest tests/ -q                  # 67 tests
 6. **Install-All / big installs** could move to a background job for a nicer UX.
 7. Packaging: real installer needs PyInstaller or embeddable Python (see docs/dev/PACKAGING.md).
 
+## UI/UX fixes reported by user (for next session — mostly `ui/`)
+These are observed bugs/rough edges in the running app. Verify each against
+`ui/src/renderer.js` + `ui/index.html` + `ui/src/styles.css`.
+
+**Export / saving**
+- [ ] **Export button exports "undefined"** — it should first prompt for a *save
+  folder* (use the Electron folder picker / `selectOutputFolder`), then export
+  the clip there. Wire the chosen path through the export request.
+- [ ] Add an **"Open folder"** button next to the OK/Close button on the
+  export/dialog screen (small affordance so the user can jump to the output).
+
+**Camera position / gaming layout**
+- [ ] Add a **"None"** option to the camera-position select (for when there is no
+  facecam), and show/handle it for the gaming-clip path.
+- [ ] When **Gaming layout** is selected, surface a few **suggested-moment buttons**
+  (from the action/motion detector) so the user isn't guessing what's clippable —
+  i.e. make it feel semi-automatic: "here are the detected action moments, clip these".
+
+**Clip preview**
+- [ ] **Mute icon shows wrong state**: preview starts muted but the icon doesn't
+  reflect it. Show the correct (muted) state *before* the user clicks so it's an
+  accurate toggle, and let audio play when unmuted.
+- [ ] **Add a duration / playback seek (scrub) bar** to the clip preview.
+
+**Wizard / navigation**
+- [ ] **Weird box over the wizard step buttons** — the step-process buttons render
+  with an odd box/outline (likely from the div→button change; check focus-outline
+  / button default styling in styles.css). Clean it up.
+- [ ] **Generated-clips page is empty with no way out** — add a clear **CTA to start
+  a new project / go back to step 1** and route there. (There's a `#step4-restart-btn`
+  already — verify it's wired and visible; add a prominent empty-state CTA.)
+- [ ] **Step 3 spinner keeps spinning after processing is done** — stop the
+  processing animation when the job completes/one navigates back to step 3.
+- [ ] Add a **"Start New Project"** entry (the projects dropdown / first menu should
+  offer "new project" then the rest of the steps flow from there).
+- [ ] **Opening a saved project should restore its output layout** (9:16 / gaming /
+  aspect it was created with) so the user isn't confused. Project manifest already
+  stores captionOptions/outputFolder; also persist + restore the layout + aspect.
+
+**Deletion sync**
+- [ ] **Deleting a clip from the generated grid** should also remove it from the
+  saved project (currently it only leaves the grid; the confirm text mentions
+  "delete from project from grid" — make it actually delete from the project too).
+
+**AI Edit Chat**
+- [ ] **Add a loading/typing animation** while the AI is responding (chat currently
+  shows nothing until the reply lands).
+
 ## Test footage on this machine
 - `C:\Users\ROGPC\Downloads\Street interviews day 2 Segment 3  BEN DJ MAYO.mp4` — 9:16 talking-head, ~50s (fast hook/title tests).
 - `C:\Users\ROGPC\Downloads\IMG_0499.MOV` — iPhone HEVC vertical, ~24min.
