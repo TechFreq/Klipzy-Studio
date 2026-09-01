@@ -35,7 +35,14 @@ def detect_highlights_audio_energy(
         return []
 
     try:
-        y, sr = librosa.load(audio_path, sr=16000, mono=True)
+        # librosa falls back from PySoundFile to audioread for some containers,
+        # emitting a UserWarning + a FutureWarning. Both are harmless here and
+        # just clutter the server log, so silence them for this load only.
+        import warnings
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning)
+            warnings.filterwarnings("ignore", category=FutureWarning)
+            y, sr = librosa.load(audio_path, sr=16000, mono=True)
         hop = int(sr * 0.5)
         rms = librosa.feature.rms(y=y, hop_length=hop)[0]
         times = librosa.times_like(rms, sr=sr, hop_length=hop)

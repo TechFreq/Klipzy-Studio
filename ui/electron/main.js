@@ -29,17 +29,28 @@ let reusedExistingServer = false;
 function findPython() {
   // Dev: venv at repo root (same location as `npm run dev` uses).
   // Packaged: venv + server copied to resourcesPath via electron-builder extraResources.
-  const candidates = [
-    path.join(__dirname, '..', '..', '.venv', 'Scripts', 'python.exe'),  // Windows dev venv
-    path.join(__dirname, '..', '..', '.venv', 'bin', 'python'),          // macOS/Linux dev venv
-    path.join(__dirname, '..', '..', 'venv', 'Scripts', 'python.exe'),   // Legacy Windows dev venv
-    path.join(__dirname, '..', '..', 'venv', 'bin', 'python'),           // Legacy macOS/Linux dev venv
-    path.join(process.resourcesPath, 'venv', 'Scripts', 'python.exe'),   // Windows packaged
-    path.join(process.resourcesPath, 'venv', 'bin', 'python'),           // macOS/Linux packaged
-    'python',
-    'python3',
+  const fs = require('fs');
+  const isWin = process.platform === 'win32';
+  // Only consider venv interpreters for THIS OS. Previously the Windows
+  // python.exe paths were tried first on macOS/Linux, spawning and failing with
+  // a scary "EACCES" line before falling back — build the right list per-OS.
+  const winVenv = [
+    path.join(__dirname, '..', '..', '.venv', 'Scripts', 'python.exe'),   // Windows dev venv
+    path.join(__dirname, '..', '..', 'venv', 'Scripts', 'python.exe'),    // Legacy Windows dev venv
+    path.join(process.resourcesPath || '', 'venv', 'Scripts', 'python.exe'), // Windows packaged
   ];
-  return candidates;
+  const nixVenv = [
+    path.join(__dirname, '..', '..', '.venv', 'bin', 'python'),           // macOS/Linux dev venv
+    path.join(__dirname, '..', '..', 'venv', 'bin', 'python'),            // Legacy macOS/Linux dev venv
+    path.join(process.resourcesPath || '', 'venv', 'bin', 'python'),      // macOS/Linux packaged
+  ];
+  // Only keep venv paths that actually exist, so we never spawn a wrong/missing
+  // interpreter just to log an error.
+  const venv = (isWin ? winVenv : nixVenv).filter((p) => {
+    try { return fs.existsSync(p); } catch { return false; }
+  });
+  // Bare interpreters as a last resort (correct one first for the platform).
+  return [...venv, isWin ? 'python' : 'python3', isWin ? 'python3' : 'python'];
 }
 
 function isPortFree(port) {
