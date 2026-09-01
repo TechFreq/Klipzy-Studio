@@ -380,19 +380,35 @@ OLLAMA_MODEL_CATALOG = [
      "note": "High-quality writing; 16GB+ recommended."},
     {"name": "qwen2.5:7b",  "label": "Qwen2.5 · 7B",   "params": "7B",   "size_gb": 4.7, "min_ram_gb": 16, "tier": "Quality",
      "note": "Excellent for short-form copy; 16GB+."},
-    {"name": "mistral:7b",  "label": "Mistral · 7B",   "params": "7B",   "size_gb": 4.1, "min_ram_gb": 16, "tier": "Quality",
+    {"name": "mistral:7b",  "label": "Mistral · 7B",   "params": "7B",   "size_gb": 4.1, "min_ram_gb": 16, "min_vram_gb": 6,  "tier": "Quality",
      "note": "Reliable 7B all-rounder."},
+    # --- Larger models: great on a strong GPU (>=12GB VRAM) or 32GB+ RAM ---
+    {"name": "qwen2.5:14b", "label": "Qwen2.5 · 14B",  "params": "14B",  "size_gb": 9.0,  "min_ram_gb": 16, "min_vram_gb": 12, "tier": "Pro",
+     "note": "Sweet spot for sharp hooks/titles; fits a 12GB GPU (RTX 3060) nicely."},
+    {"name": "gemma2:27b",  "label": "Gemma 2 · 27B",  "params": "27B",  "size_gb": 16.0, "min_ram_gb": 32, "min_vram_gb": 20, "tier": "Pro",
+     "note": "Excellent quality. Splits across a 12GB GPU + system RAM; wants 32GB+ RAM."},
+    {"name": "qwen2.5:32b", "label": "Qwen2.5 · 32B",  "params": "32B",  "size_gb": 20.0, "min_ram_gb": 32, "min_vram_gb": 24, "tier": "Pro",
+     "note": "Top-tier copywriting; runs on 32GB+ RAM (partly on CPU below 24GB VRAM)."},
+    {"name": "mixtral:8x7b","label": "Mixtral · 8x7B",  "params": "8x7B MoE", "size_gb": 26.0, "min_ram_gb": 32, "min_vram_gb": 24, "tier": "Pro",
+     "note": "Fast mixture-of-experts; needs 32GB+ RAM."},
+    {"name": "llama3.1:70b","label": "Llama 3.1 · 70B", "params": "70B",  "size_gb": 40.0, "min_ram_gb": 64, "min_vram_gb": 48, "tier": "Max",
+     "note": "Best quality here, but heavy: needs 64GB RAM and runs slowly without a big GPU."},
 ]
 
 
 def recommend_ollama_model() -> str:
-    """Best default Ollama model for this machine, by GPU VRAM / system RAM."""
+    """Best default Ollama model for this machine, by GPU VRAM + system RAM.
+
+    Bigger local models write noticeably better hooks/titles but need memory.
+    A ~14B is the sweet spot on a 12GB GPU (e.g. RTX 3060) or 48GB+ RAM; step
+    down for lighter machines so it still runs comfortably.
+    """
     gpu = detect_gpu()
     cpu = detect_cpu()
     vram = gpu.get("vram_gb") or 0
     ram = cpu.get("ram_gb") or 0
-    # A ~9B model is a real quality jump but needs headroom; only suggest it when
-    # there's a capable GPU or plenty of RAM. Otherwise prefer light, fast models.
+    if vram >= 12 or ram >= 48:
+        return "qwen2.5:14b"
     if (vram and vram >= 8) or ram >= 32:
         return "gemma2:9b"
     if ram >= 16:
@@ -410,6 +426,7 @@ def ollama_model_catalog() -> Dict:
     installed = list_ollama_models()
     installed_set = set(installed) | {m.split(":")[0] for m in installed}
     ram = detect_cpu().get("ram_gb") or 0
+    vram = detect_gpu().get("vram_gb") or 0
     models = []
     for m in OLLAMA_MODEL_CATALOG:
         models.append({
@@ -417,8 +434,12 @@ def ollama_model_catalog() -> Dict:
             "installed": (m["name"] in installed) or (m["name"] in installed_set),
             "recommended": m["name"] == recommended,
             "fits_ram": (not ram) or (ram >= m["min_ram_gb"]),
+            # Fully GPU-accelerated when there's enough VRAM; otherwise it still
+            # runs by splitting onto CPU/RAM (slower), which the note explains.
+            "fits_vram": bool(vram) and vram >= m.get("min_vram_gb", 0),
         })
-    return {"models": models, "recommended": recommended, "installed": installed, "ram_gb": ram}
+    return {"models": models, "recommended": recommended, "installed": installed,
+            "ram_gb": ram, "vram_gb": vram}
 
 
 def list_ollama_models() -> List[str]:

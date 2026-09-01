@@ -3105,7 +3105,7 @@ async function renderModelCatalog() {
         </div>
         <div class="model-badges">${badges.join('')}</div>
         <div class="model-note muted small">${escapeHtml(m.note)}</div>
-        <div class="model-meta muted small">${escapeHtml(m.params)} · ~${m.size_gb}GB download</div>
+        <div class="model-meta muted small">${escapeHtml(m.params)} · ~${m.size_gb}GB download${m.fits_vram ? ' · ⚡ fits your GPU' : ''}</div>
         <div class="model-card-actions">${actionBtn}</div>
       </div>`;
   }).join('');
