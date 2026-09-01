@@ -104,6 +104,33 @@ def choose_hook_and_title(full_text: str, fallback_index: int = 1) -> Tuple[str,
     return (hook_text, title)
 
 
+def rank_hook_candidates(full_text: str, n: int = 6) -> List[str]:
+    """Return up to n hook candidates drawn from the clip's own transcript, best
+    first. Uses the same sentence scoring as choose_hook_and_title so the
+    suggestions are grounded in what's actually said in the clip. Deduped and
+    trimmed to a punchy length so they read like hooks, not paragraphs.
+    """
+    sentences = _split_sentences(full_text)
+    if not sentences:
+        return []
+    # Score desc; ties keep the earlier sentence (so order still reflects the clip).
+    ranked = sorted(range(len(sentences)), key=lambda i: (_score_sentence(sentences[i]), -i), reverse=True)
+    out: List[str] = []
+    seen = set()
+    for i in ranked:
+        s = sentences[i].strip()
+        if len(s) > 90:
+            s = s[:87].rsplit(" ", 1)[0] + "…"
+        key = s.lower()
+        if not s or key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+        if len(out) >= max(1, n):
+            break
+    return out
+
+
 class HighlightDetector:
     def __init__(self, min_duration: float = 20.0, max_duration: float = 60.0):
         self.min_duration = min_duration

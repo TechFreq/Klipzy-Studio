@@ -1001,6 +1001,25 @@ def api_apply_overlay(req: OverlayRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+class SuggestHooksRequest(BaseModel):
+    text: str = ""
+    words: List[dict] = []
+    count: int = 6
+
+
+@app.post("/tools/suggest-hooks")
+def suggest_hooks(req: SuggestHooksRequest):
+    """Return hook-line candidates drawn from a clip's OWN transcript so the user
+    can rotate through alternatives instead of the single auto-picked hook.
+    """
+    from server.core.highlight_detector import rank_hook_candidates
+    text = (req.text or "").strip()
+    if not text and req.words:
+        text = " ".join(str(w.get("word", "")) for w in req.words if isinstance(w, dict) and w.get("word"))
+    hooks = rank_hook_candidates(text, max(1, min(int(req.count or 6), 12)))
+    return {"hooks": hooks}
+
+
 @app.post("/tools/suggest-emojis", response_model=EmojiSuggestResponse)
 def api_suggest_emojis(req: EmojiSuggestRequest):
     """Analyze transcript segments and return contextual emoji suggestions."""

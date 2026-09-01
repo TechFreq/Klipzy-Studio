@@ -24,6 +24,9 @@ let selectedVideo = null;
 let pollTimer = null;
 let generatedClips = [];
 let currentEditingClip = null;
+// Rotating intro-hook suggestions for the currently-edited clip.
+let hookCandidates = [];
+let hookCandidateIdx = -1;
 let currentProjectId = null;
 let currentWizardStep = 1;
 const PROJECTS_KEY = 'klipzy.projects.v1';
@@ -2654,6 +2657,13 @@ window.openCaptionEditor = function(clipIndex) {
   if (!clip) return;
   currentEditingClip = clip;
 
+  // Seed the intro-hook editor with this clip's current hook and reset the
+  // rotation cache so "Suggest another" pulls fresh candidates for this clip.
+  const hookInput = document.getElementById('edit-intro-hook');
+  if (hookInput) hookInput.value = clip.intro_caption || clip.hook_text || '';
+  hookCandidates = [];
+  hookCandidateIdx = -1;
+
   const modal = document.getElementById('caption-modal');
   const chipsContainer = document.getElementById('word-chips');
   chipsContainer.innerHTML = '';
@@ -2693,6 +2703,40 @@ window.openCaptionEditor = function(clipIndex) {
 
 document.getElementById('close-caption-modal')?.addEventListener('click', () => {
   document.getElementById('caption-modal').classList.add('hidden');
+});
+
+// Rotate through hook suggestions drawn from THIS clip's transcript. Fetches
+// once, then cycles on each click (wrapping around).
+document.getElementById('suggest-hook-btn')?.addEventListener('click', async () => {
+  if (!currentEditingClip) return;
+  const input = document.getElementById('edit-intro-hook');
+  const btn = document.getElementById('suggest-hook-btn');
+  if (!hookCandidates.length) {
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Thinking…'; }
+    try {
+      const res = await fetch(`${serverUrl}/tools/suggest-hooks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: currentEditingClip.full_text || currentEditingClip.reason || currentEditingClip.hook_text || '',
+          words: currentEditingClip.words || [],
+          count: 8,
+        }),
+      });
+      const data = await res.json();
+      hookCandidates = (data.hooks || []).filter(Boolean);
+    } catch (_) {
+      hookCandidates = [];
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '🔄 Suggest another'; }
+    }
+  }
+  if (!hookCandidates.length) {
+    showToast('No alternative hooks found for this clip', 'info');
+    return;
+  }
+  hookCandidateIdx = (hookCandidateIdx + 1) % hookCandidates.length;
+  if (input) input.value = hookCandidates[hookCandidateIdx];
 });
 
 document.getElementById('save-captions-btn')?.addEventListener('click', async () => {
@@ -2761,6 +2805,10 @@ document.getElementById('save-captions-btn')?.addEventListener('click', async ()
         start_seconds: currentEditingClip.start_time,
         end_seconds: currentEditingClip.end_time,
         aspect_ratio: document.getElementById('clip-aspect-ratio')?.value || '9:16',
+        // Burn the (possibly edited/rotated) intro hook for this clip.
+        intro_caption: (document.getElementById('edit-intro-hook')?.value || '').trim() || undefined,
+        intro_enabled: !!(document.getElementById('edit-intro-hook')?.value || '').trim(),
+        intro_caption_duration: parseFloat(document.getElementById('caption-intro-duration')?.value || '3') || 3,
         re_render: true,
       })
     });
@@ -2769,6 +2817,10 @@ document.getElementById('save-captions-btn')?.addEventListener('click', async ()
       // Update in-memory clip state
       currentEditingClip.words = editedWords;
       if (data.export_path) currentEditingClip.srt_path = data.export_path;
+      // Persist the chosen intro hook so it's reflected on the card and re-used.
+      const newHook = (document.getElementById('edit-intro-hook')?.value || '').trim();
+      currentEditingClip.intro_caption = newHook;
+      if (newHook) currentEditingClip.hook_text = newHook;
 
       // Reload the matching clip card so it plays the freshly burned captions.
       // Match on the card's own index rather than fuzzy src string-matching,
@@ -2782,6 +2834,9 @@ document.getElementById('save-captions-btn')?.addEventListener('click', async ()
           vid.src = fileUrl(currentEditingClip.output_file, true);
           vid.load();
         }
+        // Reflect the edited hook on the card immediately.
+        const descEl = card && card.querySelector('.clip-desc');
+        if (descEl && newHook) descEl.textContent = newHook;
       }
       saveCurrentProjectSilently();
       playSuccessSound();
