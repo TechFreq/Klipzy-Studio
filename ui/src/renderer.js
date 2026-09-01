@@ -88,6 +88,7 @@ function resetWizardToStep1() {
   const startBtn = document.getElementById('start-clipping');
   if (startBtn) startBtn.disabled = true;
   updateCurrentProjectUI('');  // no active project after a reset
+  renderProjectGrid();         // fresh wizard → recents may show again
   // The wizard lives inside #view-clipper. "New Project" can be triggered from
   // the always-visible sidebar while the user is on another view (Setup/Chat),
   // so switch back to the clipper view — otherwise resetting the wizard step
@@ -755,6 +756,7 @@ function selectVideoFile(file) {
   // If this video is being added to a project draft (or a re-opened project),
   // persist the source now so the entry stops being an empty stub.
   if (currentProjectId) saveProjectManifest(false);
+  renderProjectGrid();  // a video is loaded now — hide the step-1 recents
   document.getElementById('start-clipping').disabled = false;
   const nextBtn = document.getElementById('step1-next-btn');
   if (nextBtn) nextBtn.disabled = false;
@@ -883,7 +885,11 @@ function renderProjectGrid() {
   const wrap = document.getElementById('project-grid-wrap');
   if (!grid) return;
   const projects = readProjects().sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
-  if (!projects.length) {
+  // Recent projects belong on the Projects home (the "main menu"). Once the
+  // user is in a project (draft or opened) or has a video loaded, hide the
+  // step-1 recents so the wizard isn't cluttered with them.
+  const inProject = !!currentProjectId || !!selectedVideo;
+  if (!projects.length || inProject) {
     if (wrap) wrap.classList.add('hidden');
     grid.innerHTML = '';
     return;
