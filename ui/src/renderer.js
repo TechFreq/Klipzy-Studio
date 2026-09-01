@@ -460,6 +460,9 @@ function bindEvents() {
   document.getElementById('project-edit-save')?.addEventListener('click', saveEditProject);
   document.getElementById('project-edit-cancel')?.addEventListener('click', closeEditProjectModal);
   document.getElementById('project-edit-close')?.addEventListener('click', closeEditProjectModal);
+  document.getElementById('project-new-create')?.addEventListener('click', createNewProject);
+  document.getElementById('project-new-cancel')?.addEventListener('click', closeNewProjectModal);
+  document.getElementById('project-new-close')?.addEventListener('click', closeNewProjectModal);
 
   // File selection
   const dropZone = document.getElementById('drop-zone');
@@ -496,7 +499,7 @@ function bindEvents() {
   document.getElementById('change-file')?.addEventListener('click', () => fileInput && fileInput.click());
   document.getElementById('save-project')?.addEventListener('click', saveCurrentProject);
   document.getElementById('project-list')?.addEventListener('change', (e) => {
-    if (e.target.value === '__new__') { e.target.value = ''; resetWizardToStep1(); return; }
+    if (e.target.value === '__new__') { e.target.value = ''; goToNewProject(); return; }
     if (e.target.value) openProject(e.target.value);
   });
 
@@ -536,7 +539,7 @@ function bindEvents() {
   const resetOutput = document.getElementById('reset-output-folder');
   if (resetOutput) resetOutput.addEventListener('click', resetOutputFolder);
   document.getElementById('sidebar-project-list')?.addEventListener('change', (e) => {
-    if (e.target.value === '__new__') { e.target.value = ''; resetWizardToStep1(); return; }
+    if (e.target.value === '__new__') { e.target.value = ''; goToNewProject(); return; }
     if (e.target.value) openProject(e.target.value);
   });
   document.getElementById('delete-project')?.addEventListener('click', deleteCurrentProject);
@@ -741,7 +744,9 @@ function selectVideoFile(file) {
   document.getElementById('file-name').textContent = file.name;
   document.getElementById('file-info').classList.remove('hidden');
   document.getElementById('project-bar').classList.remove('hidden');
-  document.getElementById('project-name').value = file.name.replace(/\.[^.]+$/, '');
+  // Use the name from the New Project modal if one is pending; otherwise fall
+  // back to the video's filename.
+  document.getElementById('project-name').value = pendingNewProject?.name || file.name.replace(/\.[^.]+$/, '');
   document.getElementById('start-clipping').disabled = false;
   const nextBtn = document.getElementById('step1-next-btn');
   if (nextBtn) nextBtn.disabled = false;
@@ -925,10 +930,39 @@ function activateView(viewName) {
   view.classList.add('active');
 }
 
+// Holds the name/description entered in the New Project modal until the first
+// save writes them onto the manifest.
+let pendingNewProject = null;
+
 function goToNewProject() {
-  // resetWizardToStep1 clears state, switches to the clipper view and shows
-  // step 1 — the drop zone there is the "new project" action.
+  // Ask for a name + optional description first (OpenClipper-style), then drop
+  // into the wizard. The drop zone in step 1 is where the video gets added.
+  openNewProjectModal();
+}
+
+function openNewProjectModal() {
+  const nameEl = document.getElementById('project-new-name');
+  const descEl = document.getElementById('project-new-desc');
+  if (nameEl) nameEl.value = '';
+  if (descEl) descEl.value = '';
+  document.getElementById('project-new-modal')?.classList.remove('hidden');
+  if (nameEl) setTimeout(() => nameEl.focus(), 30);
+}
+function closeNewProjectModal() {
+  document.getElementById('project-new-modal')?.classList.add('hidden');
+}
+function createNewProject() {
+  const name = (document.getElementById('project-new-name')?.value || '').trim() || 'Untitled project';
+  const description = (document.getElementById('project-new-desc')?.value || '').trim();
+  pendingNewProject = { name, description };
+  closeNewProjectModal();
+  // Fresh wizard on the clipper view; the name is applied when a video is added
+  // (see selectVideoFile) and the description is saved with the manifest.
   resetWizardToStep1();
+  // Prefill now too, in case the project bar is already visible.
+  const nameInput = document.getElementById('project-name');
+  if (nameInput) nameInput.value = name;
+  showToast(`Project “${name}” — now add your video`, 'info');
 }
 
 function openProjectFromHome(id) {
@@ -1044,7 +1078,8 @@ function saveProjectManifest(showMessage = false) {
   const project = {
     id: currentProjectId || `project-${Date.now()}`,
     name,
-    description: existing?.description || '',
+    // Prefer an existing description, then one entered in the New Project modal.
+    description: existing?.description || pendingNewProject?.description || '',
     source: selectedVideo,
     sourceName: document.getElementById('file-name').textContent,
     clips: generatedClips,
@@ -1064,6 +1099,7 @@ function saveProjectManifest(showMessage = false) {
   const index = projects.findIndex((item) => item.id === project.id);
   if (index >= 0) projects[index] = project; else projects.push(project);
   writeProjects(projects);
+  pendingNewProject = null;  // consumed — name/description now live on the manifest
   loadProjectList();
   document.getElementById('project-list').value = project.id;
   if (showMessage) showAlert(`✅ Project saved: ${name}`);
@@ -1081,6 +1117,7 @@ function saveCurrentProjectSilently() {
 function openProject(id) {
   const project = readProjects().find((item) => item.id === id);
   if (!project) return;
+  pendingNewProject = null;  // opening an existing project cancels any pending "new project"
   currentProjectId = project.id;
   selectedVideo = project.source;
   if (project.outputFolder) saveOutputFolder(project.outputFolder);

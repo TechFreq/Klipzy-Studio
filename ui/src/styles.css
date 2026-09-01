@@ -1403,8 +1403,9 @@ body {
 .projects-home-grid .project-card-actions { flex-wrap: wrap; }
 .projects-home-grid .project-card-actions .btn { min-width: 0; }
 
-/* Edit Project modal textarea matches the option inputs. */
-#project-edit-desc {
+/* Project modal textareas match the option inputs. */
+#project-edit-desc,
+#project-new-desc {
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text);

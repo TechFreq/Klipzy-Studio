@@ -668,6 +668,30 @@
         </div>
       </div>
 
+      <!-- New Project Modal -->
+      <div id="project-new-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="project-new-title">
+        <div class="modal-content dialog-modal-content">
+          <div class="modal-header">
+            <h3 id="project-new-title">New Project</h3>
+            <button class="modal-close" id="project-new-close" aria-label="Close dialog">&times;</button>
+          </div>
+          <div class="modal-body">
+            <label class="option">
+              <span>Project name</span>
+              <input type="text" id="project-new-name" maxlength="80" placeholder="e.g. Street interviews — day 2" />
+            </label>
+            <label class="option" style="margin-top:12px;">
+              <span>Description (optional)</span>
+              <textarea id="project-new-desc" rows="3" placeholder="Notes about this clip session"></textarea>
+            </label>
+            <div class="dialog-actions">
+              <button class="btn btn-secondary" id="project-new-cancel">Cancel</button>
+              <button class="btn btn-primary" id="project-new-create">Create project</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Toast Container -->
       <div id="toast-container" class="toast-container" role="status" aria-live="polite" aria-atomic="false"></div>
 
