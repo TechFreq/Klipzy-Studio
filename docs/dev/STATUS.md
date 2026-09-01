@@ -70,6 +70,23 @@ pytest tests/ -q                  # 67 tests
    Apple-only. Needs a real Linux test pass to confirm: FFmpeg **with libass** from `apt`
    (Debian/Ubuntu builds normally include it), the faster-whisper CPU path, YOLO/ultralytics,
    and that Electron launches. Until someone runs it there, treat Linux as best-effort.
+9. **Optional AI hook rewrite (Ollama).** The intro-hook suggestions today are heuristic
+   (transcript sentence ranking in `rank_hook_candidates` — no model, fully offline). Add an
+   optional "✨ AI rewrite" in the caption editor's hook field that, when Ollama is installed
+   AND running, punches up / rewrites the hook using the user's selected local model (from the
+   existing `/api/setup/ai-model` switcher). Must degrade gracefully to the heuristic when
+   Ollama is off. Keep it opt-in so the offline path stays the default.
+10. **Clips-Kitty-style model manager.** Expand the Setup panel into a curated model catalog:
+    several downloadable options (Whisper sizes; Ollama models e.g. gemma2:2b / llama3.2 /
+    qwen2.5) with one-click download and, for each, its name + type + size + speed/quality
+    tradeoff, plus a recommended pick based on BOTH hardware and the chosen preset. Foundations
+    exist: `system_check.recommend_models()` already ranks Whisper/YOLO/Ollama by hardware, and
+    there's an Ollama switcher (`/api/setup/ai-model`) + pull (`/api/setup/ollama/pull`); this
+    item is the richer catalog UI + tying recommendations to presets.
+    NOTE (current model usage, for reference): transcription = MLX-Whisper
+    `mlx-community/whisper-<size>-mlx` (size auto-picked by hardware; medium seen in testing);
+    face tracking = YOLO `yolov8n.pt`; optional LLM = Ollama `gemma2:2b` default. The hook
+    suggester uses NO model.
 
 ## UI/UX fixes reported by user (for next session — mostly `ui/`)
 
