@@ -70,6 +70,12 @@ pytest tests/ -q                  # 67 tests
    Apple-only. Needs a real Linux test pass to confirm: FFmpeg **with libass** from `apt`
    (Debian/Ubuntu builds normally include it), the faster-whisper CPU path, YOLO/ultralytics,
    and that Electron launches. Until someone runs it there, treat Linux as best-effort.
+   - **UNTESTED — AMD/Intel VRAM detection + Linux GPU paths.** `system_check._detect_nonnvidia_vram_gb()`
+     reads Windows `qwMemorySize` (registry) and Linux AMD sysfs `mem_info_vram_total` to feed the
+     model recommender for non-NVIDIA GPUs. Written WITHOUT an AMD GPU or a Linux box to test on, so
+     it needs a real-hardware pass. Also note Ollama's AMD GPU acceleration depends on ROCm (Linux)
+     / newer Windows builds; on unsupported setups Ollama may run on CPU regardless. Failure is
+     non-fatal (falls back to the RAM-based pick).
 9. **Optional AI hook rewrite (Ollama).** The intro-hook suggestions today are heuristic
    (transcript sentence ranking in `rank_hook_candidates` — no model, fully offline). Add an
    optional "✨ AI rewrite" in the caption editor's hook field that, when Ollama is installed

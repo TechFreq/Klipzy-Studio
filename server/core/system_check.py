@@ -187,6 +187,11 @@ def _detect_nonnvidia_vram_gb() -> Optional[float]:
     """Best-effort dedicated VRAM (GB) for AMD/Intel GPUs. NVIDIA is read via
     nvidia-smi/torch above. Returns None when it can't be determined.
 
+    ⚠️ UNTESTED: written without access to an AMD GPU or a Linux machine. The
+    Windows registry read and the Linux sysfs read are best-effort and may need
+    tweaking on real hardware. Failure is non-fatal — it returns None and the
+    recommender falls back to the RAM-based pick.
+
     Windows: Win32_VideoController.AdapterRAM caps at 4GB for larger cards, so
     read the reliable 64-bit `qwMemorySize` from the display-class registry key.
     Linux: read AMD's sysfs `mem_info_vram_total` (bytes).
@@ -421,6 +426,20 @@ OLLAMA_MODEL_CATALOG = [
      "note": "Excellent for short-form copy; 16GB+."},
     {"name": "mistral:7b",  "label": "Mistral · 7B",   "params": "7B",   "size_gb": 4.1, "min_ram_gb": 16, "min_vram_gb": 6,  "tier": "Quality",
      "note": "Reliable 7B all-rounder."},
+    # --- Current-gen flagships (2026). Tags follow Ollama's library and may
+    #     change; a bad pull just surfaces a 'download failed' toast. ---
+    {"name": "phi4",            "label": "Phi-4 · 14B",       "params": "14B", "size_gb": 9.1,  "min_ram_gb": 16, "min_vram_gb": 12, "tier": "Flagship",
+     "note": "Microsoft Phi-4 — excellent quality that fits a 12GB GPU (great on an RTX 3060)."},
+    {"name": "qwen3:14b",       "label": "Qwen3 · 14B",       "params": "14B", "size_gb": 9.3,  "min_ram_gb": 16, "min_vram_gb": 12, "tier": "Flagship",
+     "note": "Newer Qwen generation; strong all-round writing. Fits a 12GB GPU."},
+    {"name": "deepseek-r1:14b", "label": "DeepSeek-R1 · 14B", "params": "14B", "size_gb": 9.0,  "min_ram_gb": 16, "min_vram_gb": 12, "tier": "Flagship",
+     "note": "Visible step-by-step reasoning; very capable, can be overkill for short hooks."},
+    {"name": "gpt-oss:20b",     "label": "GPT-OSS · 20B",     "params": "20B", "size_gb": 13.0, "min_ram_gb": 24, "min_vram_gb": 16, "tier": "Flagship",
+     "note": "OpenAI's open model; strong general quality. Best on 16GB+ GPUs."},
+    {"name": "gemma3:27b",      "label": "Gemma 3 · 27B",     "params": "27B", "size_gb": 17.0, "min_ram_gb": 32, "min_vram_gb": 20, "tier": "Flagship",
+     "note": "Newer Gemma 3 — high quality + multilingual. Splits across a 12GB GPU + RAM."},
+    {"name": "gpt-oss:120b",    "label": "GPT-OSS · 120B",    "params": "120B","size_gb": 65.0, "min_ram_gb": 96, "min_vram_gb": 80, "tier": "Extreme",
+     "note": "Frontier-class open model; workstation / multi-GPU only."},
     # --- Larger models: great on a strong GPU (>=12GB VRAM) or 32GB+ RAM ---
     {"name": "qwen2.5:14b", "label": "Qwen2.5 · 14B",  "params": "14B",  "size_gb": 9.0,  "min_ram_gb": 16, "min_vram_gb": 12, "tier": "Pro",
      "note": "Sweet spot for sharp hooks/titles; fits a 12GB GPU (RTX 3060) nicely."},
