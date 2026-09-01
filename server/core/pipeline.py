@@ -118,6 +118,7 @@ class VideoClipperEngine:
         position: Optional[int] = None,  # ASS alignment 1-9
         intro_caption: Optional[str] = None,
         intro_caption_duration: float = 3.0,
+        intro_enabled: Optional[bool] = None,
         progress_callback=None,
     ) -> List[ClipResult]:
         """
@@ -264,6 +265,11 @@ class VideoClipperEngine:
             # Segments that overlap the clip window (partial overlap counts so a
             # word straddling the boundary is still captioned).
             clip_segs = [s for s in segments if s.start < clip.end_time and s.end > clip.start_time]
+            # Auto-generate the intro hook from THIS clip's own hook/title when
+            # the intro toggle is on but the optional custom text was left blank.
+            effective_intro = intro_caption
+            if not (intro_caption and str(intro_caption).strip()) and intro_enabled:
+                effective_intro = (clip.hook_text or clip.title or raw_title or "").strip() or None
             if clip_segs:
                 generate_srt(clip_segs, clip_srt)
                 try:
@@ -283,7 +289,7 @@ class VideoClipperEngine:
                         bold=bold,
                         italic=italic,
                         position=position,
-                        intro_caption=intro_caption,
+                        intro_caption=effective_intro,
                         intro_caption_duration=intro_caption_duration,
                     )
                 except Exception:

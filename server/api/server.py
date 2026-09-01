@@ -221,6 +221,7 @@ def _run_job(job_id: str) -> None:
             position=req.position,
             intro_caption=req.intro_caption,
             intro_caption_duration=req.intro_caption_duration,
+            intro_enabled=req.intro_enabled,
             remove_silence=req.remove_silence,
             bleep_profanity=req.bleep_profanity,
             mute_profanity=req.mute_profanity,
@@ -675,6 +676,16 @@ def regenerate_subtitles(req: SubtitleRegenRequest):
     generate_srt([seg], req.output_path)
 
     ass_path = os.path.splitext(req.output_path)[0] + ".ass"
+
+    # Auto-generate the intro hook from the clip's opening line when the intro
+    # toggle is on but the optional custom text was left blank.
+    effective_intro = req.intro_caption
+    if not (req.intro_caption and req.intro_caption.strip()) and req.intro_enabled:
+        import re as _re
+        lead = (seg.text or "").strip()
+        first = _re.split(r"(?<=[.!?])\s+", lead)[0] if lead else ""
+        effective_intro = (first or lead)[:90].strip() or None
+
     generate_karaoke_captions(
         [seg],
         ass_path,
@@ -690,7 +701,7 @@ def regenerate_subtitles(req: SubtitleRegenRequest):
         bold=req.bold,
         italic=req.italic,
         position=req.position,
-        intro_caption=req.intro_caption,
+        intro_caption=effective_intro,
         intro_caption_duration=req.intro_caption_duration,
     )
 

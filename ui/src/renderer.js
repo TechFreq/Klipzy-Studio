@@ -2499,6 +2499,9 @@ function collectCaptionOptions() {
     italic,
     intro_caption: introCaption || undefined,
     intro_caption_duration: Number.isFinite(introCaptionDuration) ? introCaptionDuration : 3,
+    // Flag so the backend auto-generates a hook per clip when the toggle is on
+    // but the optional custom text is left blank.
+    intro_enabled: introEnabled,
   };
 }
 

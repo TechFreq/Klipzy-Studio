@@ -98,6 +98,9 @@ class ProcessRequest(BaseModel):
     position: Optional[int] = None  # ASS alignment 1-9 (2 = bottom-center, 8 = top-center...)
     intro_caption: Optional[str] = None
     intro_caption_duration: float = 3.0
+    # When True and intro_caption is empty, the intro hook is auto-generated
+    # per clip (from the clip's detected hook/title).
+    intro_enabled: Optional[bool] = None
 
 
 class ProcessResponse(BaseModel):
@@ -139,6 +142,9 @@ class SubtitleRegenRequest(BaseModel):
     position: Optional[int] = None  # ASS alignment 1-9
     intro_caption: Optional[str] = None
     intro_caption_duration: float = 3.0
+    # When True and intro_caption is empty, auto-generate the intro hook from
+    # the clip's opening line.
+    intro_enabled: Optional[bool] = None
     source_video: Optional[str] = None
     clip_output_file: Optional[str] = None
     start_seconds: Optional[float] = None
