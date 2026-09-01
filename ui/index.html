@@ -543,9 +543,10 @@
                 <span>🎣 Intro hook (burned over the first few seconds)</span>
                 <div class="hook-editor-row">
                   <input id="edit-intro-hook" type="text" maxlength="90" placeholder="Type your own, or rotate suggestions →" />
-                  <button type="button" class="btn btn-small btn-secondary" id="suggest-hook-btn" title="Suggest another hook from this clip's content">🔄 Suggest another</button>
+                  <button type="button" class="btn btn-small btn-secondary" id="suggest-hook-btn" title="Rotate hooks drawn from this clip's transcript (offline)">🔄 Suggest another</button>
+                  <button type="button" class="btn btn-small btn-secondary" id="ai-rewrite-hook-btn" title="Rewrite the hook with your local AI model (Ollama). Falls back to offline suggestions if Ollama isn't running.">✨ AI rewrite</button>
                 </div>
-                <span class="muted small">Leave blank for no intro hook. Suggestions are drawn from what's said in this clip.</span>
+                <span class="muted small">Leave blank for no intro hook. “Suggest another” is offline; “AI rewrite” uses your local Ollama model when it's running.</span>
               </label>
             </div>
 
@@ -800,7 +801,16 @@
               </select>
             </label>
           </div>
-          <p class="muted small" id="ai-models-note">Whisper size applies to the next clipping run. The LLM model is used by AI Edit Chat and LLM highlight discovery.</p>
+          <p class="muted small" id="ai-models-note">Whisper size applies to the next clipping run. The LLM model is used by AI Edit Chat, LLM highlight discovery, and the optional AI hook rewrite.</p>
+
+          <div class="model-catalog-head card-head-row" style="margin-top:18px;">
+            <h3>🧠 Local AI model catalog</h3>
+            <span class="muted small">Download bigger models for sharper hooks — pick to match your hardware</span>
+          </div>
+          <p class="muted small">These are local LLMs (via Ollama). Bigger models write better hooks/titles but need more RAM and disk. The ⭐ pick is recommended for your machine.</p>
+          <div id="model-catalog" class="model-catalog-grid">
+            <span class="muted">Loading model catalog…</span>
+          </div>
         </div>
 
         <!-- Render time estimator -->

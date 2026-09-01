@@ -2739,6 +2739,41 @@ document.getElementById('suggest-hook-btn')?.addEventListener('click', async () 
   if (input) input.value = hookCandidates[hookCandidateIdx];
 });
 
+// Optional AI rewrite: punch up the hook with the user's local Ollama model.
+// Falls back to the offline suggestions when Ollama isn't running.
+document.getElementById('ai-rewrite-hook-btn')?.addEventListener('click', async () => {
+  if (!currentEditingClip) return;
+  const input = document.getElementById('edit-intro-hook');
+  const btn = document.getElementById('ai-rewrite-hook-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Rewriting…'; }
+  try {
+    const res = await fetch(`${serverUrl}/tools/rewrite-hook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: currentEditingClip.full_text || currentEditingClip.reason || currentEditingClip.hook_text || '',
+        words: currentEditingClip.words || [],
+        current_hook: input?.value || '',
+        count: 6,
+        preset: document.getElementById('generated-caption-preset')?.value || '',
+      }),
+    });
+    const data = await res.json();
+    const hooks = (data.hooks || []).filter(Boolean);
+    if (!hooks.length) { showToast('No hooks generated for this clip', 'info'); return; }
+    // Feed into the same rotation list so the user can cycle the AI options too.
+    hookCandidates = hooks;
+    hookCandidateIdx = 0;
+    if (input) input.value = hooks[0];
+    if (data.used_ai) showToast(`✨ AI hooks from ${data.model} — click again or “Suggest another” to cycle`, 'success');
+    else showToast('Ollama not running — used offline suggestions instead. Install/start Ollama in Setup for AI rewrites.', 'info');
+  } catch (e) {
+    showToast('AI rewrite failed — try again', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '✨ AI rewrite'; }
+  }
+});
+
 document.getElementById('save-captions-btn')?.addEventListener('click', async () => {
   if (!currentEditingClip) {
     document.getElementById('caption-modal').classList.add('hidden');
@@ -3030,9 +3065,96 @@ async function loadSetupPanel() {
     bindInstallAll();
     bindClearCache();
     loadAiModels(data);
+    renderModelCatalog();
   } catch (e) {
     document.getElementById('setup-hardware').innerHTML = '<span class="muted">⚠️ Could not reach the server.</span>';
   }
+}
+
+// Clips-Kitty-style local-LLM catalog: browse curated models (small → large),
+// download the ones you want, and set the active model. The ⭐ pick matches
+// your hardware. Downloads use Ollama, so the row is disabled if it's absent.
+async function renderModelCatalog() {
+  const grid = document.getElementById('model-catalog');
+  if (!grid) return;
+  let data;
+  try {
+    const res = await fetch(`${serverUrl}/api/setup/model-catalog`);
+    if (!res.ok) throw new Error();
+    data = await res.json();
+  } catch (_) {
+    grid.innerHTML = '<span class="muted">⚠️ Could not load the model catalog.</span>';
+    return;
+  }
+  const ollamaReady = !!(data.ollama && data.ollama.installed);
+  const active = data.active;
+  grid.innerHTML = (data.models || []).map((m) => {
+    const badges = [];
+    if (m.recommended) badges.push('<span class="model-badge rec">⭐ Recommended</span>');
+    if (m.name === active) badges.push('<span class="model-badge active">● Active</span>');
+    if (!m.fits_ram) badges.push('<span class="model-badge warn">Needs ' + m.min_ram_gb + 'GB+ RAM</span>');
+    const installed = m.installed;
+    const actionBtn = installed
+      ? `<button class="btn btn-small ${m.name === active ? '' : 'btn-primary'}" data-use="${escapeHtml(m.name)}" ${m.name === active ? 'disabled' : ''}>${m.name === active ? 'In use' : 'Use'}</button>`
+      : `<button class="btn btn-small btn-secondary" data-pull="${escapeHtml(m.name)}" ${ollamaReady ? '' : 'disabled title="Install Ollama first"'}>⬇️ Download (${m.size_gb}GB)</button>`;
+    return `
+      <div class="model-card">
+        <div class="model-card-top">
+          <span class="model-name">${escapeHtml(m.label)}</span>
+          <span class="model-tier">${escapeHtml(m.tier)}</span>
+        </div>
+        <div class="model-badges">${badges.join('')}</div>
+        <div class="model-note muted small">${escapeHtml(m.note)}</div>
+        <div class="model-meta muted small">${escapeHtml(m.params)} · ~${m.size_gb}GB download</div>
+        <div class="model-card-actions">${actionBtn}</div>
+      </div>`;
+  }).join('');
+
+  if (!ollamaReady) {
+    grid.insertAdjacentHTML('afterbegin',
+      '<p class="muted small" style="grid-column:1/-1;">Ollama isn\'t installed yet — install it from the dependencies above to download and run these models.</p>');
+  }
+
+  grid.querySelectorAll('[data-pull]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const model = btn.dataset.pull;
+      const orig = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '⏳ Downloading…';
+      showToast(`Downloading ${model} — this can take a few minutes`, 'info');
+      try {
+        const r = await fetch(`${serverUrl}/api/setup/ollama/pull?model=${encodeURIComponent(model)}`, { method: 'POST' });
+        const d = await r.json().catch(() => ({}));
+        if (d.error || (d.returncode && d.returncode !== 0)) throw new Error(d.error || 'download failed');
+        showToast(`✅ ${model} downloaded`, 'success');
+        renderModelCatalog();
+        loadAiModels();
+      } catch (e) {
+        showToast(`Download failed: ${e.message || e}`, 'error');
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    });
+  });
+
+  grid.querySelectorAll('[data-use]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const model = btn.dataset.use;
+      try {
+        const r = await fetch(`${serverUrl}/api/setup/ai-model`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind: 'ollama', model }),
+        });
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        showToast(`AI model set to ${model}`, 'success');
+        renderModelCatalog();
+        loadAiModels();
+      } catch (e) {
+        showToast(`Could not set model: ${e.message}`, 'error');
+      }
+    });
+  });
 }
 
 // Clear the transcript cache (frees space; next run re-transcribes).

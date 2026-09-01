@@ -360,6 +360,67 @@ def missing_components() -> List[str]:
     return [k for k in get_install_commands() if not component_installed(k)]
 
 
+# ----------------------------------------------------------------------
+# Curated Ollama model catalog (Clips-Kitty-style download menu)
+# ----------------------------------------------------------------------
+# Small-to-large local LLMs the app knows how to recommend + one-click pull.
+# size_gb is the approximate download size; min_ram_gb is a comfortable floor.
+OLLAMA_MODEL_CATALOG = [
+    {"name": "gemma2:2b",   "label": "Gemma 2 · 2B",   "params": "2B",   "size_gb": 1.6, "min_ram_gb": 8,  "tier": "Light",
+     "note": "Fast and light — great default for hooks & chat on most machines."},
+    {"name": "llama3.2:3b", "label": "Llama 3.2 · 3B", "params": "3B",   "size_gb": 2.0, "min_ram_gb": 8,  "tier": "Light",
+     "note": "Balanced quality and speed; solid all-rounder."},
+    {"name": "qwen2.5:3b",  "label": "Qwen2.5 · 3B",   "params": "3B",   "size_gb": 1.9, "min_ram_gb": 8,  "tier": "Light",
+     "note": "Strong small model for punchy copywriting."},
+    {"name": "phi3:mini",   "label": "Phi-3 Mini",     "params": "3.8B", "size_gb": 2.2, "min_ram_gb": 8,  "tier": "Light",
+     "note": "Compact but capable; good on modest hardware."},
+    {"name": "gemma2:9b",   "label": "Gemma 2 · 9B",   "params": "9B",   "size_gb": 5.4, "min_ram_gb": 16, "tier": "Quality",
+     "note": "Noticeably sharper hooks. Wants 16GB+ RAM or a decent GPU."},
+    {"name": "llama3.1:8b", "label": "Llama 3.1 · 8B", "params": "8B",   "size_gb": 4.7, "min_ram_gb": 16, "tier": "Quality",
+     "note": "High-quality writing; 16GB+ recommended."},
+    {"name": "qwen2.5:7b",  "label": "Qwen2.5 · 7B",   "params": "7B",   "size_gb": 4.7, "min_ram_gb": 16, "tier": "Quality",
+     "note": "Excellent for short-form copy; 16GB+."},
+    {"name": "mistral:7b",  "label": "Mistral · 7B",   "params": "7B",   "size_gb": 4.1, "min_ram_gb": 16, "tier": "Quality",
+     "note": "Reliable 7B all-rounder."},
+]
+
+
+def recommend_ollama_model() -> str:
+    """Best default Ollama model for this machine, by GPU VRAM / system RAM."""
+    gpu = detect_gpu()
+    cpu = detect_cpu()
+    vram = gpu.get("vram_gb") or 0
+    ram = cpu.get("ram_gb") or 0
+    # A ~9B model is a real quality jump but needs headroom; only suggest it when
+    # there's a capable GPU or plenty of RAM. Otherwise prefer light, fast models.
+    if (vram and vram >= 8) or ram >= 32:
+        return "gemma2:9b"
+    if ram >= 16:
+        return "llama3.2:3b"
+    return "gemma2:2b"
+
+
+def ollama_model_catalog() -> Dict:
+    """Catalog + which models are installed + the hardware-recommended pick.
+
+    Recommends by hardware; the caller may further nudge by preset. Marks each
+    model installed/recommended and whether the machine likely has enough RAM.
+    """
+    recommended = recommend_ollama_model()
+    installed = list_ollama_models()
+    installed_set = set(installed) | {m.split(":")[0] for m in installed}
+    ram = detect_cpu().get("ram_gb") or 0
+    models = []
+    for m in OLLAMA_MODEL_CATALOG:
+        models.append({
+            **m,
+            "installed": (m["name"] in installed) or (m["name"] in installed_set),
+            "recommended": m["name"] == recommended,
+            "fits_ram": (not ram) or (ram >= m["min_ram_gb"]),
+        })
+    return {"models": models, "recommended": recommended, "installed": installed, "ram_gb": ram}
+
+
 def list_ollama_models() -> List[str]:
     """Names of locally-installed Ollama models (via `ollama list`), best-effort."""
     exe = shutil.which("ollama")

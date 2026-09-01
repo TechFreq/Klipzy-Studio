@@ -1020,6 +1020,41 @@ def suggest_hooks(req: SuggestHooksRequest):
     return {"hooks": hooks}
 
 
+class RewriteHookRequest(BaseModel):
+    text: str = ""
+    words: List[dict] = []
+    current_hook: str = ""
+    count: int = 6
+    preset: str = ""  # caption preset name, used as a light tone hint
+
+
+@app.post("/tools/rewrite-hook")
+def rewrite_hook(req: RewriteHookRequest):
+    """AI-punch-up hooks with the active local Ollama model, grounded in the
+    clip's transcript. Degrades gracefully to the offline heuristic when Ollama
+    isn't running or the call fails, so the button always returns *something*.
+    """
+    from server.core.highlight_detector import rank_hook_candidates
+    from server.core import system_check as sc
+
+    text = (req.text or "").strip()
+    if not text and req.words:
+        text = " ".join(str(w.get("word", "")) for w in req.words if isinstance(w, dict) and w.get("word"))
+    count = max(1, min(int(req.count or 6), 10))
+    heuristic = rank_hook_candidates(text, count)
+
+    running = bool(sc.detect_ollama().get("running"))
+    if not running:
+        return {"used_ai": False, "ollama_running": False, "model": None, "hooks": heuristic}
+
+    from server.core.hook_writer import generate_hooks_llm
+    ai_hooks = generate_hooks_llm(text, req.current_hook, count, PREFERRED_OLLAMA_MODEL, req.preset)
+    if ai_hooks:
+        return {"used_ai": True, "ollama_running": True, "model": PREFERRED_OLLAMA_MODEL, "hooks": ai_hooks}
+    # Ollama is up but returned nothing usable — fall back rather than error.
+    return {"used_ai": False, "ollama_running": True, "model": PREFERRED_OLLAMA_MODEL, "hooks": heuristic}
+
+
 @app.post("/tools/suggest-emojis", response_model=EmojiSuggestResponse)
 def api_suggest_emojis(req: EmojiSuggestRequest):
     """Analyze transcript segments and return contextual emoji suggestions."""
@@ -1405,6 +1440,18 @@ def get_ai_models():
         "ollama": PREFERRED_OLLAMA_MODEL,
         "installed_ollama_models": sc.list_ollama_models(),
     }
+
+
+@app.get("/api/setup/model-catalog")
+def model_catalog():
+    """Curated local-LLM catalog (small → large) with per-hardware recommendation,
+    installed state, and the currently active model. Powers the download menu.
+    """
+    from server.core import system_check as sc
+    data = sc.ollama_model_catalog()
+    data["active"] = PREFERRED_OLLAMA_MODEL
+    data["ollama"] = sc.detect_ollama()
+    return data
 
 
 @app.post("/api/setup/ai-model")
