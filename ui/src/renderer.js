@@ -87,6 +87,7 @@ function resetWizardToStep1() {
   if (nextBtn) nextBtn.disabled = true;
   const startBtn = document.getElementById('start-clipping');
   if (startBtn) startBtn.disabled = true;
+  updateCurrentProjectUI('');  // no active project after a reset
   // The wizard lives inside #view-clipper. "New Project" can be triggered from
   // the always-visible sidebar while the user is on another view (Setup/Chat),
   // so switch back to the clipper view — otherwise resetting the wizard step
@@ -746,7 +747,9 @@ function selectVideoFile(file) {
   document.getElementById('project-bar').classList.remove('hidden');
   // Use the name from the New Project modal if one is pending; otherwise fall
   // back to the video's filename.
-  document.getElementById('project-name').value = pendingNewProject?.name || file.name.replace(/\.[^.]+$/, '');
+  const projName = pendingNewProject?.name || file.name.replace(/\.[^.]+$/, '');
+  document.getElementById('project-name').value = projName;
+  updateCurrentProjectUI(projName);
   document.getElementById('start-clipping').disabled = false;
   const nextBtn = document.getElementById('step1-next-btn');
   if (nextBtn) nextBtn.disabled = false;
@@ -934,6 +937,21 @@ function activateView(viewName) {
 // save writes them onto the manifest.
 let pendingNewProject = null;
 
+// Reflect the active project's name in the clipper header + sidebar so the user
+// can see which project they're working in. Pass '' to clear.
+function updateCurrentProjectUI(name) {
+  const trimmed = (name || '').trim();
+  const label = document.getElementById('active-project-label');
+  const nameEl = document.getElementById('active-project-name');
+  const sideEl = document.getElementById('sidebar-current-project');
+  if (nameEl) nameEl.textContent = trimmed;
+  if (label) label.classList.toggle('hidden', !trimmed);
+  if (sideEl) {
+    sideEl.textContent = trimmed ? `▶ ${trimmed}` : '';
+    sideEl.classList.toggle('hidden', !trimmed);
+  }
+}
+
 function goToNewProject() {
   // Ask for a name + optional description first (OpenClipper-style), then drop
   // into the wizard. The drop zone in step 1 is where the video gets added.
@@ -962,6 +980,9 @@ function createNewProject() {
   // Prefill now too, in case the project bar is already visible.
   const nameInput = document.getElementById('project-name');
   if (nameInput) nameInput.value = name;
+  // Reflect the new project in the header + sidebar right away (called after
+  // resetWizardToStep1, which clears it).
+  updateCurrentProjectUI(name);
   showToast(`Project “${name}” — now add your video`, 'info');
 }
 
@@ -1100,6 +1121,7 @@ function saveProjectManifest(showMessage = false) {
   if (index >= 0) projects[index] = project; else projects.push(project);
   writeProjects(projects);
   pendingNewProject = null;  // consumed — name/description now live on the manifest
+  updateCurrentProjectUI(name);
   loadProjectList();
   document.getElementById('project-list').value = project.id;
   if (showMessage) showAlert(`✅ Project saved: ${name}`);
@@ -1141,6 +1163,7 @@ function openProject(id) {
   document.getElementById('file-info').classList.remove('hidden');
   document.getElementById('project-bar').classList.remove('hidden');
   document.getElementById('project-name').value = project.name || '';
+  updateCurrentProjectUI(project.name || '');
   document.getElementById('start-clipping').disabled = !selectedVideo;
   const video = document.getElementById('trim-video');
   video.src = fileUrl(selectedVideo);

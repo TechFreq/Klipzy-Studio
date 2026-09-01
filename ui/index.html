@@ -25,6 +25,7 @@
         <select id="sidebar-project-list" title="Open saved project">
           <option value="">Open saved project…</option>
         </select>
+        <div id="sidebar-current-project" class="sidebar-current-project hidden" title="Current project"></div>
       </div>
       <nav class="nav">
         <button class="nav-item active" data-view="projects">🏠 Projects</button>
@@ -79,6 +80,7 @@
             <button class="btn btn-small btn-secondary" id="open-logs-folder" title="Open the logs folder where Klipzy writes server logs">📜 Logs</button>
           </span></h1>
           <p class="subtitle">Local Long Form to Shorts studio by TechFreq — turn long videos into viral vertical shorts, 100% on your machine.</p>
+          <div id="active-project-label" class="active-project-label hidden">📁 Current project: <strong id="active-project-name"></strong></div>
         </header>
 
         <!-- Stepper Navigation Bar -->

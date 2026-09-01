@@ -1416,3 +1416,32 @@ body {
   resize: vertical;
   width: 100%;
 }
+
+/* Current-project indicators (clipper header + sidebar) */
+.active-project-label {
+  margin-top: 10px;
+  display: inline-block;
+  background: rgba(99, 102, 241, 0.14);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-size: 13px;
+}
+.active-project-label.hidden { display: none; }
+.active-project-label strong { color: var(--accent); }
+
+.sidebar-current-project {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-current-project.hidden { display: none; }
