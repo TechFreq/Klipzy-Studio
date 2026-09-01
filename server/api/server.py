@@ -464,7 +464,11 @@ def export_clip_bundle(req: ClipBundleRequest):
     fmt = req.format.lower().lstrip(".")
     if fmt not in ("mp4", "mov", "mkv", "webm", "av1", "gif"):
         raise HTTPException(status_code=400, detail=f"Unsupported export format: {fmt}")
-    safe = "".join(c for c in req.title if c.isalnum() or c in " _-").strip().replace(" ", "_")[:70] or "clip"
+    # Keep human-readable spaces in export names — underscores looked odd. Also
+    # fold any underscores already in the title back into spaces, and collapse
+    # runs of whitespace so the folder/file read cleanly.
+    safe = "".join(c for c in req.title if c.isalnum() or c in " _-").replace("_", " ")
+    safe = " ".join(safe.split())[:70].strip() or "clip"
     export_dir = Path(req.output_dir).expanduser().resolve() / safe
     export_dir.mkdir(parents=True, exist_ok=True)
     out_suffix = "mp4" if fmt == "av1" else fmt
@@ -1443,12 +1447,13 @@ def get_ai_models():
 
 
 @app.get("/api/setup/model-catalog")
-def model_catalog():
-    """Curated local-LLM catalog (small → large) with per-hardware recommendation,
-    installed state, and the currently active model. Powers the download menu.
+def model_catalog(preset: str = ""):
+    """Curated local-LLM catalog (small → large) with a recommendation tuned to
+    hardware AND the active caption preset (high-energy presets get a punchier
+    pick), plus installed state and the currently active model.
     """
     from server.core import system_check as sc
-    data = sc.ollama_model_catalog()
+    data = sc.ollama_model_catalog(preset)
     data["active"] = PREFERRED_OLLAMA_MODEL
     data["ollama"] = sc.detect_ollama()
     return data

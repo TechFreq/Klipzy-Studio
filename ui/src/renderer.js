@@ -3079,7 +3079,9 @@ async function renderModelCatalog() {
   if (!grid) return;
   let data;
   try {
-    const res = await fetch(`${serverUrl}/api/setup/model-catalog`);
+    // Pass the active caption preset so high-energy presets get a punchier pick.
+    const preset = document.getElementById('generated-caption-preset')?.value || '';
+    const res = await fetch(`${serverUrl}/api/setup/model-catalog?preset=${encodeURIComponent(preset)}`);
     if (!res.ok) throw new Error();
     data = await res.json();
   } catch (_) {

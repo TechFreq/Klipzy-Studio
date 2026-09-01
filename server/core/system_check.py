@@ -396,8 +396,34 @@ OLLAMA_MODEL_CATALOG = [
 ]
 
 
-def recommend_ollama_model() -> str:
-    """Best default Ollama model for this machine, by GPU VRAM + system RAM.
+# Caption presets with a loud, punchy vibe — these benefit from a stronger LLM
+# that writes bolder, higher-energy hooks, so we nudge the recommendation up a
+# rung (as long as the machine can still run it).
+HIGH_ENERGY_PRESETS = {
+    "viral_yellow", "mrbeast_impact", "fire_red", "tiktok_pop", "gaming_rgb",
+    "sunset_orange", "electric_purple", "comic_punch", "neon_green",
+    "glitch_shadow", "cyberpunk_cyan", "retro_vaporwave", "high_contrast",
+}
+
+# Strength ladder (weakest → strongest) used to bump the pick for high-energy
+# presets. Names must exist in OLLAMA_MODEL_CATALOG.
+_MODEL_LADDER = [
+    "gemma2:2b", "llama3.2:3b", "gemma2:9b", "qwen2.5:14b",
+    "gemma2:27b", "qwen2.5:32b", "llama3.1:70b",
+]
+
+
+def _model_fits_ram(name: str, ram_gb: float) -> bool:
+    m = next((x for x in OLLAMA_MODEL_CATALOG if x["name"] == name), None)
+    if not m:
+        return False
+    return (not ram_gb) or ram_gb >= m["min_ram_gb"]
+
+
+def recommend_ollama_model(preset: str = "") -> str:
+    """Best default Ollama model for this machine, by GPU VRAM + system RAM, and
+    nudged up a rung for high-energy caption presets (which read punchier with a
+    stronger model). Never recommends something the machine's RAM can't hold.
 
     Bigger local models write noticeably better hooks/titles but need memory.
     A ~14B is the sweet spot on a 12GB GPU (e.g. RTX 3060) or 48GB+ RAM; step
@@ -407,22 +433,32 @@ def recommend_ollama_model() -> str:
     cpu = detect_cpu()
     vram = gpu.get("vram_gb") or 0
     ram = cpu.get("ram_gb") or 0
+
     if vram >= 12 or ram >= 48:
-        return "qwen2.5:14b"
-    if (vram and vram >= 8) or ram >= 32:
-        return "gemma2:9b"
-    if ram >= 16:
-        return "llama3.2:3b"
-    return "gemma2:2b"
+        base = _MODEL_LADDER.index("qwen2.5:14b")
+    elif (vram and vram >= 8) or ram >= 32:
+        base = _MODEL_LADDER.index("gemma2:9b")
+    elif ram >= 16:
+        base = _MODEL_LADDER.index("llama3.2:3b")
+    else:
+        base = _MODEL_LADDER.index("gemma2:2b")
+
+    idx = base
+    if (preset or "").strip().lower() in HIGH_ENERGY_PRESETS:
+        idx = min(base + 1, len(_MODEL_LADDER) - 1)
+    # Step back down if the bumped pick won't fit this machine's RAM.
+    while idx > 0 and not _model_fits_ram(_MODEL_LADDER[idx], ram):
+        idx -= 1
+    return _MODEL_LADDER[idx]
 
 
-def ollama_model_catalog() -> Dict:
-    """Catalog + which models are installed + the hardware-recommended pick.
+def ollama_model_catalog(preset: str = "") -> Dict:
+    """Catalog + which models are installed + the recommended pick.
 
-    Recommends by hardware; the caller may further nudge by preset. Marks each
-    model installed/recommended and whether the machine likely has enough RAM.
+    Recommends by hardware, nudged up for high-energy caption presets. Marks each
+    model installed/recommended and whether the machine has enough RAM/VRAM.
     """
-    recommended = recommend_ollama_model()
+    recommended = recommend_ollama_model(preset)
     installed = list_ollama_models()
     installed_set = set(installed) | {m.split(":")[0] for m in installed}
     ram = detect_cpu().get("ram_gb") or 0
