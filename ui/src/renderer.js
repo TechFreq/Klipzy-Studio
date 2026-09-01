@@ -449,8 +449,17 @@ function bindEvents() {
       btn.classList.add('active');
       document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
       view.classList.add('active');
+      // Keep the Projects home fresh whenever it becomes visible.
+      if (btn.dataset.view === 'projects') renderProjectsHome();
     });
   });
+
+  // Projects home actions
+  document.getElementById('projects-new-btn')?.addEventListener('click', goToNewProject);
+  document.getElementById('projects-open-output-btn')?.addEventListener('click', openOutputFolder);
+  document.getElementById('project-edit-save')?.addEventListener('click', saveEditProject);
+  document.getElementById('project-edit-cancel')?.addEventListener('click', closeEditProjectModal);
+  document.getElementById('project-edit-close')?.addEventListener('click', closeEditProjectModal);
 
   // File selection
   const dropZone = document.getElementById('drop-zone');
@@ -852,6 +861,7 @@ function loadProjectList() {
     if (currentProjectId) sidebarSelect.value = currentProjectId;
   }
   renderProjectGrid();
+  renderProjectsHome();
 }
 
 // CapCut-style saved-projects grid: thumbnail + name + clip count/duration + Open.
@@ -901,13 +911,140 @@ function renderProjectGrid() {
   });
 }
 
+// ------------------------------------------------------------------
+// Projects Home (landing view): create a new project or reopen a saved
+// one. A standalone screen (OpenClipper/CapCut-style) that mirrors the
+// step-1 recent grid but adds an Edit action (rename + description).
+// ------------------------------------------------------------------
+function activateView(viewName) {
+  const view = document.getElementById(`view-${viewName}`);
+  if (!view) return;
+  document.querySelectorAll('.nav-item').forEach((b) => b.classList.remove('active'));
+  document.querySelector(`.nav-item[data-view="${viewName}"]`)?.classList.add('active');
+  document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
+  view.classList.add('active');
+}
+
+function goToNewProject() {
+  // resetWizardToStep1 clears state, switches to the clipper view and shows
+  // step 1 — the drop zone there is the "new project" action.
+  resetWizardToStep1();
+}
+
+function openProjectFromHome(id) {
+  activateView('clipper');
+  openProject(id);
+}
+
+async function openOutputFolder() {
+  let folder = document.getElementById('output-folder-input')?.value?.trim();
+  if (!folder) {
+    try {
+      const r = await fetch(`${serverUrl}/output-folder`);
+      if (r.ok) { const d = await r.json(); folder = d.output_dir || d.path || d.folder || ''; }
+    } catch (_) { /* offline — fall through */ }
+  }
+  if (folder) revealInFolder(folder);
+  else showAlert('No output folder is set yet. Pick one in step 1 (“Save generated clips to”).');
+}
+
+function renderProjectsHome() {
+  const grid = document.getElementById('projects-home-grid');
+  if (!grid) return;
+  const projects = readProjects().sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  const countEl = document.getElementById('projects-home-count');
+  if (countEl) countEl.textContent = projects.length ? `${projects.length} project${projects.length === 1 ? '' : 's'}` : '';
+  grid.innerHTML = '';
+  if (!projects.length) {
+    grid.innerHTML = `
+      <div class="projects-empty">
+        <span class="projects-empty-icon" aria-hidden="true">🎬</span>
+        <h3>No projects yet</h3>
+        <p>Start your first one — drop in a long video and Klipzy turns it into shorts.</p>
+        <button class="btn btn-primary btn-large" id="projects-empty-new">➕ New Project</button>
+      </div>`;
+    grid.querySelector('#projects-empty-new')?.addEventListener('click', goToNewProject);
+    return;
+  }
+  projects.forEach((project) => {
+    const clips = project.clips || [];
+    const totalSecs = clips.reduce((a, c) => a + (Number(c && c.duration) || 0), 0);
+    const thumb = clips.find((c) => c && c.thumbnail_path);
+    const when = project.updatedAt ? new Date(project.updatedAt).toLocaleDateString() : '';
+    const card = document.createElement('div');
+    card.className = 'project-card';
+    card.innerHTML = `
+      <div class="project-thumb">${thumb
+        ? `<img alt="" src="${escapeHtml(fileUrl(thumb.thumbnail_path))}" loading="lazy" />`
+        : '<span class="project-thumb-fallback" aria-hidden="true">🎬</span>'}
+        <span class="project-thumb-badge">${clips.length} clip${clips.length === 1 ? '' : 's'}</span>
+      </div>
+      <div class="project-card-body">
+        <div class="project-card-name">${escapeHtml(project.name || 'Untitled project')}</div>
+        <div class="project-card-meta muted small">${Math.round(totalSecs)}s · ${escapeHtml(when)}${clips.length ? ' · ✅ Ready' : ''}</div>
+        <div class="project-card-actions">
+          <button class="btn btn-small btn-primary" data-open>Open</button>
+          <button class="btn btn-small btn-secondary" data-edit>✏️ Edit</button>
+          <button class="btn btn-small btn-ghost" data-del title="Delete project">🗑</button>
+        </div>
+      </div>`;
+    card.querySelector('[data-open]').addEventListener('click', () => openProjectFromHome(project.id));
+    card.querySelector('[data-edit]').addEventListener('click', () => openEditProjectModal(project.id));
+    card.querySelector('[data-del]').addEventListener('click', async () => {
+      const ok = await showConfirm(`Delete "${project.name || 'Untitled project'}" and its generated clips? The rendered files are removed too.`);
+      if (!ok) return;
+      await deleteProjectFootage(project);
+      writeProjects(readProjects().filter((p) => p.id !== project.id));
+      if (currentProjectId === project.id) currentProjectId = null;
+      loadProjectList();
+    });
+    grid.appendChild(card);
+  });
+}
+
+// Edit Project modal (rename + optional description). Description is stored on
+// the manifest so it round-trips.
+let editingProjectId = null;
+function openEditProjectModal(id) {
+  const project = readProjects().find((p) => p.id === id);
+  if (!project) { showAlert('That project could no longer be found.'); return; }
+  editingProjectId = id;
+  const nameEl = document.getElementById('project-edit-name');
+  const descEl = document.getElementById('project-edit-desc');
+  if (nameEl) nameEl.value = project.name || '';
+  if (descEl) descEl.value = project.description || '';
+  document.getElementById('project-edit-modal')?.classList.remove('hidden');
+  if (nameEl) setTimeout(() => nameEl.focus(), 30);
+}
+function closeEditProjectModal() {
+  editingProjectId = null;
+  document.getElementById('project-edit-modal')?.classList.add('hidden');
+}
+function saveEditProject() {
+  if (!editingProjectId) return closeEditProjectModal();
+  const projects = readProjects();
+  const project = projects.find((p) => p.id === editingProjectId);
+  if (!project) { closeEditProjectModal(); return; }
+  project.name = (document.getElementById('project-edit-name')?.value || '').trim() || 'Untitled project';
+  project.description = (document.getElementById('project-edit-desc')?.value || '').trim();
+  project.updatedAt = new Date().toISOString();
+  writeProjects(projects);
+  closeEditProjectModal();
+  loadProjectList();
+  showToast('Project updated', 'success');
+}
+
 function saveProjectManifest(showMessage = false) {
   if (!selectedVideo) return;
   const name = document.getElementById('project-name').value.trim() || 'Untitled project';
   const projects = readProjects();
+  // Preserve fields the wizard doesn't own (e.g. a description set via the
+  // Projects-home Edit modal) so re-saving here doesn't wipe them.
+  const existing = projects.find((item) => item.id === currentProjectId);
   const project = {
     id: currentProjectId || `project-${Date.now()}`,
     name,
+    description: existing?.description || '',
     source: selectedVideo,
     sourceName: document.getElementById('file-name').textContent,
     clips: generatedClips,

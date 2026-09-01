@@ -1351,3 +1351,67 @@ body {
   color: var(--text-muted);
   flex-shrink: 0;
 }
+
+/* ------------------------------------------------------------------ */
+/* Projects Home (landing) view — OpenClipper/CapCut-style start screen */
+/* ------------------------------------------------------------------ */
+.projects-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(99, 102, 241, 0.04));
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 26px 28px;
+  margin-bottom: 24px;
+}
+.projects-hero-text h1 { font-size: 24px; margin-bottom: 6px; }
+.projects-hero-text .subtitle { max-width: 560px; }
+.projects-hero-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.btn-large { padding: 12px 22px; font-size: 15px; }
+
+.projects-home-body { margin-top: 8px; }
+.projects-home-head-row {
+  display: flex; align-items: baseline; gap: 10px;
+  margin-bottom: 14px;
+}
+.projects-home-head-row h3 { font-size: 16px; }
+
+.projects-home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 16px;
+}
+
+/* Empty state when there are no saved projects yet. */
+.projects-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 48px 24px;
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  color: var(--text-muted);
+}
+.projects-empty .projects-empty-icon { font-size: 44px; display: block; margin-bottom: 12px; opacity: 0.7; }
+.projects-empty h3 { color: var(--text); font-size: 17px; margin-bottom: 6px; }
+.projects-empty p { margin-bottom: 18px; }
+
+/* Home project cards are a touch larger than the step-1 recent grid, with an
+   extra Edit action, but reuse the .project-card visual language. */
+.projects-home-grid .project-card-actions { flex-wrap: wrap; }
+.projects-home-grid .project-card-actions .btn { min-width: 0; }
+
+/* Edit Project modal textarea matches the option inputs. */
+#project-edit-desc {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+  width: 100%;
+}

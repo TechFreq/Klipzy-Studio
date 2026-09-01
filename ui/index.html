@@ -27,7 +27,8 @@
         </select>
       </div>
       <nav class="nav">
-        <button class="nav-item active" data-view="clipper">✂️ Long Form to Shorts</button>
+        <button class="nav-item active" data-view="projects">🏠 Projects</button>
+        <button class="nav-item" data-view="clipper">✂️ Long Form to Shorts</button>
         <button class="nav-item" data-view="chat">💬 AI Edit Chat</button>
         <button class="nav-item" data-view="setup">⚙️ Setup</button>
       </nav>
@@ -48,8 +49,30 @@
 
     <!-- Main content -->
     <main class="main">
+      <!-- Projects Home View — landing screen (OpenClipper/CapCut-style):
+           create a new project or reopen a saved one. -->
+      <section id="view-projects" class="view active">
+        <header class="projects-hero">
+          <div class="projects-hero-text">
+            <h1>🎬 Your Klipzy Projects</h1>
+            <p class="subtitle">Kick off a new clip project or jump back into a saved one — every step runs locally on your own machine.</p>
+          </div>
+          <div class="projects-hero-actions">
+            <button class="btn btn-primary btn-large" id="projects-new-btn">➕ New Project</button>
+            <button class="btn btn-secondary" id="projects-open-output-btn" title="Open the folder where generated clips are saved">📂 Output folder</button>
+          </div>
+        </header>
+        <div class="projects-home-body">
+          <div class="projects-home-head-row">
+            <h3>📁 Your Projects</h3>
+            <span class="muted small" id="projects-home-count"></span>
+          </div>
+          <div id="projects-home-grid" class="projects-home-grid"></div>
+        </div>
+      </section>
+
       <!-- Clipper View -->
-      <section id="view-clipper" class="view active">
+      <section id="view-clipper" class="view">
         <header class="view-header">
           <h1>Long Form to Shorts <span class="header-actions">
             <button class="btn btn-small btn-secondary" id="open-queue-btn" title="View background rendering queue">📋 Queue <span id="queue-badge" class="badge-count hidden">0</span></button>
@@ -616,6 +639,30 @@
               <button class="btn btn-secondary hidden" id="dialog-open-folder-btn">📂 Open folder</button>
               <button class="btn btn-secondary hidden" id="dialog-cancel-btn">Cancel</button>
               <button class="btn btn-primary" id="dialog-confirm-btn">OK</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Edit Project Modal -->
+      <div id="project-edit-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="project-edit-title">
+        <div class="modal-content dialog-modal-content">
+          <div class="modal-header">
+            <h3 id="project-edit-title">Edit Project</h3>
+            <button class="modal-close" id="project-edit-close" aria-label="Close dialog">&times;</button>
+          </div>
+          <div class="modal-body">
+            <label class="option">
+              <span>Project name</span>
+              <input type="text" id="project-edit-name" maxlength="80" placeholder="Project name" />
+            </label>
+            <label class="option" style="margin-top:12px;">
+              <span>Description (optional)</span>
+              <textarea id="project-edit-desc" rows="3" placeholder="Notes about this clip session"></textarea>
+            </label>
+            <div class="dialog-actions">
+              <button class="btn btn-secondary" id="project-edit-cancel">Cancel</button>
+              <button class="btn btn-primary" id="project-edit-save">Save changes</button>
             </div>
           </div>
         </div>
