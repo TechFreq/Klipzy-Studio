@@ -83,13 +83,6 @@
 
         <!-- STEP 1: Project & Video Input -->
         <div id="step-panel-1" class="wizard-panel active" role="tabpanel" aria-labelledby="wizard-step-btn-1">
-          <div id="project-grid-wrap" class="project-grid-wrap hidden">
-            <div class="card-head-row">
-              <h3>📁 Recent Projects</h3>
-              <span class="muted small">Pick up where you left off</span>
-            </div>
-            <div id="project-grid" class="project-grid"></div>
-          </div>
           <div class="card drop-zone" id="drop-zone" role="button" tabindex="0" aria-label="Drop video files here or activate to browse for a video">
             <div class="drop-content">
               <span class="drop-icon" aria-hidden="true">🎞️</span>
@@ -102,6 +95,17 @@
           <div id="file-info" class="file-info hidden">
             <span id="file-name"></span>
             <button class="btn btn-small" id="change-file">Change</button>
+          </div>
+
+          <!-- Recent Projects now sits BELOW the drop zone: starting a new
+               project (drop/browse) is the primary action up top, with recent
+               projects as a browsable list underneath (OpenClipper-style). -->
+          <div id="project-grid-wrap" class="project-grid-wrap hidden">
+            <div class="card-head-row">
+              <h3>📁 Recent Projects</h3>
+              <span class="muted small">Pick up where you left off</span>
+            </div>
+            <div id="project-grid" class="project-grid"></div>
           </div>
           <div id="project-bar" class="project-bar hidden">
             <input id="project-name" type="text" placeholder="Project name" maxlength="80" aria-label="Project name" />
