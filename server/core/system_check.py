@@ -7,6 +7,7 @@ and provides click-to-install commands (winget / Homebrew / pip).
 
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -174,12 +175,50 @@ def detect_gpu() -> Dict[str, str]:
     if platform.system() == "Darwin":
         return {"name": "Apple Silicon (Metal)", "vram_gb": None}
     # 4) AMD / Intel GPUs (no CUDA): name them so the UI + recommender are
-    #    accurate. These don't accelerate PyTorch on Windows, but the FFmpeg
-    #    encoder (AMD AMF / Intel QSV) still speeds up rendering.
+    #    accurate, and best-effort read their dedicated VRAM so the model
+    #    recommendation can scale for AMD/Intel cards too (not just NVIDIA).
     name = _detect_gpu_name_fallback()
     if name:
-        return {"name": name, "vram_gb": None}
+        return {"name": name, "vram_gb": _detect_nonnvidia_vram_gb()}
     return {"name": None, "vram_gb": None}
+
+
+def _detect_nonnvidia_vram_gb() -> Optional[float]:
+    """Best-effort dedicated VRAM (GB) for AMD/Intel GPUs. NVIDIA is read via
+    nvidia-smi/torch above. Returns None when it can't be determined.
+
+    Windows: Win32_VideoController.AdapterRAM caps at 4GB for larger cards, so
+    read the reliable 64-bit `qwMemorySize` from the display-class registry key.
+    Linux: read AMD's sysfs `mem_info_vram_total` (bytes).
+    """
+    system = platform.system()
+    try:
+        if system == "Windows":
+            ps = (
+                "$k=Get-ChildItem 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Class\\"
+                "{4d36e968-e325-11ce-bfc1-08002be10318}' -ErrorAction SilentlyContinue;"
+                "$m=0;foreach($i in $k){$v=(Get-ItemProperty $i.PSPath -Name "
+                "'HardwareInformation.qwMemorySize' -ErrorAction SilentlyContinue)."
+                "'HardwareInformation.qwMemorySize';if($v -and $v -gt $m){$m=$v}};$m"
+            )
+            out = _run(["powershell", "-NoProfile", "-Command", ps], timeout=8)
+        elif system == "Linux":
+            out = _run([
+                "bash", "-lc",
+                "cat /sys/class/drm/card*/device/mem_info_vram_total 2>/dev/null | sort -n | tail -1",
+            ], timeout=6)
+        else:
+            out = None
+    except Exception:
+        out = None
+    if not out:
+        return None
+    digits = re.sub(r"[^0-9]", "", out.splitlines()[0] if out.splitlines() else "")
+    if not digits:
+        return None
+    gb = round(int(digits) / (1024 ** 3), 1)
+    # Guard against the bogus 4GB AdapterRAM cap or absurd values.
+    return gb if 0.5 <= gb <= 256 else None
 
 
 def _detect_gpu_name_fallback() -> Optional[str]:
@@ -442,24 +481,35 @@ def recommend_ollama_model(preset: str = "") -> str:
     ram = cpu.get("ram_gb") or 0
 
     # Prefer a model that FITS THE GPU for speed, scaling up with bigger VRAM.
-    # For CPU-only machines, use RAM but stay conservative (huge models are slow
-    # on CPU) — the catalog still offers the big ones for those who want them.
-    if vram >= 48:
-        base = _MODEL_LADDER.index("llama3.3:70b")
-    elif vram >= 24:
-        base = _MODEL_LADDER.index("qwen2.5:32b")
-    elif vram >= 12:
-        base = _MODEL_LADDER.index("qwen2.5:14b")
-    elif vram >= 8:
-        base = _MODEL_LADDER.index("gemma2:9b")
-    elif ram >= 48:
-        base = _MODEL_LADDER.index("qwen2.5:14b")
+    # Finer-grained tiers so low/mid/high cards each get a sensible pick, not
+    # just the coarse 8/12/24/48 steps. For CPU-only (or GPUs whose VRAM we
+    # can't read), fall back to RAM but stay conservative — huge models are slow
+    # on CPU; the catalog still offers the big ones for those who want them.
+    def _pick(name):
+        return _MODEL_LADDER.index(name)
+
+    if vram >= 48:        # A6000 / dual-GPU / H100-class
+        base = _pick("llama3.3:70b")
+    elif vram >= 24:      # 3090 / 4090 / 7900 XTX
+        base = _pick("qwen2.5:32b")
+    elif vram >= 16:      # 4060 Ti 16GB / 4080 / 7800 XT / A4000
+        base = _pick("qwen2.5:14b")
+    elif vram >= 11:      # 3060 12GB / 2080 Ti / 6700 XT
+        base = _pick("qwen2.5:14b")
+    elif vram >= 8:       # 3050/3060 Ti/4060 8GB / RX 6600
+        base = _pick("gemma2:9b")
+    elif vram >= 6:       # 2060 6GB / 1660 / RX 5500
+        base = _pick("llama3.2:3b")
+    elif vram >= 4:       # entry GPUs (1650 4GB / RX 6400)
+        base = _pick("gemma2:2b")
+    elif ram >= 48:       # CPU-only but lots of RAM
+        base = _pick("qwen2.5:14b")
     elif ram >= 32:
-        base = _MODEL_LADDER.index("gemma2:9b")
+        base = _pick("gemma2:9b")
     elif ram >= 16:
-        base = _MODEL_LADDER.index("llama3.2:3b")
+        base = _pick("llama3.2:3b")
     else:
-        base = _MODEL_LADDER.index("gemma2:2b")
+        base = _pick("gemma2:2b")
 
     idx = base
     if (preset or "").strip().lower() in HIGH_ENERGY_PRESETS:
