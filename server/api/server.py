@@ -222,6 +222,7 @@ def _run_job(job_id: str) -> None:
             intro_caption=req.intro_caption,
             intro_caption_duration=req.intro_caption_duration,
             intro_enabled=req.intro_enabled,
+            intro_font_size=req.intro_font_size,
             remove_silence=req.remove_silence,
             bleep_profanity=req.bleep_profanity,
             mute_profanity=req.mute_profanity,
@@ -707,6 +708,7 @@ def regenerate_subtitles(req: SubtitleRegenRequest):
         position=req.position,
         intro_caption=effective_intro,
         intro_caption_duration=req.intro_caption_duration,
+        intro_font_size=req.intro_font_size,
     )
 
     # If requested and video context is provided, re-render the clip to burn updated captions.

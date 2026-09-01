@@ -42,6 +42,7 @@ def generate_karaoke_captions(
     position: Optional[int] = None,  # ASS Alignment 1-9 (2 = bottom-center, 8 = top-center...)
     intro_caption: Optional[str] = None,
     intro_caption_duration: float = 3.0,
+    intro_font_size: Optional[int] = None,
 ) -> str:
     """
     Generates an animated karaoke subtitle file (Advanced SubStation Alpha)
@@ -99,8 +100,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         # CapCut / Opus Clip — the {\an8} override places it above the regular
         # captions (which sit at the chosen position) so the two never overlap.
         intro_end = max(0.1, float(intro_caption_duration))
+        # Top-center ({\an8}); optionally a bigger font via \fs so the hook can
+        # stand out from the body captions (CapCut/Opus-style).
+        size_tag = f"\\fs{int(intro_font_size)}" if intro_font_size else ""
         event_lines.append(
-            f"Dialogue: 0,0:00:00.00,0:00:{intro_end:05.2f},Default,,0,0,0,,{{\\an8}}{intro_text}"
+            f"Dialogue: 0,0:00:00.00,0:00:{intro_end:05.2f},Default,,0,0,0,,{{\\an8{size_tag}}}{intro_text}"
         )
 
     for seg in segments:

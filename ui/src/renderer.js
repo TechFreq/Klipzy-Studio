@@ -657,6 +657,17 @@ function bindEvents() {
   document.getElementById('caption-position')?.addEventListener('change', applyPortraitCaptionPreviewStyle);
   document.getElementById('caption-chunk-size')?.addEventListener('change', refreshPortraitCaptionPreview);
 
+  // Intro-hook live preview: update as the user types or resizes the hook.
+  document.getElementById('edit-intro-hook')?.addEventListener('input', updateHookPreview);
+  const hookSizeSlider = document.getElementById('intro-hook-font-size');
+  if (hookSizeSlider) {
+    hookSizeSlider.addEventListener('input', () => {
+      const lbl = document.getElementById('intro-hook-font-size-label');
+      if (lbl) lbl.textContent = hookSizeSlider.value;
+      updateHookPreview();
+    });
+  }
+
   // Wizard Stepper & Nav Actions
   for (let i = 1; i <= 4; i++) {
     const stepBtn = document.getElementById(`wizard-step-btn-${i}`);
@@ -1706,6 +1717,7 @@ async function startClipping() {
     intro_caption: captionOpts.intro_caption,
     intro_caption_duration: captionOpts.intro_caption_duration,
     intro_enabled: captionOpts.intro_enabled,
+    intro_font_size: captionOpts.intro_font_size,
     max_clips: parseInt(document.getElementById('max-clips').value) || 5,
     min_duration: parseFloat(document.getElementById('min-duration').value) || 20,
     max_duration: parseFloat(document.getElementById('max-duration').value) || 60,
@@ -2506,7 +2518,45 @@ function collectCaptionOptions() {
     // Flag so the backend auto-generates a hook per clip when the toggle is on
     // but the optional custom text is left blank.
     intro_enabled: introEnabled,
+    // Optional bigger font for the intro hook (from the caption editor's slider).
+    intro_font_size: parseInt(document.getElementById('intro-hook-font-size')?.value || '', 10) || undefined,
   };
+}
+
+// Live preview of the intro hook at the top of the caption stage, styled with
+// the current preset/colors and sized by the hook font-size slider.
+function updateHookPreview() {
+  const el = document.getElementById('hook-preview');
+  if (!el) return;
+  const raw = (document.getElementById('edit-intro-hook')?.value || '').trim();
+  if (!raw) { el.classList.add('hidden'); el.textContent = ''; return; }
+  el.classList.remove('hidden');
+  const isUpper = document.getElementById('caption-uppercase')?.checked;
+  el.textContent = isUpper ? raw.toUpperCase() : raw;
+
+  const presetId = document.getElementById('generated-caption-preset')?.value || 'viral_yellow';
+  const base = CAPTION_PREVIEW[presetId] || CAPTION_PREVIEW.viral_yellow;
+  const primary = document.getElementById('caption-primary-color')?.value || base.text;
+  const accent = document.getElementById('caption-highlight-color')?.value || base.accent;
+  const stroke = document.getElementById('caption-outline-color')?.value || base.back;
+  const font = document.getElementById('caption-font-name')?.value || base.font;
+  const hookSize = parseInt(document.getElementById('intro-hook-font-size')?.value || '64', 10);
+
+  const stage = el.parentElement;
+  const ratio = document.getElementById('clip-aspect-ratio')?.value || '9:16';
+  const canvasWidth = ratio === '16:9' ? 1920 : 1080;
+  const previewWidth = stage && stage.clientWidth > 0 ? stage.clientWidth : 540;
+  const scale = previewWidth / canvasWidth;
+
+  el.style.color = primary;
+  el.style.fontFamily = font;
+  el.style.fontSize = `${Math.max(10, Math.round(hookSize * scale))}px`;
+  el.style.fontWeight = document.getElementById('caption-bold')?.checked ? '900' : '800';
+  const w = parseInt(document.getElementById('caption-outline-width')?.value || '3', 10);
+  const o = stroke || '#000000';
+  el.style.textShadow = w > 0
+    ? `${w}px 0 0 ${o}, -${w}px 0 0 ${o}, 0 ${w}px 0 ${o}, 0 -${w}px 0 ${o}, 0 0 14px ${accent}55`
+    : `0 0 14px ${accent}55`;
 }
 
 function applyCaptionPreviewStyle() {
@@ -2555,6 +2605,7 @@ function applyCaptionPreviewStyle() {
     m.style.background = 'transparent';
   });
   applyPortraitCaptionPreviewStyle();
+  updateHookPreview();  // keep the hook preview in sync with style changes
 }
 
 function refreshCaptionPreview() {
@@ -2662,8 +2713,15 @@ window.openCaptionEditor = function(clipIndex) {
   // rotation cache so "Suggest another" pulls fresh candidates for this clip.
   const hookInput = document.getElementById('edit-intro-hook');
   if (hookInput) hookInput.value = clip.intro_caption || clip.hook_text || '';
+  const hookSizeInput = document.getElementById('intro-hook-font-size');
+  if (hookSizeInput) {
+    hookSizeInput.value = clip.intro_font_size || 64;
+    const lbl = document.getElementById('intro-hook-font-size-label');
+    if (lbl) lbl.textContent = hookSizeInput.value;
+  }
   hookCandidates = [];
   hookCandidateIdx = -1;
+  updateHookPreview();
 
   const modal = document.getElementById('caption-modal');
   const chipsContainer = document.getElementById('word-chips');
@@ -2738,6 +2796,7 @@ document.getElementById('suggest-hook-btn')?.addEventListener('click', async () 
   }
   hookCandidateIdx = (hookCandidateIdx + 1) % hookCandidates.length;
   if (input) input.value = hookCandidates[hookCandidateIdx];
+  updateHookPreview();
 });
 
 // Optional AI rewrite: punch up the hook with the user's local Ollama model.
@@ -2766,6 +2825,7 @@ document.getElementById('ai-rewrite-hook-btn')?.addEventListener('click', async 
     hookCandidates = hooks;
     hookCandidateIdx = 0;
     if (input) input.value = hooks[0];
+    updateHookPreview();
     if (data.used_ai) showToast(`✨ AI hooks from ${data.model} — click again or “Suggest another” to cycle`, 'success');
     else showToast('Ollama not running — used offline suggestions instead. Install/start Ollama in Setup for AI rewrites.', 'info');
   } catch (e) {
@@ -2845,6 +2905,7 @@ document.getElementById('save-captions-btn')?.addEventListener('click', async ()
         intro_caption: (document.getElementById('edit-intro-hook')?.value || '').trim() || undefined,
         intro_enabled: !!(document.getElementById('edit-intro-hook')?.value || '').trim(),
         intro_caption_duration: parseFloat(document.getElementById('caption-intro-duration')?.value || '3') || 3,
+        intro_font_size: parseInt(document.getElementById('intro-hook-font-size')?.value || '', 10) || undefined,
         re_render: true,
       })
     });
@@ -2857,6 +2918,7 @@ document.getElementById('save-captions-btn')?.addEventListener('click', async ()
       const newHook = (document.getElementById('edit-intro-hook')?.value || '').trim();
       currentEditingClip.intro_caption = newHook;
       if (newHook) currentEditingClip.hook_text = newHook;
+      currentEditingClip.intro_font_size = parseInt(document.getElementById('intro-hook-font-size')?.value || '', 10) || undefined;
 
       // Reload the matching clip card so it plays the freshly burned captions.
       // Match on the card's own index rather than fuzzy src string-matching,

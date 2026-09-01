@@ -119,6 +119,7 @@ class VideoClipperEngine:
         intro_caption: Optional[str] = None,
         intro_caption_duration: float = 3.0,
         intro_enabled: Optional[bool] = None,
+        intro_font_size: Optional[int] = None,
         progress_callback=None,
     ) -> List[ClipResult]:
         """
@@ -233,6 +234,7 @@ class VideoClipperEngine:
                 position=position,
                 intro_caption=intro_caption,
                 intro_caption_duration=intro_caption_duration,
+                intro_font_size=intro_font_size,
             )
         except Exception:
             ass_path = None
@@ -291,6 +293,7 @@ class VideoClipperEngine:
                         position=position,
                         intro_caption=effective_intro,
                         intro_caption_duration=intro_caption_duration,
+                        intro_font_size=intro_font_size,
                     )
                 except Exception:
                     clip_ass = None

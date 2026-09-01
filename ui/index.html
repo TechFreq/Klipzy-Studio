@@ -531,6 +531,7 @@
           <div class="modal-body">
             <p class="muted">Edit word timings and styling before final export:</p>
             <div class="caption-preview-stage">
+              <div id="hook-preview" class="hook-preview hidden"></div>
               <div id="caption-preview" class="caption-preview">Preview will appear here when you pick a style.</div>
             </div>
             <label class="caption-preview-size">Preview font size
@@ -547,6 +548,10 @@
                   <button type="button" class="btn btn-small btn-secondary" id="ai-rewrite-hook-btn" title="Rewrite the hook with your local AI model (Ollama). Falls back to offline suggestions if Ollama isn't running.">✨ AI rewrite</button>
                 </div>
                 <span class="muted small">Leave blank for no intro hook. “Suggest another” is offline; “AI rewrite” uses your local Ollama model when it's running.</span>
+              </label>
+              <label class="caption-preview-size" style="margin-top:10px;">Hook font size
+                <input type="range" id="intro-hook-font-size" min="28" max="120" step="1" value="64" />
+                <output id="intro-hook-font-size-label" for="intro-hook-font-size">64</output>
               </label>
             </div>
 

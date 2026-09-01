@@ -101,6 +101,8 @@ class ProcessRequest(BaseModel):
     # When True and intro_caption is empty, the intro hook is auto-generated
     # per clip (from the clip's detected hook/title).
     intro_enabled: Optional[bool] = None
+    # Optional bigger font size for the intro hook (defaults to the caption size).
+    intro_font_size: Optional[int] = None
 
 
 class ProcessResponse(BaseModel):
@@ -145,6 +147,8 @@ class SubtitleRegenRequest(BaseModel):
     # When True and intro_caption is empty, auto-generate the intro hook from
     # the clip's opening line.
     intro_enabled: Optional[bool] = None
+    # Optional bigger font size for the intro hook.
+    intro_font_size: Optional[int] = None
     source_video: Optional[str] = None
     clip_output_file: Optional[str] = None
     start_seconds: Optional[float] = None

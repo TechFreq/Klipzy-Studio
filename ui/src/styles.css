@@ -1530,3 +1530,20 @@ body {
 .pull-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.4s ease; }
 .pull-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .pull-cancel { flex: 0 0 auto; }
+
+/* Intro-hook live preview (top of the caption editor preview stage) */
+.caption-preview-stage { position: relative; }
+.hook-preview {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 92%;
+  text-align: center;
+  line-height: 1.1;
+  font-weight: 800;
+  pointer-events: none;
+  z-index: 2;
+  white-space: normal;
+}
+.hook-preview.hidden { display: none; }
