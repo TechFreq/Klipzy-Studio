@@ -2308,13 +2308,16 @@ function safeFileName(value) {
 
 async function chooseExportFolder(clip) {
   const configured = document.getElementById('output-folder-input')?.value?.trim();
-  if (configured) return configured;
+  // Always let the user choose where THIS export lands, starting from the
+  // configured output folder (if any). Previously a configured folder was used
+  // silently and the picker never opened.
   if (window.clipperAPI?.selectOutputFolder) {
-    const picked = await window.clipperAPI.selectOutputFolder();
-    if (picked) return picked;
+    const picked = await window.clipperAPI.selectOutputFolder(configured || undefined);
+    return picked || null;   // null → user cancelled, so the export is aborted
   }
-  const fallback = window.prompt('Choose a folder for this exported clip bundle:', configured || '');
-  return fallback?.trim() || null;
+  // Non-Electron fallback (window.prompt is unavailable in Electron).
+  const fallback = window.prompt?.('Choose a folder for this exported clip bundle:', configured || '');
+  return fallback?.trim() || configured || null;
 }
 
 window.exportSingleClip = async function (clipIndex) {

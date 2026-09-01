@@ -234,12 +234,15 @@ ipcMain.handle('api-token', () => {
   }
 });
 
-ipcMain.handle('select-output-folder', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Choose where Klipzy Studio saves generated clips',
+ipcMain.handle('select-output-folder', async (_event, defaultPath) => {
+  const opts = {
+    title: 'Choose where to save this export',
     properties: ['openDirectory', 'createDirectory'],
     buttonLabel: 'Select Folder',
-  });
+  };
+  // Start the dialog in the previously-configured output folder when we have one.
+  if (defaultPath && typeof defaultPath === 'string') opts.defaultPath = defaultPath;
+  const result = await dialog.showOpenDialog(mainWindow, opts);
   if (result.canceled || result.filePaths.length === 0) return null;
   return result.filePaths[0];
 });

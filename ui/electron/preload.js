@@ -8,7 +8,7 @@ contextBridge.exposeInMainWorld('clipperAPI', {
   // Shared secret for the local API. See server/auth.py for why it exists.
   getApiToken: () => ipcRenderer.invoke('api-token'),
   selectCameraClip: () => ipcRenderer.invoke('select-camera-file'),
-  selectOutputFolder: () => ipcRenderer.invoke('select-output-folder'),
+  selectOutputFolder: (defaultPath) => ipcRenderer.invoke('select-output-folder', defaultPath),
   revealInFolder: (filePath) => ipcRenderer.invoke('reveal-in-folder', filePath),
   openLogsFolder: () => ipcRenderer.invoke('open-logs-folder'),
   // Backend lifecycle updates (starting / ready / failed / crashed) so the UI
