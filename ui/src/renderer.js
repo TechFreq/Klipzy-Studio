@@ -340,7 +340,7 @@ async function chooseOutputFolder() {
     folder = await window.clipperAPI.selectOutputFolder();
   } else {
     // Browser fallback (no Electron): can't pick a folder, prompt for a path.
-    folder = window.prompt('Paste the folder path where Klipzy should save generated clips:');
+    folder = window.prompt('Paste the folder path to use as your default export destination:');
   }
   if (!folder) return;
   await saveOutputFolder(folder);

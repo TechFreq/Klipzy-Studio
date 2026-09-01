@@ -141,12 +141,13 @@
 
           <!-- Output folder picker -->
           <div id="output-folder-row" class="card output-folder-row">
-            <label for="output-folder-input" class="output-folder-label">📁 Save generated clips to:</label>
+            <label for="output-folder-input" class="output-folder-label">📁 Default export folder:</label>
             <div class="output-folder-controls">
-              <input id="output-folder-input" type="text" placeholder="Choose an output folder…" readonly />
+              <input id="output-folder-input" type="text" placeholder="Where exported clips are saved (optional)…" readonly />
               <button class="btn btn-small btn-secondary" id="browse-output-folder">📂 Browse…</button>
-              <button class="btn btn-small" id="reset-output-folder" title="Reset to the default Output folder">↺ Reset</button>
+              <button class="btn btn-small" id="reset-output-folder" title="Clear the default export folder">↺ Reset</button>
             </div>
+            <p class="muted small">Generated clips are kept as temporary working files inside the app; only clips you export are saved here.</p>
           </div>
 
         <!-- Manual Clip Trimmer -->

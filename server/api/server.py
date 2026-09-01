@@ -115,6 +115,13 @@ if _env_output and Path(_env_output).expanduser().is_absolute():
 else:
     OUTPUT_ROOT = Path(ENGINE.output_dir).resolve()
 
+# The user's preferred DEFAULT EXPORT folder (where the export dialog starts and
+# where exported clips land). This is intentionally SEPARATE from OUTPUT_ROOT:
+# generated/working clips always live in the internal working dir (OUTPUT_ROOT,
+# i.e. ./output) and are disposable; only explicit exports go to the user's
+# folder. Empty string = unset. Set via POST /output-folder.
+EXPORT_DEFAULT_DIR = ""
+
 CHAT = EditChat()
 
 # App-wide preferred local LLM (Ollama) model. Set from the Setup panel; used by
@@ -448,7 +455,11 @@ def export_media(req: ExportMediaRequest):
 def export_clip_bundle(req: ClipBundleRequest):
     """Save a chosen clip and matching MP3/SRT/ASS files in one named folder."""
     if not os.path.isfile(req.video_path):
-        raise HTTPException(status_code=400, detail=f"Clip file not found: {req.video_path}")
+        raise HTTPException(
+            status_code=400,
+            detail="This clip's working file is no longer available (it may have been "
+                   "cleared or the project was deleted). Re-generate the clip, then export.",
+        )
     fmt = req.format.lower().lstrip(".")
     if fmt not in ("mp4", "mov", "mkv", "webm", "av1", "gif"):
         raise HTTPException(status_code=400, detail=f"Unsupported export format: {fmt}")
@@ -1161,17 +1172,23 @@ class OutputFolderRequest(BaseModel):
 
 @app.get("/output-folder")
 def get_output_folder():
-    """Return the folder where generated clips are saved."""
-    return {"folder": str(_ensure_output_root()), "is_default": str(_ensure_output_root()) == str(DEFAULT_OUTPUT_ROOT)}
+    """Return the user's default EXPORT folder (empty string = unset).
+
+    Note: generated/working clips are NOT saved here — they live in the internal
+    working dir and are disposable. This is only the default export destination.
+    """
+    return {"folder": EXPORT_DEFAULT_DIR, "is_default": EXPORT_DEFAULT_DIR == ""}
 
 
 @app.post("/output-folder")
 def set_output_folder(req: OutputFolderRequest):
-    """Switch where generated clips/captions/temp files are written.
+    """Set the user's default EXPORT folder (created if missing).
 
-    The folder is created if it doesn't exist. The original source video is
-    never moved or touched.
+    This does NOT change where generated/working clips are written — those stay
+    in the internal working directory and are cleaned up on delete / clear-cache.
+    It only sets where the export dialog starts and where exports default to.
     """
+    global EXPORT_DEFAULT_DIR
     folder = req.folder.strip() if req.folder else ""
     if folder:
         root = Path(folder).expanduser()
@@ -1183,12 +1200,11 @@ def set_output_folder(req: OutputFolderRequest):
             root.mkdir(parents=True, exist_ok=True)
             root = root.resolve()
         except OSError as e:
-            raise HTTPException(status_code=400, detail=f"Cannot use that output folder: {e}")
-        _sync_output_root(root)
+            raise HTTPException(status_code=400, detail=f"Cannot use that export folder: {e}")
+        EXPORT_DEFAULT_DIR = str(root)
     else:
-        # Empty folder resets back to the default repo-anchored ./output.
-        _sync_output_root(DEFAULT_OUTPUT_ROOT)
-    return {"folder": str(OUTPUT_ROOT), "is_default": str(OUTPUT_ROOT) == str(DEFAULT_OUTPUT_ROOT)}
+        EXPORT_DEFAULT_DIR = ""  # unset — export dialog uses its own default
+    return {"folder": EXPORT_DEFAULT_DIR, "is_default": EXPORT_DEFAULT_DIR == ""}
 
 
 # ----------------------------------------------------------------------
