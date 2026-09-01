@@ -87,6 +87,17 @@ function resetWizardToStep1() {
   if (nextBtn) nextBtn.disabled = true;
   const startBtn = document.getElementById('start-clipping');
   if (startBtn) startBtn.disabled = true;
+  // The wizard lives inside #view-clipper. "New Project" can be triggered from
+  // the always-visible sidebar while the user is on another view (Setup/Chat),
+  // so switch back to the clipper view — otherwise resetting the wizard step
+  // happens off-screen and the click appears to do nothing.
+  const clipperView = document.getElementById('view-clipper');
+  if (clipperView && !clipperView.classList.contains('active')) {
+    document.querySelectorAll('.nav-item').forEach((b) => b.classList.remove('active'));
+    document.querySelector('.nav-item[data-view="clipper"]')?.classList.add('active');
+    document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
+    clipperView.classList.add('active');
+  }
   setWizardStep(1);
 }
 
