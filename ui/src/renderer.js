@@ -3128,25 +3128,7 @@ async function renderModelCatalog() {
   }
 
   grid.querySelectorAll('[data-pull]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const model = btn.dataset.pull;
-      const orig = btn.textContent;
-      btn.disabled = true;
-      btn.textContent = '⏳ Downloading…';
-      showToast(`Downloading ${model} — this can take a few minutes`, 'info');
-      try {
-        const r = await fetch(`${serverUrl}/api/setup/ollama/pull?model=${encodeURIComponent(model)}`, { method: 'POST' });
-        const d = await r.json().catch(() => ({}));
-        if (d.error || (d.returncode && d.returncode !== 0)) throw new Error(d.error || 'download failed');
-        showToast(`✅ ${model} downloaded`, 'success');
-        renderModelCatalog();
-        loadAiModels();
-      } catch (e) {
-        showToast(`Download failed: ${e.message || e}`, 'error');
-        btn.disabled = false;
-        btn.textContent = orig;
-      }
-    });
+    btn.addEventListener('click', () => startModelPull(btn.dataset.pull, btn));
   });
 
   grid.querySelectorAll('[data-use]').forEach((btn) => {
@@ -3187,6 +3169,59 @@ async function renderModelCatalog() {
       }
     });
   });
+}
+
+// Start a streaming model download with a live progress bar + cancel button.
+// Cancel aborts the pull and asks the server to remove the partial model.
+const _pullPollTimers = {};
+async function startModelPull(model, btn) {
+  const card = btn.closest('.model-card');
+  const actions = card ? card.querySelector('.model-card-actions') : null;
+  try {
+    const r = await fetch(`${serverUrl}/api/setup/ollama/pull-start?model=${encodeURIComponent(model)}`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || `Server returned ${r.status}`);
+  } catch (e) {
+    showToast(`Couldn't start download: ${e.message || e}`, 'error');
+    return;
+  }
+  if (actions) {
+    actions.innerHTML = `
+      <div class="pull-progress">
+        <div class="pull-bar"><div class="pull-fill" style="width:0%"></div></div>
+        <div class="pull-row"><span class="pull-pct muted small">Starting…</span>
+          <button class="btn btn-small btn-ghost pull-cancel">Cancel</button></div>
+      </div>`;
+    actions.querySelector('.pull-cancel')?.addEventListener('click', async () => {
+      try { await fetch(`${serverUrl}/api/setup/ollama/pull-cancel?model=${encodeURIComponent(model)}`, { method: 'POST' }); } catch (_) {}
+      const pct = actions.querySelector('.pull-pct');
+      if (pct) pct.textContent = 'Cancelling…';
+    });
+  }
+  // Poll progress.
+  if (_pullPollTimers[model]) clearInterval(_pullPollTimers[model]);
+  _pullPollTimers[model] = setInterval(async () => {
+    let p;
+    try {
+      const res = await fetch(`${serverUrl}/api/setup/ollama/pull-progress?model=${encodeURIComponent(model)}`);
+      p = await res.json();
+    } catch (_) { return; }
+    const fill = actions && actions.querySelector('.pull-fill');
+    const pct = actions && actions.querySelector('.pull-pct');
+    if (fill && typeof p.percent === 'number') fill.style.width = `${p.percent}%`;
+    if (pct) pct.textContent = p.state === 'downloading'
+      ? `${p.status || 'downloading'} · ${Math.round(p.percent || 0)}%`
+      : (p.status || p.state || '');
+    if (p.done || ['success', 'cancelled', 'error', 'idle'].includes(p.state)) {
+      clearInterval(_pullPollTimers[model]);
+      delete _pullPollTimers[model];
+      if (p.state === 'success') showToast(`✅ ${model} downloaded`, 'success');
+      else if (p.state === 'cancelled') showToast(`Cancelled ${model} (partial download removed)`, 'info');
+      else if (p.state === 'error') showToast(`Download failed: ${p.error || 'unknown error'}`, 'error');
+      renderModelCatalog();
+      loadAiModels();
+    }
+  }, 1000);
 }
 
 // Clear the transcript cache (frees space; next run re-transcribes).
@@ -3780,16 +3815,21 @@ function exportMultiAspectPack(idx) {
   if (wrap) {
     const src = fileUrl(clip.output_file);
     wrap.innerHTML = MULTI_ASPECT_RATIOS.map(({ ratio, label, tag }) => `
-      <label class="ma-card">
-        <div class="ma-card-head">
+      <div class="ma-card">
+        <label class="ma-card-head">
           <input type="checkbox" class="ma-check" value="${ratio}" checked />
           <span class="ma-label">${label}</span>
-        </div>
+        </label>
         <div class="ma-frame" style="aspect-ratio:${ratio.replace(':', ' / ')}">
           <video src="${escapeHtml(src)}" muted playsinline preload="metadata"></video>
         </div>
         <span class="muted small">${tag}</span>
-      </label>`).join('');
+        <button class="btn btn-small btn-secondary ma-export-one" data-ratio="${ratio}">⬇️ Export ${ratio}</button>
+      </div>`).join('');
+    // Individual per-aspect export (OpenClipper-style): export just this ratio.
+    wrap.querySelectorAll('.ma-export-one').forEach((b) => {
+      b.addEventListener('click', () => runMultiAspectExport([b.dataset.ratio], b));
+    });
   }
   document.getElementById('multi-aspect-modal')?.classList.remove('hidden');
 }
@@ -3801,16 +3841,21 @@ document.getElementById('multi-aspect-cancel')?.addEventListener('click', () => 
   document.getElementById('multi-aspect-modal')?.classList.add('hidden');
 });
 
-document.getElementById('multi-aspect-export')?.addEventListener('click', async () => {
-  if (!multiAspectClip) return;
+document.getElementById('multi-aspect-export')?.addEventListener('click', () => {
   const ratios = Array.from(document.querySelectorAll('#multi-aspect-previews .ma-check:checked')).map((c) => c.value);
   if (!ratios.length) {
     showToast('Pick at least one aspect ratio', 'info');
     return;
   }
+  runMultiAspectExport(ratios, document.getElementById('multi-aspect-export'));
+});
+
+// Render the given aspect ratios for the current clip into a chosen folder,
+// then reveal it. Shared by "Export selected" and the per-aspect buttons.
+async function runMultiAspectExport(ratios, btn) {
+  if (!multiAspectClip || !ratios || !ratios.length) return;
   const exportFolder = await chooseExportFolder(multiAspectClip);
-  if (!exportFolder) return;   // cancelled
-  const btn = document.getElementById('multi-aspect-export');
+  if (!exportFolder) return;   // cancelled the folder picker
   const orig = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Rendering…'; }
   try {
@@ -3832,10 +3877,9 @@ document.getElementById('multi-aspect-export')?.addEventListener('click', async 
     const data = await res.json();
     if (res.ok) {
       playSuccessSound();
-      document.getElementById('multi-aspect-modal')?.classList.add('hidden');
       const firstOut = data.exports ? Object.values(data.exports)[0] : null;
       if (firstOut) revealInFolder(firstOut);
-      showAlert(`✅ Multi-Aspect Pack exported:\n${Object.entries(data.exports).map(([k, v]) => `• ${k}: ${v}`).join('\n')}`, 'Export Complete', firstOut || null);
+      showAlert(`✅ Exported:\n${Object.entries(data.exports).map(([k, v]) => `• ${k}: ${v}`).join('\n')}`, 'Export Complete', firstOut || null);
     } else {
       playErrorSound();
       showAlert(`Multi-aspect export failed: ${data.detail}`);
@@ -3846,7 +3890,7 @@ document.getElementById('multi-aspect-export')?.addEventListener('click', async 
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = orig; }
   }
-});
+}
 
 // -----------------------------------------------------------------------
 // Local KEYWORD_EMOJIS map (mirrors server/overlay_manager.py) for

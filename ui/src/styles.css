@@ -1523,3 +1523,10 @@ body {
 }
 .ma-frame video { width: 100%; height: 100%; object-fit: cover; }
 .multi-aspect-actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+/* Model download progress (catalog cards) */
+.pull-progress { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.pull-bar { height: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.pull-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.4s ease; }
+.pull-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pull-cancel { flex: 0 0 auto; }

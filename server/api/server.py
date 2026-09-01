@@ -1375,6 +1375,108 @@ def ollama_remove(model: str = ""):
         return {"model": model, "ok": False, "error": str(e)}
 
 
+# ----------------------------------------------------------------------
+# Streaming model pull with live progress + cancel (for the catalog UI)
+# ----------------------------------------------------------------------
+_PULL_JOBS: Dict[str, dict] = {}
+_PULL_LOCK = threading.Lock()
+
+
+def _pull_progress_fields(prog) -> tuple:
+    """Extract (status, completed, total) from an ollama progress item, which
+    may be an object with attributes or a plain dict depending on version."""
+    def g(k):
+        if isinstance(prog, dict):
+            return prog.get(k)
+        return getattr(prog, k, None)
+    return g("status"), g("completed"), g("total")
+
+
+def _pull_worker(model: str):
+    try:
+        import ollama
+        for prog in ollama.pull(model, stream=True):
+            with _PULL_LOCK:
+                job = _PULL_JOBS.get(model)
+                if not job or job.get("cancel"):
+                    break
+                status, completed, total = _pull_progress_fields(prog)
+                if status:
+                    job["status"] = status
+                if total:
+                    job["total"] = total
+                    job["completed"] = completed or 0
+                    job["percent"] = round(100.0 * (completed or 0) / total, 1)
+    except Exception as e:  # noqa: BLE001
+        with _PULL_LOCK:
+            job = _PULL_JOBS.get(model)
+            if job:
+                job["error"] = str(e)
+                job["state"] = "error"
+                job["done"] = True
+        return
+    # Finalize (success vs cancelled).
+    with _PULL_LOCK:
+        job = _PULL_JOBS.get(model)
+        cancelled = bool(job and job.get("cancel"))
+        if job:
+            job["done"] = True
+            if cancelled:
+                job["state"] = "cancelled"
+            else:
+                job["state"] = "success"
+                job["percent"] = 100.0
+    # A cancelled pull leaves a partial model; remove it so no half-download lingers.
+    if cancelled:
+        try:
+            from server.core import system_check as sc
+            exe = shutil.which("ollama") or (sc.detect_ollama().get("executable") or "ollama")
+            subprocess.run([exe, "rm", model], capture_output=True, text=True, timeout=60,
+                           creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        except Exception:
+            pass
+
+
+@app.post("/api/setup/ollama/pull-start")
+def ollama_pull_start(model: str = ""):
+    """Begin a background model download and track live progress. Returns
+    immediately; poll /pull-progress and optionally /pull-cancel."""
+    model = (model or "").strip()
+    if not model:
+        raise HTTPException(status_code=400, detail="model is required")
+    from server.core import system_check as sc
+    if not sc.detect_ollama().get("running"):
+        raise HTTPException(status_code=400, detail="Ollama isn't running. Start Ollama, then try again.")
+    with _PULL_LOCK:
+        existing = _PULL_JOBS.get(model)
+        if existing and not existing.get("done"):
+            return {"model": model, "started": False, "already_running": True}
+        _PULL_JOBS[model] = {"state": "downloading", "status": "starting", "percent": 0.0,
+                             "completed": 0, "total": 0, "cancel": False, "done": False, "error": None}
+    threading.Thread(target=_pull_worker, args=(model,), daemon=True).start()
+    return {"model": model, "started": True}
+
+
+@app.get("/api/setup/ollama/pull-progress")
+def ollama_pull_progress(model: str = ""):
+    with _PULL_LOCK:
+        job = _PULL_JOBS.get((model or "").strip())
+        if not job:
+            return {"model": model, "state": "idle", "percent": 0, "done": True}
+        return {"model": model, **job}
+
+
+@app.post("/api/setup/ollama/pull-cancel")
+def ollama_pull_cancel(model: str = ""):
+    with _PULL_LOCK:
+        job = _PULL_JOBS.get((model or "").strip())
+        if not job:
+            return {"model": model, "ok": False, "error": "no active download"}
+        job["cancel"] = True
+        job["status"] = "cancelling"
+    return {"model": model, "ok": True}
+
+
 @app.get("/api/setup/missing")
 def setup_missing():
     """The install-command components not yet present, so the UI can install them
