@@ -936,8 +936,9 @@ def export_multi_aspect(req: MultiAspectExportRequest):
         raise HTTPException(status_code=400, detail=f"Source clip or video not found: {req.clip_path}")
 
     source = req.source_video if (req.source_video and os.path.exists(req.source_video)) else req.clip_path
-    stem = "".join(c for c in (req.title or Path(req.clip_path).stem) if c.isalnum() or c in " _-").strip().replace(" ", "_") or "clip"
-    out_dir = Path(req.output_dir).expanduser().resolve() if req.output_dir else Path(req.clip_path).parent / f"{stem}_multi_aspect"
+    stem = "".join(c for c in (req.title or Path(req.clip_path).stem) if c.isalnum() or c in " _-").replace("_", " ")
+    stem = " ".join(stem.split())[:70].strip() or "clip"
+    out_dir = Path(req.output_dir).expanduser().resolve() if req.output_dir else Path(req.clip_path).parent / f"{stem} multi aspect"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     exports = {}
@@ -950,7 +951,7 @@ def export_multi_aspect(req: MultiAspectExportRequest):
 
     for aspect in requested_aspects:
         slug = aspect.replace(":", "x")
-        out_file = str(out_dir / f"{stem}_{slug}.mp4")
+        out_file = str(out_dir / f"{stem} {slug}.mp4")
         try:
             render_clip(
                 input_video=source,

@@ -392,7 +392,14 @@ OLLAMA_MODEL_CATALOG = [
     {"name": "mixtral:8x7b","label": "Mixtral · 8x7B",  "params": "8x7B MoE", "size_gb": 26.0, "min_ram_gb": 32, "min_vram_gb": 24, "tier": "Pro",
      "note": "Fast mixture-of-experts; needs 32GB+ RAM."},
     {"name": "llama3.1:70b","label": "Llama 3.1 · 70B", "params": "70B",  "size_gb": 40.0, "min_ram_gb": 64, "min_vram_gb": 48, "tier": "Max",
-     "note": "Best quality here, but heavy: needs 64GB RAM and runs slowly without a big GPU."},
+     "note": "Heavy but excellent; needs 64GB RAM and runs slowly without a big GPU."},
+    # --- Workstation / high-end rigs (big multi-GPU or 64GB+ / 128GB+ RAM) ---
+    {"name": "llama3.3:70b","label": "Llama 3.3 · 70B", "params": "70B",   "size_gb": 43.0, "min_ram_gb": 64,  "min_vram_gb": 48, "tier": "Max",
+     "note": "Meta's latest 70B — sharpest hooks/titles. Wants a 48GB GPU or 64GB+ RAM."},
+    {"name": "qwen2.5:72b", "label": "Qwen2.5 · 72B",  "params": "72B",   "size_gb": 47.0, "min_ram_gb": 64,  "min_vram_gb": 48, "tier": "Max",
+     "note": "Elite short-form copywriting; 64GB+ RAM or a 48GB GPU."},
+    {"name": "mixtral:8x22b","label":"Mixtral · 8x22B", "params": "8x22B MoE", "size_gb": 80.0, "min_ram_gb": 96, "min_vram_gb": 80, "tier": "Extreme",
+     "note": "Workstation-class mixture-of-experts; ~96GB RAM or multi-GPU. Overkill for hooks."},
 ]
 
 
@@ -405,11 +412,11 @@ HIGH_ENERGY_PRESETS = {
     "glitch_shadow", "cyberpunk_cyan", "retro_vaporwave", "high_contrast",
 }
 
-# Strength ladder (weakest → strongest) used to bump the pick for high-energy
-# presets. Names must exist in OLLAMA_MODEL_CATALOG.
+# Strength ladder (weakest → strongest) used to pick a base by hardware and to
+# bump the pick for high-energy presets. Names must exist in OLLAMA_MODEL_CATALOG.
 _MODEL_LADDER = [
     "gemma2:2b", "llama3.2:3b", "gemma2:9b", "qwen2.5:14b",
-    "gemma2:27b", "qwen2.5:32b", "llama3.1:70b",
+    "gemma2:27b", "qwen2.5:32b", "llama3.3:70b", "qwen2.5:72b", "mixtral:8x22b",
 ]
 
 
@@ -434,9 +441,20 @@ def recommend_ollama_model(preset: str = "") -> str:
     vram = gpu.get("vram_gb") or 0
     ram = cpu.get("ram_gb") or 0
 
-    if vram >= 12 or ram >= 48:
+    # Prefer a model that FITS THE GPU for speed, scaling up with bigger VRAM.
+    # For CPU-only machines, use RAM but stay conservative (huge models are slow
+    # on CPU) — the catalog still offers the big ones for those who want them.
+    if vram >= 48:
+        base = _MODEL_LADDER.index("llama3.3:70b")
+    elif vram >= 24:
+        base = _MODEL_LADDER.index("qwen2.5:32b")
+    elif vram >= 12:
         base = _MODEL_LADDER.index("qwen2.5:14b")
-    elif (vram and vram >= 8) or ram >= 32:
+    elif vram >= 8:
+        base = _MODEL_LADDER.index("gemma2:9b")
+    elif ram >= 48:
+        base = _MODEL_LADDER.index("qwen2.5:14b")
+    elif ram >= 32:
         base = _MODEL_LADDER.index("gemma2:9b")
     elif ram >= 16:
         base = _MODEL_LADDER.index("llama3.2:3b")
