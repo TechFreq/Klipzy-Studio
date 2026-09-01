@@ -707,6 +707,24 @@
         </div>
       </div>
 
+      <!-- Multi-Aspect Preview & Export Modal -->
+      <div id="multi-aspect-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="multi-aspect-title">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3 id="multi-aspect-title">📐 Multi-Aspect Export</h3>
+            <button class="modal-close" id="multi-aspect-close" aria-label="Close dialog">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p class="muted">Preview how this clip frames in each aspect ratio, tick the ones you want, then choose where to save. The preview is an approximate center-crop; the export uses the app's smart framing.</p>
+            <div id="multi-aspect-previews" class="multi-aspect-previews"></div>
+            <div class="multi-aspect-actions">
+              <button class="btn btn-secondary" id="multi-aspect-cancel">Cancel</button>
+              <button class="btn btn-primary" id="multi-aspect-export">📂 Choose folder &amp; Export</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Toast Container -->
       <div id="toast-container" class="toast-container" role="status" aria-live="polite" aria-atomic="false"></div>
 

@@ -95,7 +95,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     event_lines = []
     if intro_caption:
         intro_text = case(intro_caption).replace("{", "").replace("}", "")
-        event_lines.append(f"Dialogue: 0,0:00:00.00,0:00:{max(0.1, float(intro_caption_duration)):05.2f},Default,,0,0,0,,{intro_text}")
+        # Pin the intro hook to the TOP-CENTER for its first few seconds, like
+        # CapCut / Opus Clip — the {\an8} override places it above the regular
+        # captions (which sit at the chosen position) so the two never overlap.
+        intro_end = max(0.1, float(intro_caption_duration))
+        event_lines.append(
+            f"Dialogue: 0,0:00:00.00,0:00:{intro_end:05.2f},Default,,0,0,0,,{{\\an8}}{intro_text}"
+        )
 
     for seg in segments:
         words = getattr(seg, "words", []) or []

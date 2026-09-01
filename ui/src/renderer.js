@@ -1705,6 +1705,7 @@ async function startClipping() {
     italic: captionOpts.italic,
     intro_caption: captionOpts.intro_caption,
     intro_caption_duration: captionOpts.intro_caption_duration,
+    intro_enabled: captionOpts.intro_enabled,
     max_clips: parseInt(document.getElementById('max-clips').value) || 5,
     min_duration: parseFloat(document.getElementById('min-duration').value) || 20,
     max_duration: parseFloat(document.getElementById('max-duration').value) || 60,
@@ -3091,14 +3092,23 @@ async function renderModelCatalog() {
   const ollamaReady = !!(data.ollama && data.ollama.installed);
   const active = data.active;
   grid.innerHTML = (data.models || []).map((m) => {
+    const isActive = m.name === active;
     const badges = [];
     if (m.recommended) badges.push('<span class="model-badge rec">⭐ Recommended</span>');
-    if (m.name === active) badges.push('<span class="model-badge active">● Active</span>');
+    if (isActive) badges.push('<span class="model-badge active">● In use</span>');
+    else if (m.installed) badges.push('<span class="model-badge dl">✓ Downloaded</span>');
     if (!m.fits_ram) badges.push('<span class="model-badge warn">Needs ' + m.min_ram_gb + 'GB+ RAM</span>');
-    const installed = m.installed;
-    const actionBtn = installed
-      ? `<button class="btn btn-small ${m.name === active ? '' : 'btn-primary'}" data-use="${escapeHtml(m.name)}" ${m.name === active ? 'disabled' : ''}>${m.name === active ? 'In use' : 'Use'}</button>`
-      : `<button class="btn btn-small btn-secondary" data-pull="${escapeHtml(m.name)}" ${ollamaReady ? '' : 'disabled title="Install Ollama first"'}>⬇️ Download (${m.size_gb}GB)</button>`;
+
+    let actions;
+    if (!m.installed) {
+      actions = `<button class="btn btn-small btn-secondary" data-pull="${escapeHtml(m.name)}" ${ollamaReady ? '' : 'disabled'}>⬇️ Download (${m.size_gb}GB)</button>`;
+    } else if (isActive) {
+      actions = `<button class="btn btn-small" disabled>● In use</button>` +
+                `<button class="btn btn-small btn-ghost" data-remove="${escapeHtml(m.name)}" title="Delete this model from disk">🗑</button>`;
+    } else {
+      actions = `<button class="btn btn-small btn-primary" data-use="${escapeHtml(m.name)}">Use</button>` +
+                `<button class="btn btn-small btn-ghost" data-remove="${escapeHtml(m.name)}" title="Delete this model from disk">🗑</button>`;
+    }
     return `
       <div class="model-card">
         <div class="model-card-top">
@@ -3107,8 +3117,8 @@ async function renderModelCatalog() {
         </div>
         <div class="model-badges">${badges.join('')}</div>
         <div class="model-note muted small">${escapeHtml(m.note)}</div>
-        <div class="model-meta muted small">${escapeHtml(m.params)} · ~${m.size_gb}GB download${m.fits_vram ? ' · ⚡ fits your GPU' : ''}</div>
-        <div class="model-card-actions">${actionBtn}</div>
+        <div class="model-meta muted small">${escapeHtml(m.params)} · ~${m.size_gb}GB${m.installed ? ' · downloaded' : ' download'}${m.fits_vram ? ' · ⚡ fits your GPU' : ''}</div>
+        <div class="model-card-actions">${actions}</div>
       </div>`;
   }).join('');
 
@@ -3154,6 +3164,26 @@ async function renderModelCatalog() {
         loadAiModels();
       } catch (e) {
         showToast(`Could not set model: ${e.message}`, 'error');
+      }
+    });
+  });
+
+  grid.querySelectorAll('[data-remove]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const model = btn.dataset.remove;
+      const ok = await showConfirm(`Delete the model "${model}" from disk? You can re-download it later.`);
+      if (!ok) return;
+      btn.disabled = true;
+      try {
+        const r = await fetch(`${serverUrl}/api/setup/ollama/remove?model=${encodeURIComponent(model)}`, { method: 'POST' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || d.ok === false) throw new Error(d.error || d.stderr || `Server returned ${r.status}`);
+        showToast(`🗑 Removed ${model}`, 'success');
+        renderModelCatalog();
+        loadAiModels();
+      } catch (e) {
+        showToast(`Could not remove model: ${e.message || e}`, 'error');
+        btn.disabled = false;
       }
     });
   });
@@ -3729,31 +3759,82 @@ async function exportForPlatform(idx, platform, ratio, btnEl) {
   }
 }
 
-async function exportMultiAspectPack(idx) {
-  const clip = generatedClips[idx];
-  if (!clip) return;
+const MULTI_ASPECT_RATIOS = [
+  { ratio: '9:16', label: 'Vertical 9:16', tag: 'TikTok / Reels / Shorts' },
+  { ratio: '1:1', label: 'Square 1:1', tag: 'Feed' },
+  { ratio: '4:5', label: 'Portrait 4:5', tag: 'IG feed' },
+  { ratio: '16:9', label: 'Landscape 16:9', tag: 'YouTube / X' },
+];
+let multiAspectClip = null;
 
-  showToast(`⏳ Rendering Multi-Aspect pack (9:16, 1:1, 4:5, 16:9)...`, 'info');
+// Opens a preview-before-export modal (OpenClipper-style): shows the clip framed
+// in each aspect ratio, lets the user pick which to render, then choose a folder.
+function exportMultiAspectPack(idx) {
+  const clip = generatedClips[idx];
+  if (!clip || !clip.output_file) {
+    showAlert('No rendered clip to export yet.');
+    return;
+  }
+  multiAspectClip = clip;
+  const wrap = document.getElementById('multi-aspect-previews');
+  if (wrap) {
+    const src = fileUrl(clip.output_file);
+    wrap.innerHTML = MULTI_ASPECT_RATIOS.map(({ ratio, label, tag }) => `
+      <label class="ma-card">
+        <div class="ma-card-head">
+          <input type="checkbox" class="ma-check" value="${ratio}" checked />
+          <span class="ma-label">${label}</span>
+        </div>
+        <div class="ma-frame" style="aspect-ratio:${ratio.replace(':', ' / ')}">
+          <video src="${escapeHtml(src)}" muted playsinline preload="metadata"></video>
+        </div>
+        <span class="muted small">${tag}</span>
+      </label>`).join('');
+  }
+  document.getElementById('multi-aspect-modal')?.classList.remove('hidden');
+}
+
+document.getElementById('multi-aspect-close')?.addEventListener('click', () => {
+  document.getElementById('multi-aspect-modal')?.classList.add('hidden');
+});
+document.getElementById('multi-aspect-cancel')?.addEventListener('click', () => {
+  document.getElementById('multi-aspect-modal')?.classList.add('hidden');
+});
+
+document.getElementById('multi-aspect-export')?.addEventListener('click', async () => {
+  if (!multiAspectClip) return;
+  const ratios = Array.from(document.querySelectorAll('#multi-aspect-previews .ma-check:checked')).map((c) => c.value);
+  if (!ratios.length) {
+    showToast('Pick at least one aspect ratio', 'info');
+    return;
+  }
+  const exportFolder = await chooseExportFolder(multiAspectClip);
+  if (!exportFolder) return;   // cancelled
+  const btn = document.getElementById('multi-aspect-export');
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Rendering…'; }
   try {
     const res = await fetch(`${serverUrl}/export/multi-aspect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        clip_path: clip.output_file,
+        clip_path: multiAspectClip.output_file,
         source_video: selectedVideo,
-        start_seconds: clip.start_time,
-        end_seconds: clip.end_time,
-        title: clip.title,
+        start_seconds: multiAspectClip.start_time,
+        end_seconds: multiAspectClip.end_time,
+        title: multiAspectClip.title,
         burn_captions: true,
-        subtitle_path: clip.ass_path || clip.srt_path,
-        aspect_ratios: ['9:16', '1:1', '4:5', '16:9'],
+        subtitle_path: multiAspectClip.ass_path || multiAspectClip.srt_path,
+        aspect_ratios: ratios,
+        output_dir: exportFolder,
       })
     });
     const data = await res.json();
     if (res.ok) {
       playSuccessSound();
-      showToast(`✅ Multi-Aspect Pack exported successfully!`, 'success');
+      document.getElementById('multi-aspect-modal')?.classList.add('hidden');
       const firstOut = data.exports ? Object.values(data.exports)[0] : null;
+      if (firstOut) revealInFolder(firstOut);
       showAlert(`✅ Multi-Aspect Pack exported:\n${Object.entries(data.exports).map(([k, v]) => `• ${k}: ${v}`).join('\n')}`, 'Export Complete', firstOut || null);
     } else {
       playErrorSound();
@@ -3762,8 +3843,10 @@ async function exportMultiAspectPack(idx) {
   } catch (err) {
     playErrorSound();
     showAlert(`Error: ${err.message}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
   }
-}
+});
 
 // -----------------------------------------------------------------------
 // Local KEYWORD_EMOJIS map (mirrors server/overlay_manager.py) for

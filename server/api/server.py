@@ -1341,17 +1341,38 @@ def setup_install(req: SetupInstallRequest):
 @app.post("/api/setup/ollama/pull")
 def ollama_pull(model: str = "gemma2:2b"):
     """One-click download of an Ollama GGUF model (e.g. gemma2:2b for clip suggestions)."""
-    ollama_exe = shutil.which("ollama") or "ollama"
+    from server.core import system_check as sc
+    # Resolve the CLI even when it isn't on PATH (e.g. the macOS Ollama.app).
+    ollama_exe = shutil.which("ollama") or (sc.detect_ollama().get("executable") or "ollama")
     try:
         result = subprocess.run(
             [ollama_exe, "pull", model], capture_output=True, text=True, timeout=1800,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
-        return {"model": model, "returncode": result.returncode, "stdout": result.stdout[-1500:], "stderr": result.stderr[-1500:]}
+        return {"model": model, "ok": result.returncode == 0, "returncode": result.returncode,
+                "stdout": result.stdout[-1500:], "stderr": result.stderr[-1500:]}
     except subprocess.TimeoutExpired:
-        return {"model": model, "error": "Model download timed out after 30 minutes"}
+        return {"model": model, "ok": False, "error": "Model download timed out after 30 minutes"}
     except Exception as e:
-        return {"model": model, "error": str(e)}
+        return {"model": model, "ok": False, "error": str(e)}
+
+
+@app.post("/api/setup/ollama/remove")
+def ollama_remove(model: str = ""):
+    """Delete a locally-installed Ollama model to free disk space (ollama rm)."""
+    if not (model or "").strip():
+        raise HTTPException(status_code=400, detail="model is required")
+    from server.core import system_check as sc
+    ollama_exe = shutil.which("ollama") or (sc.detect_ollama().get("executable") or "ollama")
+    try:
+        result = subprocess.run(
+            [ollama_exe, "rm", model], capture_output=True, text=True, timeout=120,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        return {"model": model, "ok": result.returncode == 0, "returncode": result.returncode,
+                "stdout": result.stdout[-800:], "stderr": result.stderr[-800:]}
+    except Exception as e:
+        return {"model": model, "ok": False, "error": str(e)}
 
 
 @app.get("/api/setup/missing")
