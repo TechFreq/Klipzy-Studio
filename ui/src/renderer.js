@@ -740,7 +740,9 @@ async function checkHealth() {
 function selectVideoFile(file) {
   selectedVideo = file.path;
   generatedClips = [];
-  currentProjectId = null;
+  // Keep the current project id when adding a video to a freshly created
+  // project draft (New Project flow); otherwise start a fresh unsaved session.
+  if (!pendingNewProject) currentProjectId = null;
   emojiSuggestionCache.clear();
   document.getElementById('file-name').textContent = file.name;
   document.getElementById('file-info').classList.remove('hidden');
@@ -750,6 +752,9 @@ function selectVideoFile(file) {
   const projName = pendingNewProject?.name || file.name.replace(/\.[^.]+$/, '');
   document.getElementById('project-name').value = projName;
   updateCurrentProjectUI(projName);
+  // If this video is being added to a project draft (or a re-opened project),
+  // persist the source now so the entry stops being an empty stub.
+  if (currentProjectId) saveProjectManifest(false);
   document.getElementById('start-clipping').disabled = false;
   const nextBtn = document.getElementById('step1-next-btn');
   if (nextBtn) nextBtn.disabled = false;
@@ -972,18 +977,39 @@ function closeNewProjectModal() {
 function createNewProject() {
   const name = (document.getElementById('project-new-name')?.value || '').trim() || 'Untitled project';
   const description = (document.getElementById('project-new-desc')?.value || '').trim();
-  pendingNewProject = { name, description };
   closeNewProjectModal();
-  // Fresh wizard on the clipper view; the name is applied when a video is added
-  // (see selectVideoFile) and the description is saved with the manifest.
-  resetWizardToStep1();
-  // Prefill now too, in case the project bar is already visible.
+  // Persist a stub immediately so the project shows up in the lists right away
+  // (source video + clips get filled in when the user adds media). This matches
+  // the reference apps: create the project first, add footage after.
+  const project = {
+    id: `project-${Date.now()}`,
+    name,
+    description,
+    source: '',
+    sourceName: '',
+    clips: [],
+    updatedAt: new Date().toISOString(),
+  };
+  const projects = readProjects();
+  projects.push(project);
+  writeProjects(projects);
+  enterProjectDraft(project);
+  showToast(`Project “${name}” created — now add your video`, 'info');
+}
+
+// Enter a project that has no source video yet (a freshly created draft, or a
+// stub reopened from the list): reset the wizard to step 1, mark it current,
+// prefill its name, and select it in the lists so it's clearly active.
+function enterProjectDraft(project) {
+  resetWizardToStep1();               // clears state + switches to the clipper view
+  currentProjectId = project.id;
+  pendingNewProject = { name: project.name || 'Untitled project', description: project.description || '' };
   const nameInput = document.getElementById('project-name');
-  if (nameInput) nameInput.value = name;
-  // Reflect the new project in the header + sidebar right away (called after
-  // resetWizardToStep1, which clears it).
-  updateCurrentProjectUI(name);
-  showToast(`Project “${name}” — now add your video`, 'info');
+  if (nameInput) nameInput.value = project.name || '';
+  updateCurrentProjectUI(project.name || '');
+  loadProjectList();
+  const pl = document.getElementById('project-list'); if (pl) pl.value = project.id;
+  const spl = document.getElementById('sidebar-project-list'); if (spl) spl.value = project.id;
 }
 
 function openProjectFromHome(id) {
@@ -1139,6 +1165,12 @@ function saveCurrentProjectSilently() {
 function openProject(id) {
   const project = readProjects().find((item) => item.id === id);
   if (!project) return;
+  // A stub project (created via New Project, no video added yet): resume it at
+  // step 1 so the user can add a video, rather than trying to load an empty src.
+  if (!project.source) {
+    enterProjectDraft(project);
+    return;
+  }
   pendingNewProject = null;  // opening an existing project cancels any pending "new project"
   currentProjectId = project.id;
   selectedVideo = project.source;
