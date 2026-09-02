@@ -13,13 +13,25 @@ echo [1/5] Checking Python...
 python --version >nul 2>&1
 if errorlevel 1 goto :no_python
 
-REM ---------- [2/5] Find / create virtual environment ----------
+REM ---------- [2/5] Find / create / repair virtual environment ----------
 echo [2/5] Checking virtual environment...
 set "VENVPY="
 if exist ".venv\Scripts\python.exe" set "VENVPY=.venv\Scripts\python.exe"
 if not defined VENVPY if exist "venv\Scripts\python.exe" set "VENVPY=venv\Scripts\python.exe"
 if not defined VENVPY goto :make_venv
+
+REM A venv copied from another machine (e.g. from macOS) keeps a pyvenv.cfg that
+REM points at an interpreter that doesn't exist here, so its python.exe stub
+REM fails with "did not find executable at ...". Actually RUN it; if it can't
+REM start, wipe it and rebuild for Windows (same idea as the node_modules check).
+"%VENVPY%" --version >nul 2>&1
+if errorlevel 1 goto :rebuild_venv
 goto :deps_check
+
+:rebuild_venv
+echo Virtual environment is broken or from another OS - rebuilding for Windows...
+if exist ".venv" rmdir /s /q ".venv"
+if exist "venv" rmdir /s /q "venv"
 
 :make_venv
 echo Creating virtual environment...
@@ -28,7 +40,6 @@ if errorlevel 1 goto :venv_failed
 set "VENVPY=.venv\Scripts\python.exe"
 
 REM ---------- [3/5] Install Python dependencies if missing ----------
-:using_check
 :deps_check
 echo [3/5] Checking Python dependencies...
 "%VENVPY%" -c "import fastapi, uvicorn, whisper" >nul 2>&1
