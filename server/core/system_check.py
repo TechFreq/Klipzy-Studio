@@ -463,17 +463,24 @@ def _pytorch_accel_plan() -> Dict:
     vendor = _gpu_vendor(name, is_apple)
     pip = [sys.executable, "-m", "pip"]
 
+    # --force-reinstall + --no-deps is REQUIRED when swapping the CPU wheel for a
+    # GPU wheel: the CUDA/ROCm build carries the SAME version number as the CPU
+    # build (e.g. 2.14.0), so a plain `pip install torch` sees the requirement
+    # already satisfied and does nothing. --no-deps keeps the existing shared
+    # deps (numpy/sympy/…) which aren't hosted on the pytorch index.
     if vendor == "nvidia":
-        return {"command": pip + ["install", "--index-url", "https://download.pytorch.org/whl/cu126", "torch", "torchvision"],
+        return {"command": pip + ["install", "--index-url", "https://download.pytorch.org/whl/cu126",
+                                  "--force-reinstall", "--no-deps", "torch", "torchvision"],
                 "label": "CUDA (NVIDIA) build", "experimental": False,
                 "note": "Official NVIDIA CUDA 12.6 wheels."}
     if vendor == "apple":
-        return {"command": pip + ["install", "torch", "torchvision"],
+        return {"command": pip + ["install", "--force-reinstall", "--no-deps", "torch", "torchvision"],
                 "label": "Apple Metal (MPS) build", "experimental": False,
                 "note": "Default wheels include Metal (MPS) on Apple Silicon."}
     if vendor == "amd":
         if os_name == "linux":
-            return {"command": pip + ["install", "--index-url", "https://download.pytorch.org/whl/rocm6.2", "torch", "torchvision"],
+            return {"command": pip + ["install", "--index-url", "https://download.pytorch.org/whl/rocm6.2",
+                                      "--force-reinstall", "--no-deps", "torch", "torchvision"],
                     "label": "AMD ROCm build (Linux)", "experimental": True,
                     "note": "Official ROCm 6.2 wheels — supported AMD cards on Linux only."}
         if os_name == "windows":
