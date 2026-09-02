@@ -271,6 +271,32 @@ ipcMain.handle('select-camera-file', async () => {
   return result.filePaths[0];
 });
 
+ipcMain.handle('select-music-file', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select a background music track',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Audio', extensions: ['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
+});
+
+ipcMain.handle('select-videos-multi', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select videos to batch process',
+    properties: ['openFile', 'multiSelections'],
+    filters: [
+      { name: 'Videos', extensions: ['mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  });
+  if (result.canceled || result.filePaths.length === 0) return [];
+  return result.filePaths;
+});
+
 ipcMain.handle('reveal-in-folder', async (_event, filePath) => {
   if (!filePath || typeof filePath !== 'string') return null;
   const { shell } = require('electron');

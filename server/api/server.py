@@ -203,6 +203,26 @@ class _CancelledError(Exception):
     """Raised inside a background job when cancellation is requested."""
 
 
+def _enqueue_process_job(req: "ProcessRequest") -> str:
+    """Register a job for `req` and ensure the single background worker is draining
+    the queue. Returns the new job id. Shared by /process and /process/batch so
+    both use the same serial-queue semantics (never N concurrent heavy passes)."""
+    job_id = uuid.uuid4().hex[:8]
+    JOBS[job_id] = {"status": "queued", "clips": [], "error": None, "progress": 0}
+    _JOB_REQUESTS[job_id] = req
+    _JOB_CANCEL[job_id] = threading.Event()
+    _JOBS_ORDER.append(job_id)
+    _prune_jobs()
+
+    global _WORKER_THREAD
+    with _JOB_LOCK:
+        _QUEUE_JOBS.append(job_id)
+        if _WORKER_THREAD is None or not _WORKER_THREAD.is_alive():
+            _WORKER_THREAD = threading.Thread(target=_drain_job_queue, daemon=True)
+            _WORKER_THREAD.start()
+    return job_id
+
+
 def _run_job(job_id: str) -> None:
     """Execute one queued job, recording per-job status in JOBS."""
     req = _JOB_REQUESTS.get(job_id)
@@ -254,6 +274,11 @@ def _run_job(job_id: str) -> None:
             remove_silence=req.remove_silence,
             bleep_profanity=req.bleep_profanity,
             mute_profanity=req.mute_profanity,
+            normalize_audio=req.normalize_audio,
+            auto_zoom=req.auto_zoom,
+            music_path=req.music_path,
+            music_volume=req.music_volume,
+            duck_music=req.duck_music,
             progress_callback=progress_callback,
         )
         if cancel_ev is not None and cancel_ev.is_set():
@@ -342,23 +367,36 @@ def process_video(req: ProcessRequest):
     if req.max_duration <= req.min_duration:
         raise HTTPException(status_code=400, detail="max_duration must be greater than min_duration")
 
-    job_id = uuid.uuid4().hex[:8]
-    JOBS[job_id] = {"status": "queued", "clips": [], "error": None, "progress": 0}
-    _JOB_REQUESTS[job_id] = req
-    _JOB_CANCEL[job_id] = threading.Event()
-    _JOBS_ORDER.append(job_id)
-    _prune_jobs()
-
-    # Enqueue serially behind a single worker so a burst of /process calls
-    # doesn't spawn N ffmpeg/Whisper processes at once.
-    global _WORKER_THREAD
-    with _JOB_LOCK:
-        _QUEUE_JOBS.append(job_id)
-        if _WORKER_THREAD is None or not _WORKER_THREAD.is_alive():
-            _WORKER_THREAD = threading.Thread(target=_drain_job_queue, daemon=True)
-            _WORKER_THREAD.start()
-
+    job_id = _enqueue_process_job(req)
     return ProcessResponse(job_id=job_id, status="queued")
+
+
+class BatchProcessResponse(BaseModel):
+    job_ids: List[str]
+    count: int
+    status: str = "queued"
+
+
+@app.post("/process/batch", response_model=BatchProcessResponse)
+def process_video_batch(req: ProcessRequest):
+    """Queue several videos at once. Provide the shared settings on the request
+    plus `video_paths`; each path becomes its own job, drained serially by the
+    same single worker so we never run N Whisper/ffmpeg passes concurrently.
+    """
+    paths = [p for p in (req.video_paths or []) if p and os.path.exists(p)]
+    if not paths:
+        raise HTTPException(status_code=400, detail="No existing video files in video_paths")
+    if not (1 <= req.max_clips <= 20):
+        raise HTTPException(status_code=400, detail="max_clips must be between 1 and 20")
+    if req.max_duration <= req.min_duration:
+        raise HTTPException(status_code=400, detail="max_duration must be greater than min_duration")
+
+    job_ids: List[str] = []
+    for path in paths:
+        # Clone the shared settings, pointing each job at one source file.
+        per = req.model_copy(update={"video_path": path, "video_paths": None})
+        job_ids.append(_enqueue_process_job(per))
+    return BatchProcessResponse(job_ids=job_ids, count=len(job_ids))
 
 
 @app.get("/job/{job_id}")

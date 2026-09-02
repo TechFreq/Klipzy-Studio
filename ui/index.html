@@ -326,6 +326,36 @@
                 </span>
               </span>
             </label>
+            <label class="toggle">
+              <input type="checkbox" id="normalize-audio" checked />
+              <span>🔊 Normalize loudness (-14 LUFS)
+                <span class="tooltip-toggle" tabindex="0" role="tooltip" aria-label="More info about loudness normalization" title="">
+                  ❓<span class="tooltip-text">Levels every clip to the loudness TikTok / YouTube / Reels expect (~-14 LUFS), so your shorts aren't quiet or inconsistent. Fully local, recommended on.</span>
+                </span>
+              </span>
+            </label>
+            <label class="toggle">
+              <input type="checkbox" id="auto-zoom" />
+              <span>🔍 Auto-zoom (subtle push-in)
+                <span class="tooltip-toggle" tabindex="0" role="tooltip" aria-label="More info about auto-zoom" title="">
+                  ❓<span class="tooltip-text">Adds a slow, gentle push-in over each clip — the "professionally edited" motion that keeps eyes on the screen. Purely visual, fully local.</span>
+                </span>
+              </span>
+            </label>
+          </div>
+
+          <!-- Background music (optional, mixed under the speech + auto-ducked) -->
+          <div class="music-picker-row">
+            <button type="button" class="btn btn-small" id="pick-music-btn" title="Choose a background music track">🎵 Background music…</button>
+            <input type="text" id="music-path" placeholder="No music selected (optional)" readonly />
+            <button type="button" class="btn btn-small" id="clear-music-btn" title="Remove the background track" style="display:none;">✕</button>
+            <label class="music-vol-label" for="music-volume" title="Music volume relative to speech">
+              Vol <input type="range" id="music-volume" min="0.02" max="0.5" step="0.01" value="0.12" />
+            </label>
+            <label class="toggle music-duck-toggle">
+              <input type="checkbox" id="duck-music" checked />
+              <span>Duck under speech</span>
+            </label>
           </div>
 
           <!-- Button Toggle for Caption Styling Menu -->
@@ -473,6 +503,7 @@
 
           <div class="step-actions" style="margin-top: 20px;">
             <button class="btn btn-primary btn-large" id="start-clipping">🚀 Start Clipping & Transcribing</button>
+            <button class="btn btn-secondary btn-large" id="batch-process-btn" title="Pick several videos and queue them with these same settings">📦 Batch process multiple videos</button>
           </div>
         </div>
       </div>

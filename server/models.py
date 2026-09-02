@@ -72,6 +72,9 @@ class ClipResult(BaseModel):
 
 class ProcessRequest(BaseModel):
     video_path: str
+    # Optional: batch mode. When set (via /process/batch) each path is enqueued
+    # as its own job reusing all the other settings on this request.
+    video_paths: Optional[List[str]] = None
     vertical_crop: bool = True
     aspect_ratio: Optional[str] = "9:16"  # "9:16" | "1:1" | "4:5" | "16:9" | "full"
     max_clips: int = 5
@@ -91,6 +94,12 @@ class ProcessRequest(BaseModel):
     remove_silence: bool = False
     bleep_profanity: bool = False
     mute_profanity: bool = False
+    # ---- audio/visual polish (optional, off by default) ----
+    normalize_audio: bool = False       # EBU R128 loudness (~-14 LUFS)
+    auto_zoom: bool = False             # gentle continuous push-in
+    music_path: Optional[str] = None    # background track mixed under speech
+    music_volume: float = 0.12
+    duck_music: bool = True             # duck music under speech
 # ---- CapCut-style caption fine-tuning (optional; falls back to the preset's values) ----
     font_name: Optional[str] = None
     primary_color: Optional[str] = None

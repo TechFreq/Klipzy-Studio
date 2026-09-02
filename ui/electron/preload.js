@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('clipperAPI', {
   // Shared secret for the local API. See server/auth.py for why it exists.
   getApiToken: () => ipcRenderer.invoke('api-token'),
   selectCameraClip: () => ipcRenderer.invoke('select-camera-file'),
+  selectMusic: () => ipcRenderer.invoke('select-music-file'),
+  selectVideosMulti: () => ipcRenderer.invoke('select-videos-multi'),
   selectOutputFolder: (defaultPath) => ipcRenderer.invoke('select-output-folder', defaultPath),
   revealInFolder: (filePath) => ipcRenderer.invoke('reveal-in-folder', filePath),
   openLogsFolder: () => ipcRenderer.invoke('open-logs-folder'),

@@ -1588,3 +1588,21 @@ body {
   background: var(--bg); border: 1px solid var(--border); color: var(--text);
   border-radius: 8px; padding: 8px 10px; font-size: 14px; width: 100%;
 }
+
+/* Background-music picker row (Step 2 options). */
+.music-picker-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 10px; padding: 10px 12px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+}
+.music-picker-row #music-path {
+  flex: 1 1 220px; min-width: 160px;
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  border-radius: 8px; padding: 6px 10px; font-size: 13px;
+}
+.music-picker-row .music-vol-label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--muted, #9aa);
+}
+.music-picker-row .music-duck-toggle { margin: 0; }
+#batch-process-btn { margin-top: 10px; }

@@ -1781,41 +1781,7 @@ async function startClipping() {
   setWizardStep(3);
   setProcessingActive(true);  // show the spinner immediately; pollJob keeps it on
 
-  const captionOpts = collectCaptionOptions();
-
-  const payload = {
-    video_path: selectedVideo,
-    vertical_crop: document.getElementById('vertical-crop').checked,
-    aspect_ratio: document.getElementById('clip-aspect-ratio') ? document.getElementById('clip-aspect-ratio').value : '9:16',
-    caption_style: captionOpts.caption_style,
-    font_size: captionOpts.font_size,
-    font_name: captionOpts.font_name,
-    primary_color: captionOpts.primary_color,
-    highlight_color: captionOpts.highlight_color,
-    outline_color: captionOpts.outline_color,
-    outline_width: captionOpts.outline_width,
-    position: captionOpts.position,
-    chunk_size: captionOpts.chunk_size,
-    uppercase: captionOpts.uppercase,
-    bold: captionOpts.bold,
-    italic: captionOpts.italic,
-    intro_caption: captionOpts.intro_caption,
-    intro_caption_duration: captionOpts.intro_caption_duration,
-    intro_enabled: captionOpts.intro_enabled,
-    intro_font_size: captionOpts.intro_font_size,
-    max_clips: parseInt(document.getElementById('max-clips').value) || 5,
-    min_duration: parseFloat(document.getElementById('min-duration').value) || 20,
-    max_duration: parseFloat(document.getElementById('max-duration').value) || 60,
-    whisper_model: document.getElementById('whisper-model').value,
-    use_audio_energy: document.getElementById('audio-energy').checked,
-    use_llm: document.getElementById('use-llm').checked,
-    speaker_aware_selection: document.getElementById('speaker-aware-selection') ? document.getElementById('speaker-aware-selection').checked : false,
-    speaker_aware_crop: document.getElementById('speaker-aware-crop') ? document.getElementById('speaker-aware-crop').checked : false,
-    burn_captions: document.getElementById('burn-captions').checked,
-    remove_silence: document.getElementById('remove-silence') ? document.getElementById('remove-silence').checked : false,
-    bleep_profanity: document.getElementById('censor-profanity') ? document.getElementById('censor-profanity').checked : false,
-    mute_profanity: false,
-  };
+  const payload = buildProcessPayload();
 
   try {
     const res = await fetch(`${serverUrl}/process`, {
@@ -4508,6 +4474,119 @@ document.getElementById('pick-broll-btn')?.addEventListener('click', async () =>
     }
   }
 });
+
+// Background music picker: choose a track, mixed under the speech at render time.
+document.getElementById('pick-music-btn')?.addEventListener('click', async () => {
+  let file = null;
+  if (window.clipperAPI && window.clipperAPI.selectMusic) {
+    file = await window.clipperAPI.selectMusic();
+  } else {
+    file = window.prompt('Paste the full path to a music file:');
+  }
+  if (file) {
+    const input = document.getElementById('music-path');
+    if (input) input.value = file;
+    const clearBtn = document.getElementById('clear-music-btn');
+    if (clearBtn) clearBtn.style.display = '';
+    showToast('🎵 Background music added — it will duck under the speech.', 'success');
+  }
+});
+
+document.getElementById('clear-music-btn')?.addEventListener('click', () => {
+  const input = document.getElementById('music-path');
+  if (input) input.value = '';
+  const clearBtn = document.getElementById('clear-music-btn');
+  if (clearBtn) clearBtn.style.display = 'none';
+});
+
+// Builds the /process request body from the current UI settings. Shared by the
+// single-video "Start Clipping" flow and the batch flow (which swaps in a list
+// of video_paths).
+function buildProcessPayload() {
+  const captionOpts = collectCaptionOptions();
+  return {
+    video_path: selectedVideo,
+    vertical_crop: document.getElementById('vertical-crop').checked,
+    aspect_ratio: document.getElementById('clip-aspect-ratio') ? document.getElementById('clip-aspect-ratio').value : '9:16',
+    caption_style: captionOpts.caption_style,
+    font_size: captionOpts.font_size,
+    font_name: captionOpts.font_name,
+    primary_color: captionOpts.primary_color,
+    highlight_color: captionOpts.highlight_color,
+    outline_color: captionOpts.outline_color,
+    outline_width: captionOpts.outline_width,
+    position: captionOpts.position,
+    chunk_size: captionOpts.chunk_size,
+    uppercase: captionOpts.uppercase,
+    bold: captionOpts.bold,
+    italic: captionOpts.italic,
+    intro_caption: captionOpts.intro_caption,
+    intro_caption_duration: captionOpts.intro_caption_duration,
+    intro_enabled: captionOpts.intro_enabled,
+    intro_font_size: captionOpts.intro_font_size,
+    max_clips: parseInt(document.getElementById('max-clips').value) || 5,
+    min_duration: parseFloat(document.getElementById('min-duration').value) || 20,
+    max_duration: parseFloat(document.getElementById('max-duration').value) || 60,
+    whisper_model: document.getElementById('whisper-model').value,
+    use_audio_energy: document.getElementById('audio-energy').checked,
+    use_llm: document.getElementById('use-llm').checked,
+    speaker_aware_selection: document.getElementById('speaker-aware-selection') ? document.getElementById('speaker-aware-selection').checked : false,
+    speaker_aware_crop: document.getElementById('speaker-aware-crop') ? document.getElementById('speaker-aware-crop').checked : false,
+    burn_captions: document.getElementById('burn-captions').checked,
+    remove_silence: document.getElementById('remove-silence') ? document.getElementById('remove-silence').checked : false,
+    bleep_profanity: document.getElementById('censor-profanity') ? document.getElementById('censor-profanity').checked : false,
+    mute_profanity: false,
+    normalize_audio: document.getElementById('normalize-audio') ? document.getElementById('normalize-audio').checked : false,
+    auto_zoom: document.getElementById('auto-zoom') ? document.getElementById('auto-zoom').checked : false,
+    music_path: (document.getElementById('music-path') && document.getElementById('music-path').value) || null,
+    music_volume: parseFloat(document.getElementById('music-volume') ? document.getElementById('music-volume').value : '0.12') || 0.12,
+    duck_music: document.getElementById('duck-music') ? document.getElementById('duck-music').checked : true,
+  };
+}
+
+// Batch processing: pick several videos and queue them with the current settings.
+document.getElementById('batch-process-btn')?.addEventListener('click', batchProcessVideos);
+
+async function batchProcessVideos() {
+  let files = [];
+  if (window.clipperAPI && window.clipperAPI.selectVideosMulti) {
+    files = await window.clipperAPI.selectVideosMulti();
+  } else {
+    const paths = window.prompt('Paste video paths separated by a newline or comma:');
+    if (paths) files = paths.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+  }
+  if (!files || !files.length) return;
+
+  const ok = await showConfirm(
+    `Queue ${files.length} video${files.length > 1 ? 's' : ''} for processing with the current settings? ` +
+    'They run one after another so your machine isn\'t overloaded.',
+    'Batch process',
+  );
+  if (!ok) return;
+
+  // Reuse the single-video payload builder's settings, but send the file list.
+  const payload = buildProcessPayload();
+  if (!payload) return;
+  payload.video_paths = files;
+  delete payload.video_path;
+
+  try {
+    const res = await fetch(`${serverUrl}/process/batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload, video_path: files[0] }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `Server returned ${res.status}`);
+    showToast(`✅ Queued ${data.count} videos. Watch progress in the jobs panel.`, 'success');
+    if (Array.isArray(data.job_ids) && data.job_ids.length) {
+      // Follow the first job so the UI shows live progress; the rest drain after.
+      pollJob(data.job_ids[0]);
+    }
+  } catch (e) {
+    showError(e.message);
+  }
+}
 
 // Helper: prepare emoji-injected ASS path for overlay (returns path or null)
 async function prepareEmojiAssPath(clip, injectEmojis) {

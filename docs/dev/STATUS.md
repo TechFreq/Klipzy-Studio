@@ -139,6 +139,23 @@ These lean into the moat cloud tools can't match: unlimited length, no per-minut
       (`/export/subtitles`) uses a static offset, so the dynamic follow is lost on re-render; and the
       audio→face attribution (talker = most head motion during a turn) is a heuristic that needs footage
       validation.
+17. **Editing-polish pass** (done, session 2026-09-02) — the "makes it look professionally edited" layer,
+    all local ffmpeg, all off-by-default toggles wired through ProcessRequest → pipeline → render_clip:
+    - [x] **Loudness normalization** — EBU R128 `loudnorm` to ~-14 LUFS (platform standard) so clips
+      aren't quiet/inconsistent. `build_audio_filter_chain` in ffmpeg_tools; UI toggle "🔊 Normalize
+      loudness" (default ON).
+    - [x] **Background music + auto-ducking** — user-supplied track looped (`-stream_loop -1`), mixed under
+      the speech, sidechain-compressed by the voice so it dips when someone talks. Electron picker
+      (select-music-file) + volume slider + duck toggle. Video is stream-copied when only audio changes.
+    - [x] **Auto-zoom push-in** — gentle continuous Ken Burns zoom via `zoompan` (needs probed dims/fps;
+      `build_zoompan_filter` + `probe_video_dims`). UI toggle "🔍 Auto-zoom". Skips quietly if probe fails.
+    - [x] **Multiple hook variants** — already existed (#12): /tools/suggest-hooks + /tools/rewrite-hook
+      with the clickable-chip UI. No new work needed.
+    - [x] **Batch processing** — `/process/batch` enqueues one job per video onto the existing serial
+      worker queue (never N concurrent heavy passes). Electron multi-select picker + "📦 Batch process"
+      button; reuses the single-video settings via `buildProcessPayload()`.
+    - 7 new unit tests (tests/test_av_polish.py). KNOWN LIMITATION: audio polish (loudness/music) applies
+      at initial clip render; a later caption re-render via /export/subtitles doesn't re-apply it.
 
 ## UI/UX fixes reported by user (for next session — mostly `ui/`)
 

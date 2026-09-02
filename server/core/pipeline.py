@@ -109,6 +109,12 @@ class VideoClipperEngine:
         remove_silence: bool = False,
         bleep_profanity: bool = False,
         mute_profanity: bool = False,
+        # ---- audio/visual polish (all optional, off by default) ----
+        normalize_audio: bool = False,   # EBU R128 loudness (~-14 LUFS) for platform-consistent volume
+        auto_zoom: bool = False,         # gentle continuous push-in
+        music_path: Optional[str] = None,  # background track mixed under speech
+        music_volume: float = 0.12,
+        duck_music: bool = True,         # sidechain-duck music under speech
         # ---- CapCut-style caption fine-tuning (optional; fallback to preset)----
         font_name: Optional[str] = None,
         primary_color: Optional[str] = None,
@@ -368,6 +374,11 @@ class VideoClipperEngine:
                 crop_x_expr=crop_expr,
                 burn_captions=burn_captions,
                 subtitle_path=sub_to_burn,
+                normalize_audio=normalize_audio,
+                auto_zoom=auto_zoom,
+                music_path=music_path,
+                music_volume=music_volume,
+                duck_music=duck_music,
             )
 
             # Optional profanity bleep/mute

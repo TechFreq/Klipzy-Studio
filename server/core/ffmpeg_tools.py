@@ -191,6 +191,112 @@ def build_crop_x_expression(keyframes, min_x: float, max_x: float, min_delta: fl
     return f"clip({expr},{float(min_x):.1f},{float(max_x):.1f})"
 
 
+def build_audio_filter_chain(
+    speech_label: str = "0:a",
+    music_label: Optional[str] = None,
+    normalize: bool = False,
+    music_volume: float = 0.12,
+    duck: bool = True,
+    loudness_target: float = -14.0,
+) -> Tuple[List[str], Optional[str]]:
+    """Build the audio side of the filtergraph for a clip render. Pure + testable.
+
+    Returns (chains, out_label). ``out_label`` is None when there's nothing to do
+    (caller then maps the source audio directly). Two effects, composable:
+
+      * normalize -> EBU R128 loudness to ``loudness_target`` LUFS (default -14,
+        the level TikTok/YouTube/Reels expect) so clips aren't quiet/inconsistent.
+      * music_label -> mix a background track under the speech; when ``duck`` is
+        on the music is sidechain-compressed by the speech so it dips whenever
+        someone talks (voice stays intelligible).
+    """
+    if not normalize and not music_label:
+        return [], None
+
+    # Force a consistent stereo/48k layout on both branches. sidechaincompress
+    # and amix misbehave (or collapse to mono) when the speech and music have
+    # different channel counts, so normalise them up front.
+    stereo = "aformat=channel_layouts=stereo:sample_rates=48000"
+
+    chains: List[str] = []
+    sp_ops = []
+    if normalize:
+        sp_ops.append(f"loudnorm=I={loudness_target:.1f}:TP=-1.5:LRA=11")
+    sp_ops.append(stereo)
+    speech_filters = ",".join(sp_ops)
+
+    if not music_label:
+        # Normalize-only.
+        chains.append(f"[{speech_label}]{speech_filters}[aout]")
+        return chains, "[aout]"
+
+    chains.append(f"[{speech_label}]{speech_filters}[sp]")
+    if duck:
+        # Split speech: one branch is the final voice, the other drives the
+        # compressor's sidechain so the music ducks under it.
+        chains.append("[sp]asplit=2[spmain][spsc]")
+        chains.append(f"[{music_label}]volume={music_volume:.3f},{stereo}[mv]")
+        chains.append(
+            "[mv][spsc]sidechaincompress="
+            "threshold=0.05:ratio=8:attack=5:release=250[mduck]"
+        )
+        chains.append("[spmain][mduck]amix=inputs=2:duration=first:normalize=0[aout]")
+    else:
+        chains.append(f"[{music_label}]volume={music_volume:.3f},{stereo}[mv]")
+        chains.append("[sp][mv]amix=inputs=2:duration=first:normalize=0[aout]")
+    return chains, "[aout]"
+
+
+def build_zoompan_filter(
+    in_label: str,
+    out_label: str,
+    width: int,
+    height: int,
+    fps: float,
+    zoom_max: float = 1.08,
+    zoom_rate: float = 0.0008,
+) -> str:
+    """Build a gentle continuous "push-in" (Ken Burns) zoompan filter chain entry.
+    Pure + testable.
+
+    zoompan needs an explicit output size and fps (its default is 1280x720),
+    which is why the caller probes the real frame dimensions first. The zoom
+    ramps from 1.0 toward ``zoom_max`` at ``zoom_rate`` per frame and holds,
+    centred, so clips get a subtle "professionally edited" motion.
+    """
+    w, h = int(width), int(height)
+    fps = max(1.0, float(fps))
+    z = f"min(zoom+{zoom_rate:.4f}\\,{zoom_max:.3f})"
+    x = "iw/2-(iw/zoom/2)"
+    y = "ih/2-(ih/zoom/2)"
+    return (
+        f"{in_label}zoompan=z='{z}':x='{x}':y='{y}':d=1:"
+        f"s={w}x{h}:fps={fps:.3f}{out_label}"
+    )
+
+
+def probe_video_dims(file_path: str) -> Optional[Tuple[int, int, float]]:
+    """Return (width, height, fps) of the first video stream, or None on failure.
+    Used by the auto-zoom path, which needs concrete dimensions/fps."""
+    try:
+        info = get_media_info(file_path)
+        for s in info.get("streams", []):
+            if s.get("codec_type") == "video":
+                w = int(s.get("width", 0))
+                h = int(s.get("height", 0))
+                rate = s.get("r_frame_rate", "30/1")
+                try:
+                    num, den = rate.split("/")
+                    fps = float(num) / float(den) if float(den) else 30.0
+                except Exception:
+                    fps = 30.0
+                if w > 0 and h > 0:
+                    return w, h, (fps or 30.0)
+        return None
+    except Exception:
+        return None
+
+
 def build_filter_chain(
     aspect_ratio: Optional[str] = None,
     crop_x_offset: Optional[float] = None,
@@ -368,6 +474,13 @@ def render_clip(
     cam_scale: float = 0.3,
     cam_position: str = "bottom-right",
     crop_x_expr: Optional[str] = None,
+    # ---- audio/visual polish (all optional, off by default) ----
+    normalize_audio: bool = False,
+    music_path: Optional[str] = None,
+    music_volume: float = 0.12,
+    duck_music: bool = True,
+    auto_zoom: bool = False,
+    zoom_max: float = 1.08,
 ) -> str:
     """
     Render a clip segment with optional vertical crop and hardware-accelerated encoding.
@@ -387,6 +500,9 @@ def render_clip(
     duration = end_time - start_time
 
     has_cam = bool(cam_video and os.path.exists(cam_video))
+    music_ok = bool(music_path and os.path.exists(str(Path(music_path).expanduser())))
+    if music_ok:
+        music_path = str(Path(music_path).expanduser().resolve())
     filters = build_filter_chain(
         aspect_ratio=aspect_ratio,
         crop_x_offset=crop_x_offset,
@@ -397,6 +513,29 @@ def render_clip(
         cam_position=cam_position,
         crop_x_expr=crop_x_expr,
     )
+
+    # Auto-zoom (gentle push-in). Needs concrete dimensions/fps for zoompan, so
+    # probe the source; if that fails we simply skip the zoom (degrade quietly).
+    if auto_zoom:
+        dims = probe_video_dims(input_video)
+        if dims:
+            src_w, src_h, src_fps = dims
+            if aspect_ratio == "9:16":
+                zw, zh = int(src_h * 9 / 16), src_h
+            elif aspect_ratio == "4:5":
+                zw, zh = int(src_h * 4 / 5), src_h
+            elif aspect_ratio == "1:1":
+                zw = zh = min(src_w, src_h)
+            else:
+                zw, zh = src_w, src_h
+            # Even dimensions keep H.264 happy.
+            zw -= zw % 2
+            zh -= zh % 2
+            src_label = "[v]" if filters else "[0:v]"
+            filters.append(build_zoompan_filter(
+                src_label, "[v]", zw, zh, src_fps, zoom_max=zoom_max,
+            ))
+
     use_complex = False
 
     burn_cwd = None
@@ -422,12 +561,27 @@ def render_clip(
             # Burn captions on a plain passthrough and label it [out].
             filters.append(f"[0:v]subtitles={sub_rel},null[out]")
 
-    # If filters were built, ensure the graph terminates with a single [out] label.
+    # Terminate the video graph with a single [out] label if any video filters ran.
+    video_has_out = False
     if filters:
-        has_out = any(part.endswith("[out]") for part in filters)
-        if not has_out:
+        video_has_out = any(part.endswith("[out]") for part in filters)
+        if not video_has_out:
             filters.append("[v]null[out]")
-        use_complex = True
+            video_has_out = True
+
+    # Audio graph (loudness normalization / background music / ducking).
+    audio_chains, audio_out = build_audio_filter_chain(
+        speech_label="0:a",
+        music_label=(f"{2 if has_cam else 1}:a" if music_ok else None),
+        normalize=normalize_audio,
+        music_volume=music_volume,
+        duck=duck_music,
+    )
+
+    graph = list(filters)
+    if audio_out:
+        graph += audio_chains
+    use_complex = bool(graph)
 
     cmd = [
         "ffmpeg", "-y",
@@ -436,22 +590,29 @@ def render_clip(
     ]
     if has_cam:
         cmd += ["-i", cam_video]
+    if music_ok:
+        # Loop the music so a short track still covers the whole clip; the output
+        # -t below bounds it (amix duration=first tracks the speech length).
+        cmd += ["-stream_loop", "-1", "-i", music_path]
     cmd += ["-t", str(duration)]
 
     if use_complex:
         encoder, enc_args = detect_hw_encoder()
-        cmd += ["-filter_complex", ";".join(filters)]
-        cmd += ["-map", "[out]", "-map", "0:a:0?"]
-        cmd += [
-            "-c:v", encoder,
-            *enc_args,
-            "-c:a", "aac", "-b:a", "192k",
-            output_video
-        ]
+        cmd += ["-filter_complex", ";".join(graph)]
+        if video_has_out:
+            cmd += ["-map", "[out]", "-c:v", encoder, *enc_args]
+            video_reencoded = True
+        else:
+            # Only audio was processed -> copy video untouched (fast, lossless).
+            cmd += ["-map", "0:v:0", "-c:v", "copy"]
+            video_reencoded = False
+        cmd += ["-map", audio_out if audio_out else "0:a:0?"]
+        cmd += ["-c:a", "aac", "-b:a", "192k", output_video]
 
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=burn_cwd)
-        if result.returncode != 0:
-            # Fallback to software encoding libx264
+        if result.returncode != 0 and video_reencoded:
+            # Fallback to software encoding libx264 (only when we actually
+            # re-encoded video with the hardware encoder).
             cmd_fb = [c for c in cmd]
             enc_i = cmd_fb.index("-c:v")
             enc_args_i = enc_i + 2
@@ -460,6 +621,8 @@ def render_clip(
             res_fb = subprocess.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=burn_cwd)
             if res_fb.returncode != 0:
                 raise RuntimeError(f"Clip rendering failed: {res_fb.stderr[-500:]}")
+        elif result.returncode != 0:
+            raise RuntimeError(f"Clip rendering failed: {result.stderr[-500:]}")
         return output_video
 
     # Fast path: plain full-frame cut with no captions / PiP -> stream copy.
