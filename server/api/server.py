@@ -1003,14 +1003,29 @@ def api_translate_captions(req: TranslateCaptionsRequest):
         try:
             from server.core.caption_styler import generate_karaoke_captions
             from server.core.ffmpeg_tools import render_clip
-            from server.models import TranscriptSegment
+            from server.models import TranscriptSegment, WordTimestamp
 
             cues = result.get("cues", [])
-            segs = [
-                TranscriptSegment(id=i, start=float(c["start"]), end=float(c["end"]),
-                                  text=c["text"], words=[])
-                for i, c in enumerate(cues) if c.get("text")
-            ]
+            segs = []
+            for i, c in enumerate(cues):
+                text = (c.get("text") or "").strip()
+                if not text:
+                    continue
+                start, end = float(c["start"]), float(c["end"])
+                # Translation loses per-word alignment (word order differs across
+                # languages), so spread the translated words evenly across the
+                # cue's time span — an approximate karaoke highlight that still
+                # animates word-by-word rather than a static line.
+                toks = text.split()
+                words = []
+                if toks and end > start:
+                    step = (end - start) / len(toks)
+                    words = [
+                        WordTimestamp(word=w, start=round(start + j * step, 3),
+                                      end=round(start + (j + 1) * step, 3))
+                        for j, w in enumerate(toks)
+                    ]
+                segs.append(TranscriptSegment(id=i, start=start, end=end, text=text, words=words))
             base = Path(result["srt"]).with_suffix("")  # <name>.<lang>
             trans_ass = f"{base}.ass"
             generate_karaoke_captions(

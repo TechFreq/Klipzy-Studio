@@ -4155,9 +4155,15 @@ async function quickRemoveFillers(idx, btn) {
   const orig = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Cutting…'; }
   try {
+    const aggressive = !!document.getElementById('filler-aggressive')?.checked;
     const res = await fetch(`${serverUrl}/tools/remove-fillers`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ video_path: clip.output_file, words: clip.words || [], also_remove_silence: true }),
+      body: JSON.stringify({
+        video_path: clip.output_file,
+        words: clip.words || [],
+        also_remove_silence: true,
+        remove_phrases: aggressive,  // conservative (disfluencies only) unless the toggle is on
+      }),
     });
     const data = await res.json();
     if (res.ok) {
