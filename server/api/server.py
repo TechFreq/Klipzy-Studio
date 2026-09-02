@@ -115,11 +115,12 @@ if _env_output and Path(_env_output).expanduser().is_absolute():
 else:
     OUTPUT_ROOT = Path(ENGINE.output_dir).resolve()
 
-# The user's preferred DEFAULT EXPORT folder (where the export dialog starts and
-# where exported clips land). This is intentionally SEPARATE from OUTPUT_ROOT:
-# generated/working clips always live in the internal working dir (OUTPUT_ROOT,
-# i.e. ./output) and are disposable; only explicit exports go to the user's
-# folder. Empty string = unset. Set via POST /output-folder.
+# The user's chosen OUTPUT folder — where rendered clips (plus their captions /
+# thumbnails) are written. When set via POST /output-folder it ALSO re-points
+# OUTPUT_ROOT + ENGINE.output_dir there, so new renders land in it directly.
+# Empty string = unset, in which case renders go to the disposable built-in
+# working dir (DEFAULT_OUTPUT_ROOT, i.e. ./output), which is treated as temp
+# scratch space and cleaned up on delete / clear-cache.
 EXPORT_DEFAULT_DIR = ""
 
 CHAT = EditChat()
@@ -1670,21 +1671,22 @@ class OutputFolderRequest(BaseModel):
 
 @app.get("/output-folder")
 def get_output_folder():
-    """Return the user's default EXPORT folder (empty string = unset).
+    """Return the user's chosen output folder where rendered clips are written.
 
-    Note: generated/working clips are NOT saved here — they live in the internal
-    working dir and are disposable. This is only the default export destination.
-    """
+    Empty string = unset, in which case renders go to the disposable built-in
+    ./output working dir (temporary scratch space)."""
     return {"folder": EXPORT_DEFAULT_DIR, "is_default": EXPORT_DEFAULT_DIR == ""}
 
 
 @app.post("/output-folder")
 def set_output_folder(req: OutputFolderRequest):
-    """Set the user's default EXPORT folder (created if missing).
+    """Choose the folder where rendered clips are saved (created if missing).
 
-    This does NOT change where generated/working clips are written — those stay
-    in the internal working directory and are cleaned up on delete / clear-cache.
-    It only sets where the export dialog starts and where exports default to.
+    Setting it re-points the engine's output dir there, so NEW renders/jobs land
+    in the chosen folder directly. (Previously generated clips keep their paths,
+    and any running job finishes in the dir it started with.) Clearing it (empty
+    folder) reverts to the disposable built-in ./output working dir, which is
+    treated as temporary scratch space.
     """
     global EXPORT_DEFAULT_DIR
     folder = req.folder.strip() if req.folder else ""
@@ -1698,10 +1700,12 @@ def set_output_folder(req: OutputFolderRequest):
             root.mkdir(parents=True, exist_ok=True)
             root = root.resolve()
         except OSError as e:
-            raise HTTPException(status_code=400, detail=f"Cannot use that export folder: {e}")
+            raise HTTPException(status_code=400, detail=f"Cannot use that output folder: {e}")
         EXPORT_DEFAULT_DIR = str(root)
+        _sync_output_root(root)                 # send new renders to the chosen folder
     else:
-        EXPORT_DEFAULT_DIR = ""  # unset — export dialog uses its own default
+        EXPORT_DEFAULT_DIR = ""
+        _sync_output_root(DEFAULT_OUTPUT_ROOT)  # revert to the temp ./output working dir
     return {"folder": EXPORT_DEFAULT_DIR, "is_default": EXPORT_DEFAULT_DIR == ""}
 
 
