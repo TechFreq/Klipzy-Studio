@@ -124,6 +124,32 @@ EXPORT_DEFAULT_DIR = ""
 
 CHAT = EditChat()
 
+
+def _hf_token_path() -> Path:
+    """Where the optional Hugging Face token is stored (gitignored logs dir).
+    Used by speaker diarization (pyannote) to download its pretrained model."""
+    base = Path(os.environ["KLIPZY_LOG_DIR"]) if os.environ.get("KLIPZY_LOG_DIR") \
+        else (Path(__file__).resolve().parents[2] / "logs")
+    return base / "hf_token.txt"
+
+
+def _load_hf_token_env():
+    """Load a saved HF token into the environment at startup so optional
+    diarization can use it without the user re-entering it each run."""
+    try:
+        if os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN"):
+            return
+        p = _hf_token_path()
+        if p.is_file():
+            tok = p.read_text(encoding="utf-8").strip()
+            if tok:
+                os.environ["HF_TOKEN"] = tok
+    except Exception:
+        pass
+
+
+_load_hf_token_env()
+
 # App-wide preferred local LLM (Ollama) model. Set from the Setup panel; used by
 # both the AI Edit Chat and LLM highlight discovery. Whisper is chosen per-job.
 PREFERRED_OLLAMA_MODEL = "gemma2:2b"
@@ -1021,6 +1047,63 @@ def api_diarize(req: DiarizeRequest):
         raise HTTPException(status_code=400, detail=f"File not found: {req.video_path}")
     from server.core.diarizer import diarize
     return diarize(req.video_path)
+
+
+@app.get("/api/setup/hf-token")
+def get_hf_token():
+    """Whether a Hugging Face token is configured (never returns the value)."""
+    have = bool(os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN") or _hf_token_path().is_file())
+    return {"set": have}
+
+
+class HfTokenRequest(BaseModel):
+    token: str = ""
+
+
+@app.post("/api/setup/hf-token")
+def set_hf_token(req: HfTokenRequest):
+    """Save (or clear) the Hugging Face token used by optional diarization. Stored
+    locally in the gitignored logs dir; also applied to the running process."""
+    tok = (req.token or "").strip()
+    p = _hf_token_path()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if tok:
+            p.write_text(tok, encoding="utf-8")
+            os.environ["HF_TOKEN"] = tok
+        else:
+            if p.exists():
+                p.unlink()
+            os.environ.pop("HF_TOKEN", None)
+        return {"ok": True, "set": bool(tok)}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class OptionalInstallRequest(BaseModel):
+    component: str
+
+
+@app.post("/api/setup/install-optional")
+def install_optional(req: OptionalInstallRequest):
+    """Install a heavy OPTIONAL dependency into the app's venv (kept out of
+    Install-All). Currently: 'diarization' -> pyannote.audio."""
+    import sys
+    pkgs = {"diarization": ["pyannote.audio"]}.get((req.component or "").strip())
+    if not pkgs:
+        raise HTTPException(status_code=400, detail=f"Unknown optional component: {req.component}")
+    cmd = [sys.executable, "-m", "pip", "install", *pkgs]
+    try:
+        r = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=1800,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        return {"component": req.component, "ok": r.returncode == 0,
+                "returncode": r.returncode, "stderr": (r.stderr or "")[-1500:]}
+    except subprocess.TimeoutExpired:
+        return {"component": req.component, "ok": False, "error": "Install timed out"}
+    except Exception as e:  # noqa: BLE001
+        return {"component": req.component, "ok": False, "error": str(e)}
 
 
 @app.post("/tools/bleep-mute", response_model=BleepMuteResponse)

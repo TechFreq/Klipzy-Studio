@@ -844,6 +844,31 @@
           </div>
         </div>
 
+        <!-- Optional AI add-ons card -->
+        <div class="card">
+          <div class="card-head-row">
+            <h3>🧩 Optional AI add-ons</h3>
+            <span class="muted small">Heavy extras — install only if you want them</span>
+          </div>
+          <div class="optional-addon">
+            <div class="optional-addon-info">
+              <strong>🗣 Speaker diarization (beta)</strong>
+              <span class="muted small" id="diarization-status">Checking…</span>
+              <p class="muted small">Detects “who spoke when” for multi-person podcasts. Needs the heavy <code>pyannote.audio</code> package and a free Hugging Face token.</p>
+            </div>
+            <div class="optional-addon-actions">
+              <button class="btn btn-small btn-secondary" id="install-diarization-btn">⬇️ Install pyannote</button>
+            </div>
+          </div>
+          <div class="hf-token-row">
+            <label class="option" style="flex:1;">
+              <span>🤗 Hugging Face token <span class="muted small" id="hf-token-status"></span></span>
+              <input type="password" id="hf-token-input" placeholder="hf_… (stored locally, used for the diarization model)" />
+            </label>
+            <button class="btn btn-small btn-primary" id="hf-token-save">Save token</button>
+          </div>
+        </div>
+
         <!-- Change AI models card -->
         <div class="card">
           <div class="card-head-row">

@@ -1572,3 +1572,19 @@ body {
 }
 .hook-variant-chip:hover { border-color: var(--accent); background: rgba(99,102,241,0.12); }
 .hook-variant-chip.chosen { border-color: var(--accent); background: rgba(99,102,241,0.22); color: #fff; }
+
+/* Optional AI add-ons (Setup) */
+.optional-addon {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px; border: 1px solid var(--border); border-radius: 10px; margin: 8px 0 12px;
+}
+.optional-addon-info { flex: 1; }
+.optional-addon-info strong { display: block; margin-bottom: 2px; }
+.optional-addon-info p { margin-top: 4px; }
+.optional-addon-actions { flex: 0 0 auto; }
+.hf-token-row { display: flex; align-items: flex-end; gap: 10px; }
+.hf-token-row .option { display: flex; flex-direction: column; gap: 6px; }
+.hf-token-row input {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  border-radius: 8px; padding: 8px 10px; font-size: 14px; width: 100%;
+}

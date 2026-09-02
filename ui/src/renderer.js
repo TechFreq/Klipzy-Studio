@@ -3273,8 +3273,74 @@ async function loadSetupPanel() {
     bindClearCache();
     loadAiModels(data);
     renderModelCatalog();
+    loadOptionalAddons();
   } catch (e) {
     document.getElementById('setup-hardware').innerHTML = '<span class="muted">⚠️ Could not reach the server.</span>';
+  }
+}
+
+// Optional AI add-ons (currently: speaker diarization via pyannote + HF token).
+async function loadOptionalAddons() {
+  const statusEl = document.getElementById('diarization-status');
+  const installBtn = document.getElementById('install-diarization-btn');
+  // Diarization availability.
+  try {
+    const r = await fetch(`${serverUrl}/tools/diarization-available`);
+    const d = await r.json();
+    if (statusEl) statusEl.textContent = d.available ? '✓ Installed' : 'Not installed';
+    if (installBtn) {
+      installBtn.textContent = d.available ? '✓ Installed' : '⬇️ Install pyannote';
+      installBtn.disabled = !!d.available;
+    }
+  } catch (_) { if (statusEl) statusEl.textContent = ''; }
+  // HF token status.
+  try {
+    const r = await fetch(`${serverUrl}/api/setup/hf-token`);
+    const d = await r.json();
+    const ts = document.getElementById('hf-token-status');
+    if (ts) ts.textContent = d.set ? '· saved ✓' : '· not set';
+  } catch (_) {}
+
+  if (installBtn && !installBtn.dataset.bound) {
+    installBtn.dataset.bound = '1';
+    installBtn.addEventListener('click', async () => {
+      const orig = installBtn.textContent;
+      installBtn.disabled = true;
+      installBtn.textContent = '⏳ Installing… (a few min)';
+      showToast('Installing pyannote.audio — this is a large download', 'info');
+      try {
+        const r = await fetch(`${serverUrl}/api/setup/install-optional?component=diarization`, { method: 'POST' });
+        const d = await r.json();
+        if (d.ok) { showToast('✅ pyannote installed — restart the app to load it', 'success'); }
+        else throw new Error(d.error || d.stderr || 'install failed');
+      } catch (e) {
+        showToast(`Install failed: ${e.message || e}`, 'error');
+      } finally {
+        installBtn.disabled = false;
+        installBtn.textContent = orig;
+        loadOptionalAddons();
+      }
+    });
+  }
+  const saveBtn = document.getElementById('hf-token-save');
+  if (saveBtn && !saveBtn.dataset.bound) {
+    saveBtn.dataset.bound = '1';
+    saveBtn.addEventListener('click', async () => {
+      const input = document.getElementById('hf-token-input');
+      const token = (input && input.value || '').trim();
+      try {
+        const r = await fetch(`${serverUrl}/api/setup/hf-token`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token }),
+        });
+        if (!r.ok) throw new Error(`Server returned ${r.status}`);
+        if (input) input.value = '';
+        showToast(token ? 'Hugging Face token saved ✓' : 'Token cleared', 'success');
+        loadOptionalAddons();
+      } catch (e) {
+        showToast(`Could not save token: ${e.message || e}`, 'error');
+      }
+    });
   }
 }
 

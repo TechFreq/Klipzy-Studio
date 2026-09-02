@@ -28,6 +28,8 @@ gitstatus.txt
 
 # Local API token generated at runtime (never commit a secret)
 logs/api_token.txt
+# Hugging Face token for optional diarization (never commit a secret)
+logs/hf_token.txt
 
 # ML model weights downloaded on first use (YOLO etc.)
 *.pt
