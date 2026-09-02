@@ -107,6 +107,30 @@ def _apply_llm_rankings(
     return sorted(candidates, key=lambda c: getattr(c, "score", 0.0), reverse=True)
 
 
+def _coerce_rankings(data: Any) -> list:
+    """Normalize an LLM's JSON reply into a list of ranking dicts.
+
+    With Ollama's ``format="json"`` most local models return a top-level OBJECT,
+    not the array we ask for. They come back in three shapes we must handle:
+      1. a bare array: ``[{...}, {...}]``
+      2. an object wrapping the array: ``{"rankings": [...]}`` / ``{"clips": [...]}``
+      3. a SINGLE ranking object: ``{"id": 0, "score": 7, ...}`` — smaller models
+         (and even 14B under json mode) often collapse to just the first candidate.
+    Returning [] for cases we can't read keeps the caller on the heuristic order.
+    """
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        # An object that IS one ranking entry -> wrap it so its judgement counts.
+        if "id" in data and ("score" in data or "hook" in data or "title" in data):
+            return [data]
+        # An object that WRAPS the array under some key.
+        for v in data.values():
+            if isinstance(v, list):
+                return v
+    return []
+
+
 def rank_candidates_llm(
     candidates: List[ClipCandidate],
     model: str = "qwen2.5:7b",
@@ -131,17 +155,20 @@ def rank_candidates_llm(
         dur = getattr(c, "duration", 0.0) or 0.0
         listing.append(f"{i}: [{dur:.0f}s] {txt[:280]}")
 
+    n = len(candidates)
     prompt = (
         "You are a short-form video editor choosing which moments to publish as "
         "standalone vertical shorts. Below are CANDIDATE clips, each as "
         "`id: [duration] transcript`.\n\n"
-        "Score EACH candidate 0-10 on how well it works as a standalone short:\n"
+        f"There are {n} candidates, with ids 0 to {n - 1}. Score EVERY ONE of them "
+        "0-10 on how well it works as a standalone short:\n"
         "- is it a complete, self-contained thought (no missing setup)?\n"
         "- does it open with a strong hook and land a clear payoff?\n"
         "- is it a single focused topic?\n\n"
         "For each candidate also write a punchy hook (3-9 words) and a short title, "
         "grounded in that candidate's own transcript.\n"
-        "Return ONLY JSON: an array of objects "
+        'Return ONLY a JSON object of the form {"rankings": [ ... ]} where "rankings" '
+        f"is an array with EXACTLY {n} objects, one for every id 0 to {n - 1}, each "
         '{"id": <int>, "score": <0-10 number>, "hook": "...", "title": "...", "reason": "..."}. '
         "Use only the ids shown; do not invent clips.\n\n"
         "Candidates:\n" + "\n".join(listing)
@@ -154,10 +181,7 @@ def rank_candidates_llm(
             format="json",
         )
         content = (resp.get("message", {}) or {}).get("content", "") or ""
-        data = json.loads(content)
-        # Some models wrap the array in an object (e.g. {"clips": [...]}).
-        if isinstance(data, dict):
-            data = next((v for v in data.values() if isinstance(v, list)), [])
+        data = _coerce_rankings(json.loads(content))
         return _apply_llm_rankings(candidates, data)
     except Exception:
         return candidates

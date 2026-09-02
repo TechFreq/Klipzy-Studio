@@ -5,7 +5,7 @@ Covers timestamp boundary-snapping and the rank-and-refine score merge.
 
 from types import SimpleNamespace
 
-from server.core.llm_detector import _snap_window, _apply_llm_rankings
+from server.core.llm_detector import _snap_window, _apply_llm_rankings, _coerce_rankings
 
 
 SEGS = [
@@ -80,6 +80,42 @@ def test_apply_rankings_ignores_bad_entries():
 def test_apply_rankings_noop_on_non_list():
     cands = [_cand(5.0)]
     assert _apply_llm_rankings(cands, {"not": "a list"}) is cands
+
+
+# --- _coerce_rankings: normalize the shapes local models actually return under
+#     Ollama format="json" (bare array, wrapped array, or a single object). The
+#     single-object case was a real bug: models scored only candidate 0 and the
+#     old parser dropped it, so LLM judgement was silently discarded.
+def test_coerce_rankings_passthrough_list():
+    data = [{"id": 0, "score": 8}, {"id": 1, "score": 3}]
+    assert _coerce_rankings(data) == data
+
+
+def test_coerce_rankings_unwraps_object_with_array():
+    data = {"rankings": [{"id": 0, "score": 8}]}
+    assert _coerce_rankings(data) == [{"id": 0, "score": 8}]
+    # A differently-named wrapper key still works (some models use "clips").
+    assert _coerce_rankings({"clips": [{"id": 1}]}) == [{"id": 1}]
+
+
+def test_coerce_rankings_wraps_single_object():
+    # The bug: a lone ranking object must be treated as a one-element list.
+    obj = {"id": 0, "score": 7, "hook": "h", "title": "t", "reason": "r"}
+    assert _coerce_rankings(obj) == [obj]
+
+
+def test_coerce_rankings_empty_on_garbage():
+    assert _coerce_rankings("nope") == []
+    assert _coerce_rankings({"meta": "no rankings here"}) == []
+
+
+def test_coerce_rankings_feeds_apply_rankings():
+    # End-to-end: a single-object reply now actually moves scores.
+    cands = [_cand(5.0), _cand(5.0)]
+    single = {"id": 1, "score": 10.0, "hook": "wow"}
+    out = _apply_llm_rankings(cands, _coerce_rankings(single), weight=0.6)
+    assert out[0] is cands[1]
+    assert cands[1].hook_text == "wow"
 
 
 def test_resolve_default_model_returns_valid_name():

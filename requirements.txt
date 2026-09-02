@@ -6,6 +6,9 @@ numpy>=1.24.0
 fastapi>=0.100.0
 uvicorn>=0.23.0
 python-multipart>=0.0.6
+# Hardware detection for the model recommender (RAM/CPU); system_check falls
+# back gracefully if absent, but the AI-model auto-pick needs it to read RAM.
+psutil>=5.9.0
 
 # Transcription (3 backends, auto-selected in server/core/transcriber.py)
 #   1. mlx-whisper   - native MLX acceleration, fastest on Apple Silicon (M-series).

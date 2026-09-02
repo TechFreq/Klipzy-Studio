@@ -60,6 +60,11 @@ def detect_active_backend() -> dict:
 
 
 class Transcriber:
+    # Set once (per process) when faster-whisper's ONNX VAD fails, so we don't
+    # keep paying its cost. Can also be forced off up-front via the
+    # KLIPZY_DISABLE_VAD env var for machines where the native VAD hard-crashes.
+    _vad_disabled = os.environ.get("KLIPZY_DISABLE_VAD", "").strip().lower() in ("1", "true", "yes")
+
     def __init__(self, model_size: str = "base", device: Optional[str] = None):
         self.model_size = model_size
         self.device = device
@@ -224,12 +229,32 @@ class Transcriber:
         return segments
 
     def _transcribe_faster(self, audio_path: str, language: Optional[str] = None):
-        segments, _info = self._model.transcribe(
-            audio_path,
-            language=language,
-            word_timestamps=True,
-            vad_filter=True,  # skip pure-silence frames before the model
-        )
+        # vad_filter uses an ONNX Silero VAD via onnxruntime. On some Windows
+        # setups that native path hard-crashes the whole process (not a catchable
+        # Python exception), so a plain try/except can't save us. Guard it: try
+        # with VAD once, and if this machine is known-bad, skip straight to
+        # no-VAD. A crash still can't be trapped, but retry-without-VAD covers the
+        # cases where it raises instead of aborting, and the class-level flag
+        # avoids paying the crash cost twice in one run.
+        def _run(use_vad: bool):
+            return self._model.transcribe(
+                audio_path,
+                language=language,
+                word_timestamps=True,
+                vad_filter=use_vad,
+            )
+
+        if getattr(Transcriber, "_vad_disabled", False):
+            segments, _info = _run(False)
+        else:
+            try:
+                segments, _info = _run(True)
+            except Exception as e:
+                # VAD raised (bad onnxruntime, missing model, etc.) — remember it
+                # and fall back to a no-VAD pass so transcription still succeeds.
+                print(f"faster-whisper VAD failed ({e}); retrying without VAD...")
+                Transcriber._vad_disabled = True
+                segments, _info = _run(False)
         out: List[TranscriptSegment] = []
         for s in segments:
             words = [

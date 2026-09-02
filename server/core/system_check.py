@@ -473,7 +473,7 @@ HIGH_ENERGY_PRESETS = {
 # Strength ladder (weakest → strongest) used to pick a base by hardware and to
 # bump the pick for high-energy presets. Names must exist in OLLAMA_MODEL_CATALOG.
 _MODEL_LADDER = [
-    "gemma2:2b", "llama3.2:3b", "gemma2:9b", "qwen2.5:14b",
+    "gemma2:2b", "llama3.2:3b", "gemma2:9b", "qwen2.5:7b", "qwen2.5:14b",
     "gemma2:27b", "qwen2.5:32b", "llama3.3:70b", "qwen2.5:72b", "mixtral:8x22b",
 ]
 
@@ -491,8 +491,9 @@ def recommend_ollama_model(preset: str = "") -> str:
     stronger model). Never recommends something the machine's RAM can't hold.
 
     Bigger local models write noticeably better hooks/titles but need memory.
-    A ~14B is the sweet spot on a 12GB GPU (e.g. RTX 3060) or 48GB+ RAM; step
-    down for lighter machines so it still runs comfortably.
+    On a 12GB GPU (e.g. RTX 3060) a 7B is the balanced default — it matches a
+    14B's selection judgment at ~half the latency — while 16GB+ cards step up to
+    a 14B; scale down for lighter machines so it still runs comfortably.
     """
     gpu = detect_gpu()
     cpu = detect_cpu()
@@ -514,7 +515,12 @@ def recommend_ollama_model(preset: str = "") -> str:
     elif vram >= 16:      # 4060 Ti 16GB / 4080 / 7800 XT / A4000
         base = _pick("qwen2.5:14b")
     elif vram >= 11:      # 3060 12GB / 2080 Ti / 6700 XT
-        base = _pick("qwen2.5:14b")
+        # A/B testing on an RTX 3060 12GB showed qwen2.5:7b matches the 14B's
+        # clip-selection judgment and writes equally strong (often punchier)
+        # hooks, at ~half the latency. So 7B is the balanced default here; the
+        # high-energy-preset bump below (and the Setup catalog) still steps up to
+        # the 14B for users who want maximum quality.
+        base = _pick("qwen2.5:7b")
     elif vram >= 8:       # 3050/3060 Ti/4060 8GB / RX 6600
         base = _pick("gemma2:9b")
     elif vram >= 6:       # 2060 6GB / 1660 / RX 5500
