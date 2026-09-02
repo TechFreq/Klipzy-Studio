@@ -1551,8 +1551,27 @@ body {
 .model-badge.dl { background: rgba(255,255,255,0.10); color: var(--text-muted); }
 .model-badge.warn { background: rgba(239,68,68,0.15); color: #fca5a5; }
 .model-note { line-height: 1.4; }
-.model-card-actions { margin-top: auto; padding-top: 6px; }
-.model-card-actions .btn { width: 100%; }
+/* Actions row: primary action grows, the 🗑 delete stays compact on the RIGHT. */
+.model-card-actions { margin-top: auto; padding-top: 6px; display: flex; gap: 6px; align-items: stretch; }
+.model-card-actions .btn { flex: 1 1 auto; width: auto; }
+.model-card-actions .btn-ghost { flex: 0 0 auto; color: #fca5a5; }
+.model-card-actions .btn-ghost:hover { background: rgba(239, 68, 68, 0.14); color: #fecaca; }
+/* Colored highlight for the model that's currently in use. */
+.model-card.is-active {
+  border-color: var(--accent, #6366f1);
+  box-shadow: inset 0 0 0 1px var(--accent, #6366f1);
+  background: rgba(99, 102, 241, 0.08);
+}
+.model-inuse-banner {
+  background: rgba(34, 197, 94, 0.10); border: 1px solid rgba(34, 197, 94, 0.35);
+  color: #86efac; border-radius: 8px; padding: 8px 12px; font-size: 13px;
+}
+.model-inuse-banner strong { color: #bbf7d0; }
+/* Highlight the currently-selected recommendation choice. */
+.rec-choice.is-selected {
+  border-color: var(--accent, #6366f1); background: rgba(99, 102, 241, 0.18);
+  color: var(--text); font-weight: 700;
+}
 
 /* Multi-aspect preview modal */
 .multi-aspect-previews {

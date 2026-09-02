@@ -3482,7 +3482,7 @@ async function renderModelCatalog() {
                 `<button class="btn btn-small btn-ghost" data-remove="${escapeHtml(m.name)}" title="Delete this model from disk">🗑</button>`;
     }
     return `
-      <div class="model-card">
+      <div class="model-card${isActive ? ' is-active' : ''}">
         <div class="model-card-top">
           <span class="model-name">${escapeHtml(m.label)}</span>
           <span class="model-tier">${escapeHtml(m.tier)}</span>
@@ -3497,6 +3497,13 @@ async function renderModelCatalog() {
   if (!ollamaReady) {
     grid.insertAdjacentHTML('afterbegin',
       '<p class="muted small" style="grid-column:1/-1;">Ollama isn\'t installed yet — install it from the dependencies above to download and run these models.</p>');
+  }
+
+  // "Currently in use" banner at the very top so the active model is obvious.
+  if (active) {
+    const am = (data.models || []).find((m) => m.name === active);
+    grid.insertAdjacentHTML('afterbegin',
+      `<div class="model-inuse-banner" style="grid-column:1/-1;">🟢 <strong>In use:</strong> ${escapeHtml(am ? am.label : active)} <span class="muted small">— powering hooks, titles &amp; chat right now.</span></div>`);
   }
 
   // Transparency footnote (Clips-Kitty-style honesty): be clear about which
@@ -3966,6 +3973,10 @@ function renderRecommendations(recs) {
     { key: 'yolo', name: '👁️ YOLO (face tracking)', ...recs.yolo },
     { key: 'ollama', name: '🤖 Ollama (AI edit chat)', ...recs.ollama },
   ];
+  // Which choice is currently selected per kind, so we can highlight it:
+  //  - whisper reflects the actual dropdown value used for the next job
+  //  - others highlight the "Best fit" (first) recommendation for this hardware
+  const whisperSel = document.getElementById('whisper-model')?.value || '';
   document.getElementById('setup-recommendations').innerHTML = items.map((it) => `
     <div class="rec-card">
       <div class="rec-name">${escapeHtml(it.name)}</div>
@@ -3975,16 +3986,21 @@ function renderRecommendations(recs) {
         ${it.realtime_factor ? `<span class="rec-chip">${escapeHtml(it.realtime_factor)}</span>` : ''}
       </div>
       <div class="rec-note muted">${escapeHtml(it.note || '')}</div>
-      ${it.choices ? `<div class="rec-choices">${it.choices.map((choice) => `
-        <button class="btn btn-small rec-choice" data-model-kind="${it.key}" data-model="${escapeHtml(choice.model)}">
+      ${it.choices ? `<div class="rec-choices">${it.choices.map((choice, i) => {
+        const selected = it.key === 'whisper' ? (choice.model === whisperSel) : (i === 0);
+        return `<button class="btn btn-small rec-choice${selected ? ' is-selected' : ''}" data-model-kind="${it.key}" data-model="${escapeHtml(choice.model)}">
           ${escapeHtml(choice.tier)}: ${escapeHtml(choice.model)}
-        </button>`).join('')}</div>` : ''}
+        </button>`;
+      }).join('')}</div>` : ''}
     </div>`).join('');
   document.querySelectorAll('.rec-choice').forEach((button) => {
     button.addEventListener('click', () => {
       if (button.dataset.modelKind === 'whisper') {
         const select = document.getElementById('whisper-model');
         if (select) select.value = button.dataset.model;
+        // Move the highlight to the clicked whisper choice.
+        button.parentElement.querySelectorAll('.rec-choice').forEach((b) => b.classList.remove('is-selected'));
+        button.classList.add('is-selected');
         showToast(`Whisper model set to ${button.dataset.model}`, 'success');
       } else {
         showToast(`${button.dataset.model} is the recommended Ollama choice. Ollama will use it locally when AI is enabled.`, 'info');
