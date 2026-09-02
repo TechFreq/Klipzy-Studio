@@ -2061,6 +2061,37 @@ def setup_resources():
     return sc.live_resources()
 
 
+@app.get("/api/setup/gpu")
+def setup_gpu():
+    """Hardware-aware GPU-acceleration status + the right install/uninstall
+    commands for this machine (drives the Setup 'GPU Acceleration' card)."""
+    from server.core import system_check as sc
+    return sc.gpu_acceleration_status()
+
+
+@app.post("/api/setup/gpu/install")
+def setup_gpu_install():
+    """Install the accelerated (CUDA / Apple-MPS) PyTorch build for this machine.
+    Heavy (~2.5GB) and replaces the current torch build; runs into the app's own
+    venv via `sys.executable -m pip`. Returns the command + result so the UI can
+    report success or show the copyable command on failure."""
+    from server.core import system_check as sc
+    cmd = sc.get_install_commands().get("pytorch")
+    if not cmd:
+        raise HTTPException(status_code=400, detail="No PyTorch install command for this OS")
+    try:
+        r = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=2400,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        return {"ok": r.returncode == 0, "command": " ".join(cmd),
+                "returncode": r.returncode, "stderr": (r.stderr or "")[-2000:]}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "command": " ".join(cmd), "error": "PyTorch install timed out"}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "command": " ".join(cmd), "error": str(e)}
+
+
 @app.get("/api/setup/support")
 def setup_support():
     """Support / social links for the app footer."""

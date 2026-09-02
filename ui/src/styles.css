@@ -154,6 +154,25 @@ body {
 /* Model catalog transparency badges */
 .model-badge.tested { background: rgba(34, 197, 94, 0.14); color: #34d399; border: 1px solid rgba(34, 197, 94, 0.35); }
 .model-badge.license { background: var(--surface-2, #232735); color: var(--text-muted); border: 1px solid var(--border); }
+
+/* GPU acceleration card */
+.gpu-status { display: flex; align-items: flex-start; gap: 10px; }
+.gpu-status .dot { margin-top: 5px; }
+.gpu-headline { font-weight: 600; }
+.gpu-detail { margin-top: 2px; }
+.gpu-guide { margin: 12px 0 12px 18px; padding: 0; color: var(--text-muted); font-size: 13px; }
+.gpu-guide li { margin: 4px 0; }
+.gpu-guide strong { color: var(--text); }
+.gpu-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.gpu-cmds { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 10px; }
+.gpu-cmd { display: flex; align-items: center; gap: 8px; }
+.gpu-cmd-label { flex: 0 0 auto; font-size: 11px; color: var(--text-muted); min-width: 150px; }
+.gpu-cmd-text {
+  flex: 1 1 auto; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 8px; color: var(--text); overflow-x: auto; white-space: nowrap;
+}
+.gpu-copy { flex: 0 0 auto; }
 .ai-models-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
 @media (max-width: 720px) { .ai-models-grid { grid-template-columns: 1fr; } }
 #install-all-status:not(:empty) { margin: 8px 0; }

@@ -3364,6 +3364,7 @@ async function loadSetupPanel() {
     const res = await fetch(`${serverUrl}/api/setup/status`);
     const data = await res.json();
     renderHardware(data);
+    loadGpuAcceleration();
     renderRecommendations(data.recommendations);
     renderDeps(data);
     bindInstallAll();
@@ -3820,6 +3821,120 @@ function renderHardware(data) {
       <div class="hw-item"><span class="hw-label">Acceleration</span><strong>${escapeHtml(accel)}</strong></div>
     </div>
     <div class="hw-note">${escapeHtml(accelHint)}</div>`;
+}
+
+// Hardware-aware GPU-acceleration card: detects a dormant GPU (a CUDA/Metal-
+// capable machine running CPU-only PyTorch) and guides the user to enable it,
+// greys out when already active, and always shows copyable install/uninstall
+// commands so it works on any machine a fork/copy lands on.
+async function loadGpuAcceleration() {
+  const el = document.getElementById('gpu-accel');
+  if (!el) return;
+  let g;
+  try {
+    const res = await fetch(`${serverUrl}/api/setup/gpu`);
+    g = await res.json();
+  } catch (_) {
+    el.innerHTML = '<span class="muted">⚠️ Could not read GPU status.</span>';
+    return;
+  }
+
+  const dotClass = g.state === 'active' ? 'ok' : (g.state === 'cpu_only' ? '' : 'warn');
+  const cmdBlock = (label, cmd) => (cmd ? `
+    <div class="gpu-cmd">
+      <span class="gpu-cmd-label">${escapeHtml(label)}</span>
+      <code class="gpu-cmd-text">${escapeHtml(cmd)}</code>
+      <button class="btn btn-small btn-ghost gpu-copy" data-cmd="${escapeHtml(cmd)}" title="Copy command">📋</button>
+    </div>` : '');
+
+  let actions = '';
+  let guide = '';
+  if (g.state === 'active') {
+    actions = `<button class="btn btn-small" disabled>✓ GPU acceleration active</button>
+               <button class="btn btn-small btn-ghost" id="gpu-revert-btn" title="Remove the GPU build (revert to CPU)">Revert to CPU…</button>`;
+  } else if (g.state === 'dormant' || g.state === 'not_installed') {
+    const verb = g.state === 'not_installed' ? 'Install PyTorch' : 'Enable GPU acceleration';
+    actions = `<button class="btn btn-primary btn-small" id="gpu-enable-btn">⚡ ${escapeHtml(verb)}</button>`;
+    guide = `<ol class="gpu-guide">
+      <li>Click <strong>${escapeHtml(verb)}</strong> (or copy the command below and run it yourself), then wait for the ~2.5GB download.</li>
+      <li>When it finishes, <strong>restart the app</strong> so it loads the new build.</li>
+      <li>Return here — this card should then read <strong>"GPU acceleration active"</strong>.</li>
+    </ol>`;
+  }
+
+  el.innerHTML = `
+    <div class="gpu-status">
+      <span class="dot ${dotClass}"></span>
+      <div>
+        <div class="gpu-headline">${escapeHtml(g.headline || '')}</div>
+        <div class="gpu-detail muted small">${escapeHtml(g.detail || '')}</div>
+      </div>
+    </div>
+    ${guide}
+    <div class="gpu-actions">${actions}</div>
+    <div class="gpu-cmds">
+      ${g.state !== 'cpu_only' ? cmdBlock('Enable (accelerated build)', g.install_command) : ''}
+      ${cmdBlock('Uninstall', g.uninstall_command)}
+      ${g.state === 'active' ? cmdBlock('Revert to CPU build', g.cpu_command) : ''}
+    </div>
+    <p class="muted small">${g.state === 'cpu_only'
+      ? 'Everything works on CPU — transcription uses faster-whisper; only face-tracking would benefit from a GPU.'
+      : 'These commands run inside the app\u2019s own Python environment. Restart the app after changing PyTorch.'}</p>`;
+
+  el.querySelectorAll('.gpu-copy').forEach((b) => b.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(b.dataset.cmd); showToast('Command copied', 'success'); }
+    catch (_) { showToast('Copy failed — select the text manually', 'error'); }
+  }));
+
+  const enableBtn = document.getElementById('gpu-enable-btn');
+  if (enableBtn) enableBtn.addEventListener('click', async () => {
+    const ok = await showConfirm(
+      'Install the GPU (CUDA / Apple-Metal) build of PyTorch? This downloads ~2.5GB and replaces the current CPU build. A restart is needed afterward to load it.',
+      'Enable GPU acceleration');
+    if (!ok) return;
+    const orig = enableBtn.textContent;
+    enableBtn.disabled = true;
+    enableBtn.textContent = '⏳ Installing… (~2.5GB, several min)';
+    showToast('Installing the GPU build of PyTorch — large download, please wait', 'info');
+    try {
+      const r = await fetch(`${serverUrl}/api/setup/gpu/install`, { method: 'POST' });
+      const d = await r.json();
+      if (d.ok) showToast('✅ GPU build installed — restart the app to activate it', 'success');
+      else throw new Error(d.error || d.stderr || 'install failed');
+    } catch (e) {
+      showToast(`Install failed: ${e.message || e}. You can copy the command and run it manually.`, 'error');
+    } finally {
+      enableBtn.disabled = false;
+      enableBtn.textContent = orig;
+      loadGpuAcceleration();
+    }
+  });
+
+  const revertBtn = document.getElementById('gpu-revert-btn');
+  if (revertBtn) revertBtn.addEventListener('click', async () => {
+    const ok = await showConfirm(
+      'Remove the current PyTorch build? Face-tracking will be unavailable until you reinstall PyTorch (the CPU command is shown for that).',
+      'Revert to CPU');
+    if (!ok) return;
+    const orig = revertBtn.textContent;
+    revertBtn.disabled = true;
+    revertBtn.textContent = '⏳ Removing…';
+    try {
+      const r = await fetch(`${serverUrl}/api/setup/uninstall`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ component: 'pytorch' }),
+      });
+      const d = await r.json();
+      if (d.ok) showToast('PyTorch removed. Reinstall with the CPU or GPU command, then restart.', 'success');
+      else throw new Error(d.stderr || d.error || 'uninstall failed');
+    } catch (e) {
+      showToast(`Uninstall failed: ${e.message || e}`, 'error');
+    } finally {
+      revertBtn.disabled = false;
+      revertBtn.textContent = orig;
+      loadGpuAcceleration();
+    }
+  });
 }
 
 function renderRecommendations(recs) {

@@ -418,6 +418,92 @@ def get_uninstall_commands() -> Dict[str, List[str]]:
     }
 
 
+def gpu_acceleration_status() -> Dict:
+    """Hardware-aware GPU-acceleration status + the EXACT install/uninstall
+    commands for THIS machine, so the Setup panel can guide the user (or anyone
+    who forks/copies the repo onto different hardware) to turn their GPU on — or
+    tell them honestly when there's no supported GPU path.
+
+    The key gap this closes: ``component_installed('pytorch')`` is True whenever
+    torch is present, even the CPU-only wheel. So a machine with a CUDA GPU but
+    the CPU torch build looks "done" while the GPU sits idle. This surfaces that
+    "dormant" state as an actionable step.
+
+    state: 'active'    -> CUDA or MPS is working (GPU in use)
+           'dormant'   -> a supported GPU exists but torch can't use it (fixable)
+           'cpu_only'  -> no NVIDIA/Apple GPU path; CPU is the supported route
+           'not_installed' -> torch isn't installed yet
+    """
+    os_name = detect_os()
+    gpu = detect_gpu()
+    torch_info = detect_torch()
+    name = gpu.get("name") or ""
+    low = name.lower()
+    is_nvidia = any(k in low for k in ("nvidia", "geforce", "rtx", "gtx", "quadro", "tesla"))
+    is_apple = os_name == "macos" and platform.machine() == "arm64"
+
+    installed = bool(torch_info.get("installed"))
+    cuda = bool(torch_info.get("cuda"))
+    mps = bool(torch_info.get("mps"))
+    accelerated = cuda or mps
+    can_accelerate = is_nvidia or is_apple
+
+    if not installed:
+        state = "not_installed"
+    elif accelerated:
+        state = "active"
+    elif can_accelerate:
+        state = "dormant"
+    else:
+        state = "cpu_only"
+
+    engine = "GPU (CUDA)" if cuda else ("GPU (Apple MPS)" if mps else "CPU")
+    install_cmd = " ".join(get_install_commands().get("pytorch", []))
+    uninstall_cmd = " ".join(get_uninstall_commands().get("pytorch", []))
+    # Plain CPU build, for users who want to revert after an accelerated install.
+    cpu_cmd = f"{os.path.basename(sys.executable)} -m pip install torch torchvision"
+
+    if state == "active":
+        headline = f"GPU acceleration is ON — {engine}."
+        detail = f"{name or 'Your GPU'} is powering transcription and face-tracking."
+    elif state == "dormant" and is_nvidia:
+        headline = f"{name} found, but PyTorch is running on the CPU."
+        detail = ("Install the CUDA build of PyTorch to unlock your GPU for faster "
+                  "Whisper transcription and YOLO face-tracking. ~2.5GB download; "
+                  "it replaces the current CPU build.")
+    elif state == "dormant" and is_apple:
+        headline = "Apple Silicon detected, but Metal (MPS) isn't active."
+        detail = "Reinstall PyTorch to enable MPS acceleration on your M-series chip."
+    elif state == "cpu_only":
+        headline = f"{name or 'No CUDA/Metal GPU'} — running on CPU."
+        detail = ("There's no NVIDIA (CUDA) or Apple (Metal) GPU path here, so AI "
+                  "runs on the CPU. That's fully supported — faster-whisper keeps "
+                  "transcription quick, and FFmpeg still uses the GPU for encoding.")
+    else:
+        headline = "PyTorch isn't installed."
+        detail = "Install PyTorch to enable face-tracking and (on a supported GPU) acceleration."
+
+    return {
+        "os": os_name,
+        "gpu_name": name or None,
+        "vram_gb": gpu.get("vram_gb"),
+        "torch_installed": installed,
+        "cuda": cuda,
+        "mps": mps,
+        "accelerated": accelerated,
+        "can_accelerate": can_accelerate,
+        "is_nvidia": is_nvidia,
+        "is_apple_silicon": is_apple,
+        "state": state,
+        "engine": engine,
+        "headline": headline,
+        "detail": detail,
+        "install_command": install_cmd,
+        "uninstall_command": uninstall_cmd,
+        "cpu_command": cpu_cmd,
+    }
+
+
 def _spec_installed(module: str) -> bool:
     import importlib.util
     return importlib.util.find_spec(module) is not None
