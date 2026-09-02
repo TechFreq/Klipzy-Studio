@@ -22,6 +22,29 @@ def diarization_available() -> bool:
         return False
 
 
+def assign_speakers_to_segments(
+    transcript_segments: List[Dict[str, Any]],
+    diar_segments: List[Dict[str, Any]],
+) -> List[Optional[str]]:
+    """Label each transcript segment with the diarization speaker it overlaps
+    most (or None). Pure + testable — the groundwork for speaker-labeled
+    captions and speaker-aware selection, independent of pyannote being present.
+
+    transcript_segments: [{"start","end",...}]  (clip/transcript timeline)
+    diar_segments:        [{"start","end","speaker"}]
+    """
+    labels: List[Optional[str]] = []
+    for seg in transcript_segments or []:
+        s, e = float(seg.get("start", 0)), float(seg.get("end", 0))
+        best, best_overlap = None, 0.0
+        for d in diar_segments or []:
+            overlap = max(0.0, min(e, float(d.get("end", 0))) - max(s, float(d.get("start", 0))))
+            if overlap > best_overlap:
+                best_overlap, best = overlap, d.get("speaker")
+        labels.append(best)
+    return labels
+
+
 def diarize(audio_or_video_path: str, hf_token: Optional[str] = None) -> Dict[str, Any]:
     """Return {"available": bool, "segments": [{start,end,speaker}], "message": str}.
 
