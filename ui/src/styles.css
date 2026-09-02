@@ -1573,6 +1573,19 @@ body {
   color: var(--text); font-weight: 700;
 }
 
+/* Intro-hook live preview: sits top-center of the phone frame, above captions. */
+.portrait-preview-screen { position: relative; }
+.portrait-intro-preview {
+  position: absolute; top: 7%; left: 50%; transform: translateX(-50%);
+  width: 88%; text-align: center; line-height: 1.15; letter-spacing: 0.3px;
+  pointer-events: none; z-index: 2;
+}
+.portrait-intro-preview.hidden { display: none; }
+
+/* Clipping Options — cleaner action row + header layout. */
+.step-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.panel-header-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
 /* Multi-aspect preview modal */
 .multi-aspect-previews {
   display: grid;

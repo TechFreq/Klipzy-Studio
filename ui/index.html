@@ -470,6 +470,10 @@
                   <span>seconds</span>
                 </div>
                 <label class="caption-field">
+                  <span>Intro hook size (<output id="generated-intro-font-size-label" for="generated-intro-font-size">64</output>)</span>
+                  <input type="range" id="generated-intro-font-size" min="24" max="140" step="2" value="64" />
+                </label>
+                <label class="caption-field">
                   <span>Position</span>
                   <select id="caption-position">
                     <option value="2" selected>Bottom Center</option>
@@ -516,6 +520,7 @@
               <div class="phone-frame">
                 <div class="phone-notch"></div>
                 <div class="portrait-preview-screen">
+                  <div id="portrait-intro-preview" class="portrait-intro-preview hidden">Your hook here</div>
                   <div id="portrait-caption-preview" class="caption-preview portrait-caption-preview" data-words="This is how your captions will look in portrait mode!">This is how your captions will look in portrait mode!</div>
                 </div>
               </div>

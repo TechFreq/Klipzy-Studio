@@ -2709,7 +2709,7 @@ function collectCaptionOptions() {
     // but the optional custom text is left blank.
     intro_enabled: introEnabled,
     // Optional bigger font for the intro hook (from the caption editor's slider).
-    intro_font_size: parseInt(document.getElementById('intro-hook-font-size')?.value || '', 10) || undefined,
+    intro_font_size: parseInt(document.getElementById('generated-intro-font-size')?.value || '', 10) || undefined,
   };
 }
 
@@ -2889,7 +2889,58 @@ function refreshPortraitCaptionPreview() {
   preview.innerHTML = list.join(' ');
   preview.dataset.words = rawWords;
   applyPortraitCaptionPreviewStyle();
+  refreshIntroPreview();
 }
+
+// Separate live preview for the INTRO HOOK (top-center, bigger font) shown in
+// the same phone frame. Reuses the caption preset + color controls, but with
+// its own font size so the user can size the hook independently of the captions.
+function refreshIntroPreview() {
+  const el = document.getElementById('portrait-intro-preview');
+  if (!el) return;
+  const enabled = document.getElementById('caption-intro-enabled')?.checked;
+  if (!enabled) { el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+
+  const raw = (document.getElementById('caption-intro-text')?.value || '').trim() || 'Your hook here';
+  const isUppercase = document.getElementById('caption-uppercase')?.checked;
+  el.textContent = isUppercase ? raw.toUpperCase() : raw;
+
+  const presetId = document.getElementById('generated-caption-preset')?.value || 'viral_yellow';
+  const baseStyle = CAPTION_PREVIEW[presetId] || CAPTION_PREVIEW.viral_yellow;
+  const fontName = document.getElementById('caption-font-name')?.value || baseStyle.font;
+  const accentColor = document.getElementById('caption-highlight-color')?.value || baseStyle.accent;
+  const strokeColor = document.getElementById('caption-outline-color')?.value || baseStyle.back;
+  const outlineWidth = parseInt(document.getElementById('caption-outline-width')?.value || '3', 10);
+
+  const screenEl = el.parentElement;
+  const containerWidth = (screenEl && screenEl.clientWidth > 0) ? screenEl.clientWidth : 200;
+  const ratio = document.getElementById('clip-aspect-ratio')?.value || '9:16';
+  const canvasWidth = ratio === '16:9' ? 1920 : 1080;
+  const rawSize = parseInt(document.getElementById('generated-intro-font-size')?.value || '64', 10);
+  const scaled = Math.max(1, Math.round(rawSize * (containerWidth / canvasWidth)));
+  const w = Math.max(0, Math.round(outlineWidth * (containerWidth / canvasWidth)));
+
+  el.style.color = accentColor;        // hooks pop in the highlight color
+  el.style.fontFamily = fontName;
+  el.style.fontSize = `${scaled}px`;
+  el.style.fontWeight = '900';
+  el.style.textShadow = w > 0
+    ? `${w}px 0 0 ${strokeColor}, -${w}px 0 0 ${strokeColor}, 0 ${w}px 0 ${strokeColor}, 0 -${w}px 0 ${strokeColor}, 0 0 14px ${accentColor}55`
+    : `0 0 14px ${accentColor}55`;
+}
+
+// Wire the intro-hook controls to the live preview (runs once at load).
+(function wireIntroHookPreview() {
+  const introSize = document.getElementById('generated-intro-font-size');
+  const introSizeLabel = document.getElementById('generated-intro-font-size-label');
+  document.getElementById('caption-intro-text')?.addEventListener('input', refreshIntroPreview);
+  document.getElementById('caption-intro-enabled')?.addEventListener('change', refreshIntroPreview);
+  introSize?.addEventListener('input', () => {
+    if (introSizeLabel) introSizeLabel.textContent = introSize.value;
+    refreshIntroPreview();
+  });
+})();
 
 // ------------------------------------------------------------------
 // Interactive Caption Editor
