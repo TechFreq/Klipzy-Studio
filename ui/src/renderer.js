@@ -3850,17 +3850,31 @@ async function loadGpuAcceleration() {
   let actions = '';
   let guide = '';
   if (g.state === 'active') {
-    actions = `<button class="btn btn-small" disabled>✓ GPU acceleration active</button>
+    actions = `<button class="btn btn-small" disabled>✓ Acceleration active (${escapeHtml(g.engine || 'GPU')})</button>
                <button class="btn btn-small btn-ghost" id="gpu-revert-btn" title="Remove the GPU build (revert to CPU)">Revert to CPU…</button>`;
   } else if (g.state === 'dormant' || g.state === 'not_installed') {
-    const verb = g.state === 'not_installed' ? 'Install PyTorch' : 'Enable GPU acceleration';
+    const verb = g.state === 'not_installed' ? 'Install PyTorch' : `Enable ${g.plan_label || 'GPU acceleration'}`;
     actions = `<button class="btn btn-primary btn-small" id="gpu-enable-btn">⚡ ${escapeHtml(verb)}</button>`;
     guide = `<ol class="gpu-guide">
-      <li>Click <strong>${escapeHtml(verb)}</strong> (or copy the command below and run it yourself), then wait for the ~2.5GB download.</li>
+      <li>Click <strong>${escapeHtml(verb)}</strong> (or copy the command below and run it yourself), then wait for the download (~2.5GB).</li>
       <li>When it finishes, <strong>restart the app</strong> so it loads the new build.</li>
-      <li>Return here — this card should then read <strong>"GPU acceleration active"</strong>.</li>
+      <li>Return here — this card should then read <strong>"Acceleration active"</strong>.</li>
     </ol>`;
   }
+
+  const expWarn = (g.experimental && (g.state === 'dormant' || g.state === 'not_installed'))
+    ? '<p class="gpu-exp small">⚠️ This is an experimental path for your GPU — it may not accelerate every feature. CPU stays a reliable fallback.</p>'
+    : '';
+
+  // Transcription accelerator (MLX on Apple / faster-whisper elsewhere).
+  const t = g.transcription || {};
+  const transLine = t.active ? `Active: ${escapeHtml(t.active)}` : 'Not detected';
+  const transBlock = `
+    <div class="gpu-trans">
+      <span class="gpu-cmd-label">Transcription</span>
+      <span class="gpu-trans-info muted small">${transLine}${t.recommend ? ' — ' + escapeHtml(t.recommend) : ' (accelerated)'}</span>
+      ${t.command ? `<button class="btn btn-small btn-ghost gpu-copy" data-cmd="${escapeHtml(t.command)}" title="Copy install command">📋 Copy</button>` : ''}
+    </div>`;
 
   el.innerHTML = `
     <div class="gpu-status">
@@ -3870,16 +3884,15 @@ async function loadGpuAcceleration() {
         <div class="gpu-detail muted small">${escapeHtml(g.detail || '')}</div>
       </div>
     </div>
-    ${guide}
+    ${guide}${expWarn}
     <div class="gpu-actions">${actions}</div>
     <div class="gpu-cmds">
-      ${g.state !== 'cpu_only' ? cmdBlock('Enable (accelerated build)', g.install_command) : ''}
-      ${cmdBlock('Uninstall', g.uninstall_command)}
+      ${g.state !== 'cpu_only' ? cmdBlock('Enable (' + (g.plan_label || 'accelerated') + ')', g.install_command) : ''}
+      ${cmdBlock('Uninstall PyTorch', g.uninstall_command)}
       ${g.state === 'active' ? cmdBlock('Revert to CPU build', g.cpu_command) : ''}
     </div>
-    <p class="muted small">${g.state === 'cpu_only'
-      ? 'Everything works on CPU — transcription uses faster-whisper; only face-tracking would benefit from a GPU.'
-      : 'These commands run inside the app\u2019s own Python environment. Restart the app after changing PyTorch.'}</p>`;
+    ${transBlock}
+    <p class="muted small">These commands run inside the app\u2019s own Python environment. Restart the app after changing PyTorch.</p>`;
 
   el.querySelectorAll('.gpu-copy').forEach((b) => b.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(b.dataset.cmd); showToast('Command copied', 'success'); }

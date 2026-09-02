@@ -418,35 +418,137 @@ def get_uninstall_commands() -> Dict[str, List[str]]:
     }
 
 
+def _gpu_vendor(name: str, is_apple: bool) -> str:
+    """Classify the GPU by vendor from its name: nvidia / amd / intel / apple / none."""
+    if is_apple:
+        return "apple"
+    low = (name or "").lower()
+    if any(k in low for k in ("nvidia", "geforce", "rtx", "gtx", "quadro", "tesla")):
+        return "nvidia"
+    if any(k in low for k in ("radeon", "amd", "rx ", "vega", "instinct", "firepro")):
+        return "amd"
+    if any(k in low for k in ("intel", "arc", "iris", "uhd", "hd graphics")):
+        return "intel"
+    return "none"
+
+
+def _directml_available() -> bool:
+    """torch-directml gives AMD/Intel GPUs acceleration on Windows via DirectX."""
+    try:
+        import torch_directml  # type: ignore
+        return bool(torch_directml.is_available())
+    except Exception:
+        return False
+
+
+def _xpu_available() -> bool:
+    """Intel XPU (via intel-extension-for-pytorch) exposes torch.xpu."""
+    try:
+        import torch
+        return hasattr(torch, "xpu") and torch.xpu.is_available()
+    except Exception:
+        return False
+
+
+def _pytorch_accel_plan() -> Dict:
+    """The best-effort accelerated PyTorch install for THIS machine's GPU vendor
+    + OS. Returns {command, label, experimental, note}. NVIDIA (CUDA) and Apple
+    (Metal/MPS) are proven; AMD (ROCm on Linux, DirectML on Windows) and Intel
+    (DirectML/XPU) are best-effort and flagged experimental so the UI stays honest.
+    Every path targets THIS interpreter's pip so it lands in the app's venv."""
+    os_name = detect_os()
+    gpu = detect_gpu()
+    name = gpu.get("name") or ""
+    is_apple = os_name == "macos" and platform.machine() == "arm64"
+    vendor = _gpu_vendor(name, is_apple)
+    pip = [sys.executable, "-m", "pip"]
+
+    if vendor == "nvidia":
+        return {"command": pip + ["install", "--index-url", "https://download.pytorch.org/whl/cu126", "torch", "torchvision"],
+                "label": "CUDA (NVIDIA) build", "experimental": False,
+                "note": "Official NVIDIA CUDA 12.6 wheels."}
+    if vendor == "apple":
+        return {"command": pip + ["install", "torch", "torchvision"],
+                "label": "Apple Metal (MPS) build", "experimental": False,
+                "note": "Default wheels include Metal (MPS) on Apple Silicon."}
+    if vendor == "amd":
+        if os_name == "linux":
+            return {"command": pip + ["install", "--index-url", "https://download.pytorch.org/whl/rocm6.2", "torch", "torchvision"],
+                    "label": "AMD ROCm build (Linux)", "experimental": True,
+                    "note": "Official ROCm 6.2 wheels — supported AMD cards on Linux only."}
+        if os_name == "windows":
+            return {"command": pip + ["install", "torch-directml"],
+                    "label": "AMD via DirectML (Windows)", "experimental": True,
+                    "note": "DirectML gives AMD GPUs partial acceleration on Windows; YOLO/ultralytics coverage varies."}
+    if vendor == "intel":
+        if os_name == "windows":
+            return {"command": pip + ["install", "torch-directml"],
+                    "label": "Intel via DirectML (Windows)", "experimental": True,
+                    "note": "DirectML covers Intel Arc / iGPU on Windows; support varies."}
+        return {"command": pip + ["install", "intel-extension-for-pytorch"],
+                "label": "Intel XPU (IPEX)", "experimental": True,
+                "note": "Intel Extension for PyTorch (XPU); best on Linux."}
+    # No discrete GPU we can target.
+    return {"command": pip + ["install", "torch", "torchvision"],
+            "label": "CPU build", "experimental": False,
+            "note": "No supported GPU detected — CPU build."}
+
+
+def _transcription_accel() -> Dict:
+    """Which transcription backend is active + the best one to install for this
+    machine. MLX is the fastest on Apple Silicon; faster-whisper (CTranslate2
+    int8) is the cross-platform CPU/GPU accelerator vs plain openai-whisper."""
+    os_name = detect_os()
+    is_apple = os_name == "macos" and platform.machine() == "arm64"
+    pip = [sys.executable, "-m", "pip"]
+    try:
+        from server.core.transcriber import detect_active_backend
+        tb = detect_active_backend()
+    except Exception:
+        tb = {"active": None, "available": [], "note": ""}
+    available = tb.get("available") or []
+    if is_apple and "mlx" not in available:
+        cmd, reco = pip + ["install", "mlx-whisper"], "Install mlx-whisper for native MLX acceleration (fastest on Apple Silicon)."
+    elif "faster-whisper" not in available:
+        cmd, reco = pip + ["install", "faster-whisper"], "Install faster-whisper for 3–5× faster transcription (CTranslate2 int8)."
+    else:
+        cmd, reco = [], ""
+    return {"active": tb.get("active"), "note": tb.get("note", ""),
+            "recommend": reco, "command": " ".join(cmd)}
+
+
 def gpu_acceleration_status() -> Dict:
-    """Hardware-aware GPU-acceleration status + the EXACT install/uninstall
-    commands for THIS machine, so the Setup panel can guide the user (or anyone
-    who forks/copies the repo onto different hardware) to turn their GPU on — or
-    tell them honestly when there's no supported GPU path.
+    """Hardware-aware ACCELERATION status + the exact install/uninstall commands
+    for THIS machine, covering every path: NVIDIA CUDA, AMD (ROCm/DirectML),
+    Intel (DirectML/XPU), Apple Metal (MPS) + MLX transcription, and CPU
+    (faster-whisper). Guides the user — or anyone who forks/copies the repo onto
+    different hardware — to turn on the best acceleration their machine supports.
 
-    The key gap this closes: ``component_installed('pytorch')`` is True whenever
-    torch is present, even the CPU-only wheel. So a machine with a CUDA GPU but
-    the CPU torch build looks "done" while the GPU sits idle. This surfaces that
-    "dormant" state as an actionable step.
+    The gap this closes: ``component_installed('pytorch')`` is True whenever torch
+    is present, even the CPU-only wheel — so a machine with a capable GPU but the
+    CPU build looks "done" while the GPU sits idle. This surfaces that "dormant"
+    state (for ANY GPU vendor) as an actionable step.
 
-    state: 'active'    -> CUDA or MPS is working (GPU in use)
-           'dormant'   -> a supported GPU exists but torch can't use it (fixable)
-           'cpu_only'  -> no NVIDIA/Apple GPU path; CPU is the supported route
+    state: 'active'        -> a GPU backend (CUDA/MPS/DirectML/XPU) is working
+           'dormant'       -> a GPU exists but torch can't use it yet (fixable)
+           'cpu_only'      -> no discrete GPU; CPU (faster-whisper) is the path
            'not_installed' -> torch isn't installed yet
     """
     os_name = detect_os()
     gpu = detect_gpu()
     torch_info = detect_torch()
     name = gpu.get("name") or ""
-    low = name.lower()
-    is_nvidia = any(k in low for k in ("nvidia", "geforce", "rtx", "gtx", "quadro", "tesla"))
     is_apple = os_name == "macos" and platform.machine() == "arm64"
+    vendor = _gpu_vendor(name, is_apple)
 
     installed = bool(torch_info.get("installed"))
     cuda = bool(torch_info.get("cuda"))
     mps = bool(torch_info.get("mps"))
-    accelerated = cuda or mps
-    can_accelerate = is_nvidia or is_apple
+    directml = _directml_available()
+    xpu = _xpu_available()
+    accelerated = cuda or mps or directml or xpu
+    # We can offer *some* accelerated path for any discrete GPU vendor.
+    can_accelerate = vendor in ("nvidia", "apple", "amd", "intel")
 
     if not installed:
         state = "not_installed"
@@ -457,50 +559,63 @@ def gpu_acceleration_status() -> Dict:
     else:
         state = "cpu_only"
 
-    engine = "GPU (CUDA)" if cuda else ("GPU (Apple MPS)" if mps else "CPU")
-    install_cmd = " ".join(get_install_commands().get("pytorch", []))
+    if cuda:
+        engine = "GPU (CUDA)"
+    elif mps:
+        engine = "GPU (Apple MPS)"
+    elif directml:
+        engine = "GPU (DirectML)"
+    elif xpu:
+        engine = "GPU (Intel XPU)"
+    else:
+        engine = "CPU"
+
+    plan = _pytorch_accel_plan()
+    install_cmd = " ".join(plan["command"])
     uninstall_cmd = " ".join(get_uninstall_commands().get("pytorch", []))
-    # Plain CPU build, for users who want to revert after an accelerated install.
     cpu_cmd = f"{os.path.basename(sys.executable)} -m pip install torch torchvision"
+    transcription = _transcription_accel()
+
+    vendor_label = {"nvidia": "NVIDIA", "amd": "AMD", "intel": "Intel",
+                    "apple": "Apple Silicon", "none": "No discrete GPU"}[vendor]
 
     if state == "active":
-        headline = f"GPU acceleration is ON — {engine}."
-        detail = f"{name or 'Your GPU'} is powering transcription and face-tracking."
-    elif state == "dormant" and is_nvidia:
-        headline = f"{name} found, but PyTorch is running on the CPU."
-        detail = ("Install the CUDA build of PyTorch to unlock your GPU for faster "
-                  "Whisper transcription and YOLO face-tracking. ~2.5GB download; "
-                  "it replaces the current CPU build.")
-    elif state == "dormant" and is_apple:
-        headline = "Apple Silicon detected, but Metal (MPS) isn't active."
-        detail = "Reinstall PyTorch to enable MPS acceleration on your M-series chip."
+        headline = f"Acceleration is ON — {engine}."
+        detail = f"{name or vendor_label} is powering transcription and face-tracking."
+    elif state == "dormant":
+        exp = " (experimental)" if plan["experimental"] else ""
+        headline = f"{name or vendor_label} found, but PyTorch is running on the CPU."
+        detail = (f"Install the {plan['label']}{exp} to use your GPU for faster "
+                  f"Whisper transcription and YOLO face-tracking. {plan['note']} "
+                  "It replaces the current CPU build; a restart is needed after.")
     elif state == "cpu_only":
-        headline = f"{name or 'No CUDA/Metal GPU'} — running on CPU."
-        detail = ("There's no NVIDIA (CUDA) or Apple (Metal) GPU path here, so AI "
-                  "runs on the CPU. That's fully supported — faster-whisper keeps "
-                  "transcription quick, and FFmpeg still uses the GPU for encoding.")
+        headline = f"{vendor_label} — running on CPU (accelerated)."
+        detail = ("No discrete GPU to target, so AI runs on the CPU. That's fully "
+                  "supported: faster-whisper (CTranslate2 int8) keeps transcription "
+                  "quick, and FFmpeg still uses hardware encoding.")
     else:
         headline = "PyTorch isn't installed."
-        detail = "Install PyTorch to enable face-tracking and (on a supported GPU) acceleration."
+        detail = f"Install the {plan['label']} to enable face-tracking and acceleration."
 
     return {
         "os": os_name,
         "gpu_name": name or None,
         "vram_gb": gpu.get("vram_gb"),
+        "vendor": vendor,
         "torch_installed": installed,
-        "cuda": cuda,
-        "mps": mps,
+        "cuda": cuda, "mps": mps, "directml": directml, "xpu": xpu,
         "accelerated": accelerated,
         "can_accelerate": can_accelerate,
-        "is_nvidia": is_nvidia,
-        "is_apple_silicon": is_apple,
         "state": state,
         "engine": engine,
         "headline": headline,
         "detail": detail,
+        "plan_label": plan["label"],
+        "experimental": plan["experimental"],
         "install_command": install_cmd,
         "uninstall_command": uninstall_cmd,
         "cpu_command": cpu_cmd,
+        "transcription": transcription,
     }
 
 

@@ -2071,14 +2071,15 @@ def setup_gpu():
 
 @app.post("/api/setup/gpu/install")
 def setup_gpu_install():
-    """Install the accelerated (CUDA / Apple-MPS) PyTorch build for this machine.
-    Heavy (~2.5GB) and replaces the current torch build; runs into the app's own
-    venv via `sys.executable -m pip`. Returns the command + result so the UI can
-    report success or show the copyable command on failure."""
+    """Install the best accelerated PyTorch build for this machine's GPU vendor +
+    OS (CUDA / ROCm / DirectML / Intel-XPU / Apple-MPS). Heavy (~2.5GB) and
+    replaces the current torch build; runs into the app's own venv via
+    `sys.executable -m pip`. Returns the command + result so the UI can report
+    success or show the copyable command on failure."""
     from server.core import system_check as sc
-    cmd = sc.get_install_commands().get("pytorch")
+    cmd = sc._pytorch_accel_plan().get("command")
     if not cmd:
-        raise HTTPException(status_code=400, detail="No PyTorch install command for this OS")
+        raise HTTPException(status_code=400, detail="No PyTorch install command for this machine")
     try:
         r = subprocess.run(
             cmd, capture_output=True, text=True, timeout=2400,
