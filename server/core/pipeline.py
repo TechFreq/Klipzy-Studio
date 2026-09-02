@@ -98,6 +98,10 @@ class VideoClipperEngine:
         language: Optional[str] = None,
         use_audio_energy: bool = True,
         use_llm: bool = False,
+        # Optional speaker-diarization features (#16). Both need pyannote.audio +
+        # an HF token; they no-op gracefully when diarization is unavailable.
+        speaker_aware_selection: bool = False,  # prefer single-speaker / clean back-and-forth windows
+        speaker_aware_crop: bool = False,       # follow the active speaker's face over time
         llm_model: str = "gemma2:2b",
         burn_captions: bool = True,
         caption_style: str = "viral_yellow",
@@ -161,6 +165,24 @@ class VideoClipperEngine:
             segments = self.transcriber.transcribe(temp_audio, language=language)
             self._save_cache(video_path, effective_model, segments)
 
+        # Optional speaker diarization ("who spoke when"), shared by both the
+        # speaker-aware selection (#16.2) and active-speaker crop (#16.3). Run it
+        # ONCE here and reuse. Fully optional: no pyannote/token -> diar_segments
+        # stays None and both features silently fall back to the defaults.
+        diar_segments: Optional[List[dict]] = None
+        if speaker_aware_selection or speaker_aware_crop:
+            try:
+                from server.core.diarizer import diarization_available, diarize
+                if diarization_available():
+                    report("Diarizing speakers...", 36)
+                    if not os.path.exists(temp_audio):
+                        extract_audio(video_path, temp_audio)
+                    dres = diarize(temp_audio)
+                    if dres.get("available"):
+                        diar_segments = dres.get("segments", []) or None
+            except Exception:
+                diar_segments = None
+
         report("Finding highlight moments...", 38)
         candidates: List[ClipCandidate] = self.detector.detect_highlights_heuristic(segments)
 
@@ -191,6 +213,16 @@ class VideoClipperEngine:
         # (A loud one-word segment must not survive as a fraction-of-a-second clip.)
         floor = min(min_duration, 5.0)
         candidates = [c for c in candidates if c.duration >= floor]
+
+        # #16.2 Speaker-aware selection: gently boost candidates that stay on one
+        # speaker or a clean two-way exchange, and dampen messy 3+ speaker /
+        # talk-over windows. Mutates scores in place; the sort below picks it up.
+        if speaker_aware_selection and diar_segments:
+            try:
+                from server.core.diarizer import rank_clips_by_speaker
+                rank_clips_by_speaker(candidates, diar_segments)
+            except Exception:
+                pass
 
         # Deduplicate by time-overlap, then by hook/title: the heuristic and
         # audio-energy detectors often land on the SAME moment with slightly
@@ -255,11 +287,33 @@ class VideoClipperEngine:
 
             clip_progress = 55 + int(35 * (idx - 1) / max(1, total))
             crop_offset = None
+            crop_expr = None
             if vertical_crop:
                 report(f"Tracking speaker for clip {idx}/{total}...", clip_progress)
-                crop_offset = self.face_tracker.get_speaker_center_x(
-                    video_path, clip.start_time, clip.end_time
-                )
+                # #16.3 Diarization-driven active-speaker crop: build a trajectory
+                # that follows whoever is talking. Falls back to the visual
+                # head-motion crop when it can't (no diar, single position, etc).
+                if speaker_aware_crop and diar_segments:
+                    try:
+                        from server.core.ffmpeg_tools import build_crop_x_expression
+                        traj = self.face_tracker.get_diarized_speaker_trajectory(
+                            video_path, clip.start_time, clip.end_time, diar_segments,
+                            aspect_ratio=aspect_ratio or "9:16",
+                        )
+                        if traj:
+                            # Trajectory crop_x values are already clamped to
+                            # [0, width-crop_width] per keyframe, so linear
+                            # interpolation can't overshoot; the clip() bound is
+                            # just a wide safety net.
+                            crop_expr = build_crop_x_expression(
+                                traj, min_x=0.0, max_x=100000.0,
+                            )
+                    except Exception:
+                        crop_expr = None
+                if crop_expr is None:
+                    crop_offset = self.face_tracker.get_speaker_center_x(
+                        video_path, clip.start_time, clip.end_time
+                    )
 
             # Generate clip-specific animated karaoke subtitle
             clip_ass = str(clip_dir / f"{title_slug}.ass")
@@ -311,6 +365,7 @@ class VideoClipperEngine:
                 end_time=clip.end_time,
                 aspect_ratio=aspect_ratio or ("9:16" if vertical_crop else None),
                 crop_x_offset=crop_offset,
+                crop_x_expr=crop_expr,
                 burn_captions=burn_captions,
                 subtitle_path=sub_to_burn,
             )

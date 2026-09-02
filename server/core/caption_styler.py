@@ -109,12 +109,16 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     for seg in segments:
         words = getattr(seg, "words", []) or []
+        # Optional diarization label ("Speaker 1"). When present it prefixes the
+        # FIRST caption chunk of this segment (i.e. shows once per speaker turn).
+        speaker = getattr(seg, "speaker", None)
+        speaker_prefix = f"{case(str(speaker))}: " if speaker else ""
         if not words:
             # Fallback if no word timestamps
             start_str = fmt_ass_time(seg.start)
             end_str = fmt_ass_time(seg.end)
             clean_text = case(seg.text).replace("{", "").replace("}", "")
-            event_lines.append(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{clean_text}")
+            event_lines.append(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{speaker_prefix}{clean_text}")
             continue
 
         # Group words into chunks of 3-5 words for fast-paced vertical shorts reading
@@ -130,9 +134,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
                 w_text = case(getattr(w, "word", str(w)))
                 karaoke_text += f"{{\\k{dur_cs}}}{w_text} "
 
+            # Only the first chunk of the segment carries the speaker label.
+            prefix = speaker_prefix if i == 0 else ""
             start_str = fmt_ass_time(chunk_start)
             end_str = fmt_ass_time(chunk_end)
-            event_lines.append(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{karaoke_text.strip()}")
+            event_lines.append(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{prefix}{karaoke_text.strip()}")
 
     Path(output_ass_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_ass_path, "w", encoding="utf-8") as f:

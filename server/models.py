@@ -20,6 +20,9 @@ class TranscriptSegment(BaseModel):
     end: float
     text: str
     words: List[WordTimestamp] = Field(default_factory=list)
+    # Optional friendly speaker label ("Speaker 1") for diarized caption lines.
+    # When set, caption_styler prefixes the segment's first caption chunk with it.
+    speaker: Optional[str] = None
 
 
 class ViralityBreakdown(BaseModel):
@@ -78,6 +81,9 @@ class ProcessRequest(BaseModel):
     language: Optional[str] = None
     use_audio_energy: bool = True
     use_llm: bool = False
+    # Optional speaker-diarization features (#16); need pyannote + HF token.
+    speaker_aware_selection: bool = False
+    speaker_aware_crop: bool = False
     burn_captions: bool = True
     caption_style: Optional[str] = "viral_yellow"
     # Explicit override for the ASS caption font size used during initial clip generation.

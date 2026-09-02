@@ -110,9 +110,35 @@ These lean into the moat cloud tools can't match: unlimited length, no per-minut
     topic-coherent, complete-thought segments instead of only loudness/motion windows. Enhance the LLM
     highlight path + a toggle; smarter clip boundaries.
 16. **Speaker diarization (multi-person podcasts)** — "who spoke when" + labels + reliable active-speaker
-    crop on 2-3 person interviews. NOTE: needs a heavy new dependency (pyannote.audio + model + HF token)
-    — confirm the dependency tradeoff before building; an energy-based speaker-change heuristic could be a
-    no-dep first step.
+    crop on 2-3 person interviews. NOTE: needs a heavy new dependency (pyannote.audio + model + HF token,
+    kept OUT of Install-All) — installed on demand from Setup → Optional AI add-ons.
+    - [x] **1. Speaker-LABELED captions** (done, session 2026-09-01). Pure/testable core in
+      `diarizer.py`: `build_speaker_name_map` (raw `SPEAKER_00`→friendly "Speaker 1", ordered by who
+      talks first) + `group_words_into_speaker_turns` (max-overlap word→speaker, gap carry-forward,
+      `diar_offset` to align clip-local diarization with source-time words). `caption_styler` prefixes
+      the label onto each speaker turn's first caption chunk (opt-in via new `TranscriptSegment.speaker`).
+      Endpoint `POST /tools/speaker-captions` (diarize rendered clip → labeled SRT/ASS → optional
+      re-render, graceful fallback when pyannote absent). Per-clip 🗣 Speakers button now builds labeled
+      captions with an OK=burn / Cancel=files-only prompt. 11 synthetic-data unit tests in
+      `tests/test_diarization.py` (no pyannote needed). Not yet demoed on real multi-person footage.
+    - [x] **2. Speaker-aware clip selection** (done, session 2026-09-01). Pure/testable
+      `speaker_coherence(start,end,diar)` (0..1: monologue→1.0, clean 2-way→~0.85, 3+/talk-over→lower,
+      mostly-silence dampened) + `rank_clips_by_speaker` (bounded ±15% score multiplier, mutates in place).
+      Wired into `pipeline.process_video` behind `speaker_aware_selection` — diarizes the audio ONCE
+      (shared with #3), boosts/dampens candidates before dedup. UI toggle "🗣 Speaker-aware clip selection".
+      No-ops gracefully without pyannote. 7 unit tests.
+    - [x] **3. Diarization-driven active-speaker crop** (done, session 2026-09-01 — ⚠️ UNTESTED on real
+      multi-person footage). `FaceTracker.get_diarized_speaker_trajectory` samples each speaker's turns,
+      picks the talking face (max head-motion) via existing YOLO+motion, aggregates a median x-position
+      per speaker, and follows the active speaker over time. Pure helpers (`_aggregate_speaker_positions`,
+      `_active_speaker_at`, `_build_diarized_trajectory`) + `ffmpeg_tools.build_crop_x_expression` (turns
+      the clip-local trajectory into a decimated, time-driven `crop` x-expression). `build_filter_chain` /
+      `render_clip` gained `crop_x_expr` (9:16/1:1/4:5). Wired behind `speaker_aware_crop`; falls back to
+      the head-motion static crop when diar/positions are missing. UI toggle "🎯 Follow active speaker".
+      9 unit tests for the deterministic parts. KNOWN LIMITATION: a later caption re-render
+      (`/export/subtitles`) uses a static offset, so the dynamic follow is lost on re-render; and the
+      audio→face attribution (talker = most head motion during a turn) is a heuristic that needs footage
+      validation.
 
 ## UI/UX fixes reported by user (for next session — mostly `ui/`)
 

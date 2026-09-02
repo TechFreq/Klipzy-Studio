@@ -231,6 +231,8 @@ def _run_job(job_id: str) -> None:
             language=req.language,
             use_audio_energy=req.use_audio_energy,
             use_llm=req.use_llm,
+            speaker_aware_selection=req.speaker_aware_selection,
+            speaker_aware_crop=req.speaker_aware_crop,
             llm_model=PREFERRED_OLLAMA_MODEL,
             burn_captions=req.burn_captions,
             caption_style=req.caption_style or "viral_yellow",
@@ -1062,6 +1064,161 @@ def api_diarize(req: DiarizeRequest):
         raise HTTPException(status_code=400, detail=f"File not found: {req.video_path}")
     from server.core.diarizer import diarize
     return diarize(req.video_path)
+
+
+def _reburn_clip_with_subs(req: SubtitleRegenRequest, ass_path: str,
+                           first_word_start: float, last_word_end: float) -> bool:
+    """Re-render the clip to burn a freshly-generated .ass, reusing the same
+    source/segment logic as /export/subtitles. Returns True on success, and
+    degrades gracefully (returns False) on any failure. Shared by the
+    speaker-caption path so it matches the manual caption re-render exactly.
+    """
+    if not (req.re_render and req.clip_output_file and os.path.exists(req.clip_output_file)):
+        return False
+    try:
+        target_file = str(Path(req.clip_output_file).expanduser().resolve())
+        temp_target = str(Path(target_file).with_suffix(f".new.{uuid.uuid4().hex[:6]}.mp4"))
+        input_video = req.source_video if (req.source_video and os.path.exists(req.source_video)) else target_file
+        if input_video == target_file or req.start_seconds is None or req.end_seconds is None:
+            render_clip(
+                input_video=target_file,
+                output_video=temp_target,
+                start_time=0.0,
+                end_time=last_word_end - first_word_start + 1.0,
+                aspect_ratio=req.aspect_ratio or "9:16",
+                burn_captions=True,
+                subtitle_path=ass_path,
+                layout=req.layout or "",
+                cam_video=req.cam_video,
+                cam_scale=req.cam_scale,
+                cam_position=req.cam_position,
+            )
+        else:
+            render_clip(
+                input_video=input_video,
+                output_video=temp_target,
+                start_time=req.start_seconds,
+                end_time=req.end_seconds,
+                aspect_ratio=req.aspect_ratio or "9:16",
+                burn_captions=True,
+                subtitle_path=ass_path,
+                layout=req.layout or "",
+                cam_video=req.cam_video,
+                cam_scale=req.cam_scale,
+                cam_position=req.cam_position,
+                crop_x_offset=req.crop_x_offset,
+            )
+        if os.path.isfile(temp_target) and os.path.getsize(temp_target) > 0:
+            shutil.move(temp_target, target_file)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+@app.post("/tools/speaker-captions")
+def api_speaker_captions(req: SubtitleRegenRequest):
+    """Speaker-LABELED captions (optional; needs pyannote.audio + an HF token).
+
+    Runs diarization on the rendered clip, tags each caption line with a
+    friendly "Speaker N" label (whoever talks first = Speaker 1), rewrites the
+    SRT + animated .ass with the label prefixed to each speaker turn, and
+    optionally re-renders the clip to burn them in. Degrades gracefully: when
+    pyannote/token is missing it returns available=False with a message and
+    changes nothing.
+    """
+    from server.core.diarizer import diarize, group_words_into_speaker_turns
+    from server.core.caption_styler import generate_karaoke_captions
+    from server.core.ffmpeg_tools import generate_srt
+    from server.models import TranscriptSegment, WordTimestamp
+
+    diar_target = req.clip_output_file or ""
+    if not diar_target or not os.path.isfile(diar_target):
+        raise HTTPException(status_code=400, detail="A rendered clip (clip_output_file) is required")
+
+    words = [w for w in (req.words or []) if w.get("word")]
+    if not words:
+        raise HTTPException(status_code=400, detail="No words provided for speaker captioning")
+
+    result = diarize(diar_target)
+    if not result.get("available"):
+        return {"available": False, "message": result.get("message", "Diarization unavailable"),
+                "re_rendered": False}
+
+    # Words carry ABSOLUTE source timestamps; diarization of the rendered clip is
+    # clip-local (0-based). Shift the diarization onto the source timeline by the
+    # clip's start offset so the two line up.
+    first_start = float(words[0].get("start", 0))
+    last_end = float(words[-1].get("end", 0))
+    diar_offset = float(req.start_seconds) if req.start_seconds is not None else first_start
+    turns = group_words_into_speaker_turns(words, result.get("segments", []), diar_offset=diar_offset)
+
+    # Build one TranscriptSegment per speaker turn (carrying the friendly label),
+    # so caption_styler prefixes the label onto each turn's first caption chunk.
+    turn_segs: List[TranscriptSegment] = []
+    for i, turn in enumerate(turns):
+        tw = [
+            WordTimestamp(word=w.get("word", ""), start=float(w.get("start", 0)), end=float(w.get("end", 0)))
+            for w in turn["words"] if w.get("word")
+        ]
+        if not tw:
+            continue
+        turn_segs.append(TranscriptSegment(
+            id=i,
+            start=tw[0].start,
+            end=tw[-1].end,
+            text=" ".join(w.word for w in tw),
+            words=tw,
+            speaker=turn.get("speaker"),
+        ))
+
+    if not turn_segs:
+        return {"available": True, "message": "No speaker turns could be built from the words.",
+                "re_rendered": False}
+
+    # SRT with the label prefixed to each turn's text (useful for editors too).
+    srt_segs = [
+        TranscriptSegment(id=s.id, start=s.start, end=s.end,
+                          text=(f"{s.speaker}: {s.text}" if s.speaker else s.text), words=s.words)
+        for s in turn_segs
+    ]
+    generate_srt(srt_segs, req.output_path)
+
+    ass_path = os.path.splitext(req.output_path)[0] + ".ass"
+    generate_karaoke_captions(
+        turn_segs,
+        ass_path,
+        style_preset=req.style_preset,
+        font_size=req.font_size,
+        font_name=req.font_name,
+        primary_color=req.primary_color,
+        highlight_color=req.highlight_color,
+        outline_color=req.outline_color,
+        outline_width=req.outline_width,
+        chunk_size=req.chunk_size,
+        uppercase=req.uppercase,
+        bold=req.bold,
+        italic=req.italic,
+        position=req.position,
+        intro_caption=req.intro_caption,
+        intro_caption_duration=req.intro_caption_duration,
+        intro_font_size=req.intro_font_size,
+    )
+
+    re_rendered = _reburn_clip_with_subs(req, ass_path, first_start, last_end)
+
+    speakers = sorted({s.speaker for s in turn_segs if s.speaker})
+    msg = f"Labeled captions for {len(speakers)} speaker(s) across {len(turn_segs)} turns."
+    if re_rendered:
+        msg += " Clip re-rendered with labels burned in."
+    return {
+        "available": True,
+        "message": msg,
+        "speakers": speakers,
+        "srt_path": req.output_path,
+        "ass_path": ass_path,
+        "re_rendered": re_rendered,
+    }
 
 
 @app.get("/api/setup/hf-token")

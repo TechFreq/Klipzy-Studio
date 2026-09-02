@@ -147,6 +147,50 @@ def export_standalone_audio(video_path: str, output_path: str, fmt: str = "mp3")
     return output_path
 
 
+def build_crop_x_expression(keyframes, min_x: float, max_x: float, min_delta: float = 6.0) -> Optional[str]:
+    """Turn a clip-local crop trajectory into an ffmpeg ``crop`` x-expression that
+    linearly follows the active speaker over time (the ffmpeg variable ``t`` is
+    the output PTS in seconds, which starts at 0 because render_clip input-seeks
+    with ``-ss`` before ``-i``). Pure + testable.
+
+    keyframes: [{"timestamp": t, "crop_x": x}] or [(t, x)] in clip-local seconds.
+    Returns None when the motion is negligible (fewer than 2 meaningful points),
+    so the caller can fall back to a fixed crop offset. The returned expression
+    is meant to be single-quoted in the filtergraph so its commas are literal.
+    """
+    pts = []
+    for k in keyframes or []:
+        if isinstance(k, dict):
+            pts.append((float(k["timestamp"]), float(k["crop_x"])))
+        else:
+            pts.append((float(k[0]), float(k[1])))
+    if len(pts) < 2:
+        return None
+    pts.sort(key=lambda p: p[0])
+
+    # Decimate: only keep points that move meaningfully from the last KEPT one
+    # (comparing against the last kept point, not the previous sample, so a slow
+    # cumulative drift is still preserved while jitter/holds are dropped). A
+    # mostly-static speaker collapses to a single point -> no dynamic expression.
+    kept = [pts[0]]
+    for t, x in pts[1:]:
+        if abs(x - kept[-1][1]) >= min_delta:
+            kept.append((t, x))
+    if len(kept) < 2:
+        return None  # essentially static -> caller uses a fixed offset
+
+    expr = f"{kept[-1][1]:.1f}"
+    for i in range(len(kept) - 2, -1, -1):
+        t0, x0 = kept[i]
+        t1, x1 = kept[i + 1]
+        dt = (t1 - t0) or 1e-6
+        slope = (x1 - x0) / dt
+        seg = f"({x0:.1f}+({slope:.4f})*(t-{t0:.3f}))"
+        expr = f"if(lt(t,{t1:.3f}),{seg},{expr})"
+    expr = f"if(lt(t,{kept[0][0]:.3f}),{kept[0][1]:.1f},{expr})"
+    return f"clip({expr},{float(min_x):.1f},{float(max_x):.1f})"
+
+
 def build_filter_chain(
     aspect_ratio: Optional[str] = None,
     crop_x_offset: Optional[float] = None,
@@ -155,6 +199,7 @@ def build_filter_chain(
     cam_video: Optional[str] = None,
     cam_scale: float = 0.3,
     cam_position: str = "bottom-right",
+    crop_x_expr: Optional[str] = None,
 ) -> List[str]:
     """
     Build the ffmpeg filtergraph part (without subtitle burn) for a clip render.
@@ -192,17 +237,25 @@ def build_filter_chain(
             )
             filters.append(base_chain)
     elif aspect_ratio == "9:16":
-        if crop_x_offset is not None:
+        if crop_x_expr:
+            # Dynamic active-speaker crop: x follows a time expression (single-
+            # quoted so its commas aren't read as filtergraph separators).
+            filters.append(f"[0:v]crop=ih*9/16:ih:'{crop_x_expr}':0[v]")
+        elif crop_x_offset is not None:
             filters.append(f"[0:v]crop=ih*9/16:ih:{crop_x_offset}:0[v]")
         else:
             filters.append("[0:v]crop=ih*9/16:ih:(iw-ow)/2:0[v]")
     elif aspect_ratio == "1:1":
-        if crop_x_offset is not None:
+        if crop_x_expr:
+            filters.append(f"[0:v]crop=min(iw\\,ih):min(iw\\,ih):'{crop_x_expr}':(ih-oh)/2[v]")
+        elif crop_x_offset is not None:
             filters.append(f"[0:v]crop=min(iw\\,ih):min(iw\\,ih):{crop_x_offset}:(ih-oh)/2[v]")
         else:
             filters.append("[0:v]crop=min(iw\\,ih):min(iw\\,ih):(iw-ow)/2:(ih-oh)/2[v]")
     elif aspect_ratio == "4:5":
-        if crop_x_offset is not None:
+        if crop_x_expr:
+            filters.append(f"[0:v]crop=ih*4/5:ih:'{crop_x_expr}':0[v]")
+        elif crop_x_offset is not None:
             filters.append(f"[0:v]crop=ih*4/5:ih:{crop_x_offset}:0[v]")
         else:
             filters.append("[0:v]crop=ih*4/5:ih:(iw-ow)/2:0[v]")
@@ -314,6 +367,7 @@ def render_clip(
     cam_video: Optional[str] = None,
     cam_scale: float = 0.3,
     cam_position: str = "bottom-right",
+    crop_x_expr: Optional[str] = None,
 ) -> str:
     """
     Render a clip segment with optional vertical crop and hardware-accelerated encoding.
@@ -341,6 +395,7 @@ def render_clip(
         cam_video=cam_video,
         cam_scale=cam_scale,
         cam_position=cam_position,
+        crop_x_expr=crop_x_expr,
     )
     use_complex = False
 

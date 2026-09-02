@@ -310,6 +310,22 @@
                 </span>
               </span>
             </label>
+            <label class="toggle">
+              <input type="checkbox" id="speaker-aware-selection" />
+              <span>🗣 Speaker-aware clip selection
+                <span class="tooltip-toggle" tabindex="0" role="tooltip" aria-label="More info about speaker-aware selection" title="">
+                  ❓<span class="tooltip-text">Optional (needs the pyannote add-on + a Hugging Face token — install from Setup → Optional AI add-ons).<br><br>Prefers highlight windows that stay on one speaker or capture a clean back-and-forth, and avoids messy moments where 3+ people talk over each other.<br><br>If the add-on isn't installed this toggle simply does nothing.</span>
+                </span>
+              </span>
+            </label>
+            <label class="toggle">
+              <input type="checkbox" id="speaker-aware-crop" />
+              <span>🎯 Follow active speaker (diarized crop)
+                <span class="tooltip-toggle" tabindex="0" role="tooltip" aria-label="More info about diarized active-speaker crop" title="">
+                  ❓<span class="tooltip-text">Optional / experimental (needs the pyannote add-on + a Hugging Face token).<br><br>Uses "who spoke when" plus face detection to pan the vertical crop toward whoever is talking on multi-person footage.<br><br>Falls back to the standard head-motion reframing when the add-on is missing or a speaker's face can't be located.</span>
+                </span>
+              </span>
+            </label>
           </div>
 
           <!-- Button Toggle for Caption Styling Menu -->

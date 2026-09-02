@@ -1809,6 +1809,8 @@ async function startClipping() {
     whisper_model: document.getElementById('whisper-model').value,
     use_audio_energy: document.getElementById('audio-energy').checked,
     use_llm: document.getElementById('use-llm').checked,
+    speaker_aware_selection: document.getElementById('speaker-aware-selection') ? document.getElementById('speaker-aware-selection').checked : false,
+    speaker_aware_crop: document.getElementById('speaker-aware-crop') ? document.getElementById('speaker-aware-crop').checked : false,
     burn_captions: document.getElementById('burn-captions').checked,
     remove_silence: document.getElementById('remove-silence') ? document.getElementById('remove-silence').checked : false,
     bleep_profanity: document.getElementById('censor-profanity') ? document.getElementById('censor-profanity').checked : false,
@@ -4250,22 +4252,75 @@ document.getElementById('translate-go')?.addEventListener('click', async () => {
 });
 
 // #16 Speaker diarization (optional — needs pyannote + HF token).
+// Detects who spoke when, then rewrites the clip's captions with friendly
+// "Speaker 1:" / "Speaker 2:" labels (whoever talks first = Speaker 1) and can
+// re-render the clip to burn the labels in. Degrades gracefully when pyannote
+// isn't installed.
 async function detectSpeakers(idx, btn) {
   const clip = generatedClips[idx];
   if (!clip || !clip.output_file) return;
+
+  const words = (clip.words && clip.words.length) ? clip.words : null;
+  if (!words) {
+    showAlert('This clip has no word timestamps to label. Re-transcribe it first.', 'Speakers');
+    return;
+  }
+
+  const burn = await showConfirm(
+    'Detect speakers and add "Speaker 1:" / "Speaker 2:" labels to this clip\'s captions?\n\n' +
+    'Choose OK to also re-render the clip and burn the labels in, or Cancel to just write the caption files (.srt/.ass).',
+    'Speaker-labeled captions',
+  );
+
   const orig = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Analyzing…'; }
   try {
-    const res = await fetch(`${serverUrl}/tools/diarize`, {
+    const captionOpts = collectCaptionOptions();
+    const outputPath = clip.ass_path ? clip.ass_path.replace(/\.ass$/i, '.srt') : `${clip.output_file}.srt`;
+    const res = await fetch(`${serverUrl}/tools/speaker-captions`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ video_path: clip.output_file }),
+      body: JSON.stringify({
+        output_path: outputPath,
+        words,
+        style_preset: captionOpts.style_preset,
+        font_size: captionOpts.font_size,
+        font_name: captionOpts.font_name,
+        primary_color: captionOpts.primary_color,
+        highlight_color: captionOpts.highlight_color,
+        outline_color: captionOpts.outline_color,
+        outline_width: captionOpts.outline_width,
+        position: captionOpts.position,
+        chunk_size: captionOpts.chunk_size,
+        uppercase: captionOpts.uppercase,
+        bold: captionOpts.bold,
+        italic: captionOpts.italic,
+        source_video: selectedVideo,
+        clip_output_file: clip.output_file,
+        start_seconds: clip.start_time,
+        end_seconds: clip.end_time,
+        aspect_ratio: document.getElementById('clip-aspect-ratio')?.value || clip.aspect_ratio || '9:16',
+        layout: clip.layout || '',
+        cam_video: clip.cam_video,
+        cam_scale: clip.cam_scale,
+        cam_position: clip.cam_position,
+        crop_x_offset: clip.crop_x_offset,
+        re_render: !!burn,
+      }),
     });
     const d = await res.json();
     if (d.available) {
-      const lines = (d.segments || []).slice(0, 15).map((s) => `${s.speaker}: ${s.start}s–${s.end}s`).join('\n');
-      showAlert(`🗣 ${d.message}\n\n${lines}`, 'Speakers');
+      if (d.srt_path) clip.srt_path = d.srt_path;
+      if (d.ass_path) clip.ass_path = d.ass_path;
+      if (d.re_rendered) {
+        const card = document.querySelector(`.clip-card[data-clip-idx="${idx}"]`);
+        const vid = card && card.querySelector('video');
+        if (vid) { vid.src = fileUrl(clip.output_file, true); vid.load(); }
+      }
+      const who = (d.speakers || []).join(', ');
+      showToast(`🗣 ${d.message}`, 'success');
+      showAlert(`🗣 ${d.message}${who ? `\n\nSpeakers: ${who}` : ''}`, 'Speaker-labeled captions');
     } else {
-      showAlert(`Speaker detection is optional and not enabled yet.\n\n${d.message}\n\nTo enable, in the app's Python env:\n  pip install pyannote.audio\nand set an HF_TOKEN environment variable.`, 'Speaker Diarization (optional)');
+      showAlert(`Speaker detection is optional and not enabled yet.\n\n${d.message}\n\nTo enable, open Setup → Optional AI add-ons, install pyannote.audio, and set a Hugging Face token.`, 'Speaker Diarization (optional)');
     }
   } catch (e) {
     showAlert(`Error: ${e.message}`);

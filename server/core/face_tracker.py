@@ -430,3 +430,175 @@ class FaceTracker:
 
         return smoothed
 
+    # ------------------------------------------------------------------
+    # #16.3 Diarization-driven active-speaker crop  (⚠️ UNTESTED)
+    # Diarization is audio-only (who/when, not where). To drive the crop we map
+    # each speaker label to a face x-position, then follow whoever is talking.
+    # The pure helpers below are unit-tested; get_diarized_speaker_trajectory
+    # (which touches YOLO + OpenCV) degrades to [] so the caller falls back to
+    # the visual head-motion crop.
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _aggregate_speaker_positions(samples: List[Tuple[str, float]]) -> Dict[str, float]:
+        """Collapse (speaker_label, center_x) samples into one representative
+        x-position per speaker (the median, robust to the odd mis-detection).
+        Pure + testable."""
+        import statistics
+        grouped: Dict[str, List[float]] = {}
+        for sp, cx in samples or []:
+            if sp is None:
+                continue
+            grouped.setdefault(sp, []).append(float(cx))
+        return {sp: float(statistics.median(vals)) for sp, vals in grouped.items() if vals}
+
+    @staticmethod
+    def _active_speaker_at(t: float, diar_segments: List[Dict]) -> Optional[str]:
+        """Speaker label of the diarization turn covering time ``t`` (or None)."""
+        for d in diar_segments or []:
+            if float(d.get("start", 0)) <= t < float(d.get("end", 0)):
+                return d.get("speaker")
+        return None
+
+    @staticmethod
+    def _build_diarized_trajectory(
+        start_time: float,
+        end_time: float,
+        diar_segments: List[Dict],
+        speaker_pos: Dict[str, float],
+        width: int,
+        target_crop_width: int,
+        sample_fps: float = 4.0,
+        alpha: float = 0.35,
+    ) -> List[Dict[str, float]]:
+        """Build a smoothed, clip-local crop trajectory that snaps toward the
+        active speaker's face position over time. Pure + testable.
+
+        Returns [{"timestamp": clip-local seconds, "crop_x": int}]; empty when a
+        crop isn't needed/possible (frame narrower than the crop, or no known
+        speaker positions).
+        """
+        if width <= 0 or target_crop_width >= width or not speaker_pos:
+            return []
+        max_off = max(0, width - target_crop_width)
+        default_center = width / 2.0
+        dur = max(0.1, end_time - start_time)
+        samples = max(2, int(dur * sample_fps))
+        step = dur / samples
+
+        traj: List[Dict[str, float]] = []
+        current: Optional[float] = None
+        last_center: Optional[float] = None
+        for i in range(samples + 1):
+            ts = start_time + i * step
+            sp = FaceTracker._active_speaker_at(ts, diar_segments)
+            center = speaker_pos.get(sp) if sp is not None else None
+            if center is None:
+                center = last_center if last_center is not None else default_center
+            last_center = center
+            current = center if current is None else (alpha * center + (1.0 - alpha) * current)
+            crop_x = int(round(current - target_crop_width / 2.0))
+            crop_x = max(0, min(crop_x, max_off))
+            traj.append({"timestamp": round(i * step, 3), "crop_x": crop_x})
+        return traj
+
+    def get_diarized_speaker_trajectory(
+        self,
+        video_path: str,
+        start_time: float,
+        end_time: float,
+        diar_segments: List[Dict],
+        aspect_ratio: str = "9:16",
+        sample_fps: float = 4.0,
+    ) -> List[Dict[str, float]]:
+        """⚠️ UNTESTED (needs pyannote + real multi-person footage).
+
+        Sample frames during each diarization turn, detect people (YOLO), pick
+        the talking face (max head-region motion) and attribute its x-position to
+        that turn's speaker. Aggregate to one position per speaker, then follow
+        the active speaker over time. Returns [] on ANY problem so callers fall
+        back to the visual head-motion crop (get_speaker_center_x).
+
+        diar_segments are in SOURCE time (same timeline as start/end); the
+        returned trajectory timestamps are CLIP-LOCAL (0-based) to match the
+        ffmpeg output timeline used for burning/cropping.
+        """
+        try:
+            import cv2
+        except ImportError:
+            return []
+        if not os.path.exists(video_path) or not diar_segments:
+            return []
+
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return []
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if width <= 0 or height <= 0:
+            cap.release()
+            return []
+        target_crop_width = self._calc_target_crop_width(width, height, aspect_ratio)
+        if target_crop_width >= width:
+            cap.release()
+            return []
+
+        self._init_model()
+        if not self.model:
+            cap.release()
+            return []
+
+        turns = [
+            d for d in diar_segments
+            if float(d.get("end", 0)) > start_time and float(d.get("start", 0)) < end_time
+        ]
+        per_turn = 3
+        samples: List[Tuple[str, float]] = []
+        for d in turns:
+            sp = d.get("speaker")
+            ts0 = max(start_time, float(d.get("start", 0)))
+            ts1 = min(end_time, float(d.get("end", 0)))
+            if ts1 - ts0 <= 0:
+                continue
+            for j in range(per_turn):
+                t = ts0 + (ts1 - ts0) * (j + 0.5) / per_turn
+                cap.set(cv2.CAP_PROP_POS_FRAMES, int(t * fps))
+                ret, frame = cap.read()
+                ret2, frame2 = cap.read()
+                if not ret:
+                    continue
+                try:
+                    res = self.model(frame, verbose=False, classes=[0])
+                    boxes = res[0].boxes
+                    if len(boxes) == 0:
+                        continue
+                    gray_a = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if ret2 else None
+                    gray_b = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY) if ret2 else None
+                    scored = []  # (area, center_x, motion)
+                    for b in boxes:
+                        xyxy = b.xyxy[0].cpu().numpy()
+                        area = float((xyxy[2] - xyxy[0]) * (xyxy[3] - xyxy[1]))
+                        cx = float((xyxy[0] + xyxy[2]) / 2.0)
+                        motion = (self._face_region_motion(gray_a, gray_b, xyxy)
+                                  if gray_a is not None else 0.0)
+                        scored.append((area, cx, motion))
+                    if not scored:
+                        continue
+                    scored.sort(key=lambda s: s[0], reverse=True)
+                    top_area = scored[0][0]
+                    big = [s for s in scored if s[0] >= 0.4 * top_area]
+                    talker = max(big, key=lambda s: s[2]) if big else scored[0]
+                    # Negligible motion everywhere -> trust the most prominent person.
+                    if talker[2] < 1.0:
+                        talker = scored[0]
+                    samples.append((sp, talker[1]))
+                except Exception:
+                    continue
+        cap.release()
+
+        speaker_pos = self._aggregate_speaker_positions(samples)
+        return self._build_diarized_trajectory(
+            start_time, end_time, diar_segments, speaker_pos,
+            width, target_crop_width, sample_fps=sample_fps,
+        )
+
