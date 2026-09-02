@@ -324,6 +324,16 @@
                 <span class="muted small">Customize presets, fonts, colors, outline, position, and text styling.</span>
               </div>
 
+              <!-- Brand Kits: save/apply this whole look as a reusable template -->
+              <div class="brand-kit-bar">
+                <span class="brand-kit-label">🎯 Brand kit:</span>
+                <select id="brand-kit-select" title="Apply a saved brand kit">
+                  <option value="">Choose a saved kit…</option>
+                </select>
+                <button type="button" class="btn btn-small btn-primary" id="brand-kit-save" title="Save the current caption style + layout as a reusable kit">💾 Save current</button>
+                <button type="button" class="btn btn-small btn-danger" id="brand-kit-delete" title="Delete the selected kit">🗑</button>
+              </div>
+
               <div class="caption-settings-layout">
                 <div class="caption-controls-col">
                   <div class="caption-grid">
@@ -550,7 +560,9 @@
                   <input id="edit-intro-hook" type="text" maxlength="90" placeholder="Type your own, or rotate suggestions →" />
                   <button type="button" class="btn btn-small btn-secondary" id="suggest-hook-btn" title="Rotate hooks drawn from this clip's transcript (offline)">🔄 Suggest another</button>
                   <button type="button" class="btn btn-small btn-secondary" id="ai-rewrite-hook-btn" title="Rewrite the hook with your local AI model (Ollama). Falls back to offline suggestions if Ollama isn't running.">✨ AI rewrite</button>
+                  <button type="button" class="btn btn-small btn-secondary" id="hook-variants-btn" title="Show several hook options at once to compare and pick">⚖️ Variants</button>
                 </div>
+                <div id="hook-variants" class="hook-variants hidden"></div>
                 <span class="muted small">Leave blank for no intro hook. “Suggest another” is offline; “AI rewrite” uses your local Ollama model when it's running.</span>
               </label>
               <label class="caption-preview-size" style="margin-top:10px;">Hook font size

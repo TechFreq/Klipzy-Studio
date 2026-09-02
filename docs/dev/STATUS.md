@@ -94,6 +94,26 @@ pytest tests/ -q                  # 67 tests
     face tracking = YOLO `yolov8n.pt`; optional LLM = Ollama `gemma2:2b` default. The hook
     suggester uses NO model.
 
+## Creator features roadmap (requested — local-first differentiators)
+These lean into the moat cloud tools can't match: unlimited length, no per-minute cost, full privacy.
+11. **Brand Kits / templates** — DONE (initial). Save the current caption style + layout + intro-hook +
+    aspect settings as a named, reusable kit (localStorage) and apply in one click.
+12. **A/B hook variants** — DONE (initial). Generate several hook options per clip at once (heuristic +
+    optional Ollama) as a selectable list to compare and pick, building on the hook editor.
+13. **Filler-word + dead-air removal** — auto-cut "um/uh/like/you know" and long pauses using the Whisper
+    word timestamps we already store (extends server/core/silence_cutter.py). Backend cut + a UI toggle;
+    no new deps. High value, realistic next build.
+14. **Multi-language captions** — translate the generated SRT/ASS lines into target languages using the
+    local Ollama model (catalog already exists) and burn/attach translated captions. Whisper's translate
+    task covers →English; other languages via the LLM. Reach multiplier, fully local.
+15. **Semantic / topic-based clipping** — use the local LLM (`llm_detector` already exists) to pick
+    topic-coherent, complete-thought segments instead of only loudness/motion windows. Enhance the LLM
+    highlight path + a toggle; smarter clip boundaries.
+16. **Speaker diarization (multi-person podcasts)** — "who spoke when" + labels + reliable active-speaker
+    crop on 2-3 person interviews. NOTE: needs a heavy new dependency (pyannote.audio + model + HF token)
+    — confirm the dependency tradeoff before building; an energy-based speaker-change heuristic could be a
+    no-dep first step.
+
 ## UI/UX fixes reported by user (for next session — mostly `ui/`)
 
 > **Session update 2026-08-31:** All 16 UI/UX items below were implemented

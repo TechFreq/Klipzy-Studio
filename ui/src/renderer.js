@@ -657,6 +657,51 @@ function bindEvents() {
   document.getElementById('caption-position')?.addEventListener('change', applyPortraitCaptionPreviewStyle);
   document.getElementById('caption-chunk-size')?.addEventListener('change', refreshPortraitCaptionPreview);
 
+  // Brand Kits (save/apply/delete the whole caption look + layout).
+  loadBrandKitList();
+  document.getElementById('brand-kit-select')?.addEventListener('change', (e) => {
+    const id = e.target.value;
+    if (!id) return;
+    const kit = readBrandKits().find((k) => k.id === id);
+    if (kit) applyBrandKit(kit.settings);
+  });
+  document.getElementById('brand-kit-delete')?.addEventListener('click', () => {
+    const sel = document.getElementById('brand-kit-select');
+    const id = sel && sel.value;
+    if (!id) { showToast('Pick a kit to delete first', 'info'); return; }
+    writeBrandKits(readBrandKits().filter((k) => k.id !== id));
+    loadBrandKitList();
+    showToast('Brand kit deleted', 'info');
+  });
+  document.getElementById('brand-kit-save')?.addEventListener('click', () => {
+    const bar = document.querySelector('.brand-kit-bar');
+    if (!bar || bar.querySelector('.brand-kit-nameform')) return;
+    const form = document.createElement('span');
+    form.className = 'brand-kit-nameform';
+    form.innerHTML = `<input type="text" id="brand-kit-name" placeholder="Kit name" maxlength="40" />` +
+      `<button class="btn btn-small btn-primary" id="brand-kit-name-ok">Save</button>` +
+      `<button class="btn btn-small btn-ghost" id="brand-kit-name-cancel">Cancel</button>`;
+    bar.appendChild(form);
+    const input = form.querySelector('#brand-kit-name');
+    input.focus();
+    form.querySelector('#brand-kit-name-cancel').onclick = () => form.remove();
+    form.querySelector('#brand-kit-name-ok').onclick = () => {
+      const kits = readBrandKits();
+      const name = (input.value || '').trim() || `Kit ${kits.length + 1}`;
+      const kit = { id: `kit-${Date.now()}`, name, settings: collectBrandKit() };
+      kits.push(kit);
+      writeBrandKits(kits);
+      loadBrandKitList();
+      const sel = document.getElementById('brand-kit-select');
+      if (sel) sel.value = kit.id;
+      form.remove();
+      showToast(`Saved brand kit “${name}”`, 'success');
+    };
+  });
+
+  // A/B hook variants: show several options at once to compare + pick.
+  document.getElementById('hook-variants-btn')?.addEventListener('click', showHookVariants);
+
   // Intro-hook live preview: update as the user types or resizes the hook.
   document.getElementById('edit-intro-hook')?.addEventListener('input', updateHookPreview);
   const hookSizeSlider = document.getElementById('intro-hook-font-size');
@@ -975,6 +1020,46 @@ function updateCurrentProjectUI(name) {
     sideEl.textContent = trimmed ? `▶ ${trimmed}` : '';
     sideEl.classList.toggle('hidden', !trimmed);
   }
+}
+
+// ------------------------------------------------------------------
+// Brand Kits: save the current caption look + layout as a reusable template.
+// ------------------------------------------------------------------
+const BRAND_KITS_KEY = 'klipzy.brandkits.v1';
+const BRAND_KIT_FIELDS = [
+  'generated-caption-preset', 'generated-caption-font-size', 'caption-font-name',
+  'caption-primary-color', 'caption-highlight-color', 'caption-outline-color', 'caption-outline-width',
+  'caption-position', 'caption-chunk-size', 'caption-uppercase', 'caption-bold', 'caption-italic',
+  'caption-intro-enabled', 'caption-intro-duration', 'clip-aspect-ratio', 'trim-layout', 'vertical-crop',
+];
+function readBrandKits() { try { return JSON.parse(localStorage.getItem(BRAND_KITS_KEY)) || []; } catch (_) { return []; } }
+function writeBrandKits(k) { localStorage.setItem(BRAND_KITS_KEY, JSON.stringify(k)); }
+function collectBrandKit() {
+  const data = {};
+  BRAND_KIT_FIELDS.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    data[id] = el.type === 'checkbox' ? el.checked : el.value;
+  });
+  return data;
+}
+function applyBrandKit(settings) {
+  Object.entries(settings || {}).forEach(([id, val]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (el.type === 'checkbox') el.checked = !!val; else el.value = val;
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  if (typeof refreshCaptionPreview === 'function') refreshCaptionPreview();
+  showToast('Brand kit applied ✅', 'success');
+}
+function loadBrandKitList() {
+  const sel = document.getElementById('brand-kit-select');
+  if (!sel) return;
+  const kits = readBrandKits();
+  sel.innerHTML = '<option value="">Choose a saved kit…</option>' +
+    kits.map((k) => `<option value="${escapeHtml(k.id)}">${escapeHtml(k.name)}</option>`).join('');
 }
 
 function goToNewProject() {
@@ -2725,6 +2810,8 @@ window.openCaptionEditor = function(clipIndex) {
   }
   hookCandidates = [];
   hookCandidateIdx = -1;
+  const vbox = document.getElementById('hook-variants');
+  if (vbox) { vbox.classList.add('hidden'); vbox.innerHTML = ''; }
   updateHookPreview();
 
   const modal = document.getElementById('caption-modal');
@@ -2802,6 +2889,48 @@ document.getElementById('suggest-hook-btn')?.addEventListener('click', async () 
   if (input) input.value = hookCandidates[hookCandidateIdx];
   updateHookPreview();
 });
+
+// A/B hook variants: fetch several options at once (AI if Ollama is running,
+// else transcript heuristics) and show them as clickable chips to compare/pick.
+async function showHookVariants() {
+  if (!currentEditingClip) return;
+  const box = document.getElementById('hook-variants');
+  const btn = document.getElementById('hook-variants-btn');
+  if (!box) return;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating…'; }
+  let hooks = [];
+  let usedAi = false;
+  try {
+    const res = await fetch(`${serverUrl}/tools/rewrite-hook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: currentEditingClip.full_text || currentEditingClip.reason || currentEditingClip.hook_text || '',
+        words: currentEditingClip.words || [],
+        current_hook: document.getElementById('edit-intro-hook')?.value || '',
+        count: 6,
+        preset: document.getElementById('generated-caption-preset')?.value || '',
+      }),
+    });
+    const data = await res.json();
+    hooks = (data.hooks || []).filter(Boolean);
+    usedAi = !!data.used_ai;
+  } catch (_) { hooks = []; }
+  if (btn) { btn.disabled = false; btn.textContent = '⚖️ Variants'; }
+  if (!hooks.length) { showToast('No hook variants found for this clip', 'info'); return; }
+  box.classList.remove('hidden');
+  box.innerHTML = `<div class="hook-variants-head muted small">${usedAi ? '✨ AI' : 'Suggested'} variants — click one to use it:</div>` +
+    hooks.map((h) => `<button type="button" class="hook-variant-chip">${escapeHtml(h)}</button>`).join('');
+  box.querySelectorAll('.hook-variant-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const input = document.getElementById('edit-intro-hook');
+      if (input) input.value = chip.textContent;
+      box.querySelectorAll('.hook-variant-chip').forEach((c) => c.classList.remove('chosen'));
+      chip.classList.add('chosen');
+      updateHookPreview();
+    });
+  });
+}
 
 // Optional AI rewrite: punch up the hook with the user's local Ollama model.
 // Falls back to the offline suggestions when Ollama isn't running.

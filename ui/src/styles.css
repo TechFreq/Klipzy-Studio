@@ -1547,3 +1547,28 @@ body {
   white-space: normal;
 }
 .hook-preview.hidden { display: none; }
+
+/* Brand kit bar (caption customization) */
+.brand-kit-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 6px 0 14px; padding: 8px 10px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+}
+.brand-kit-label { font-size: 13px; color: var(--text-muted); font-weight: 600; }
+.brand-kit-bar select { flex: 1 1 160px; min-width: 120px; }
+.brand-kit-nameform { display: inline-flex; gap: 6px; align-items: center; }
+.brand-kit-nameform input {
+  background: var(--bg-card); border: 1px solid var(--border); color: var(--text);
+  border-radius: 8px; padding: 6px 8px; font-size: 13px;
+}
+
+/* A/B hook variants */
+.hook-variants { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.hook-variants.hidden { display: none; }
+.hook-variants-head { width: 100%; }
+.hook-variant-chip {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  border-radius: 999px; padding: 6px 12px; font-size: 12px; cursor: pointer; text-align: left;
+}
+.hook-variant-chip:hover { border-color: var(--accent); background: rgba(99,102,241,0.12); }
+.hook-variant-chip.chosen { border-color: var(--accent); background: rgba(99,102,241,0.22); color: #fff; }
