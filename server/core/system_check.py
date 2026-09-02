@@ -990,6 +990,8 @@ def recommend_models() -> Dict[str, Dict]:
     # fit, followed by lighter fallbacks that are still compatible.
     whisper_choices = [
         {"model": whisper["model"], "tier": "Best fit", "note": whisper["note"]},
+        {"model": "large-v3", "tier": "Max accuracy",
+         "note": "Best transcription for long/complex media; wants a GPU or patience on CPU"},
         {"model": "small", "tier": "Balanced", "note": "Lower VRAM/RAM use with very good accuracy"},
         {"model": "base", "tier": "Light", "note": "Fast and dependable on most machines"},
         {"model": "tiny", "tier": "Fastest", "note": "Smallest memory footprint"},
