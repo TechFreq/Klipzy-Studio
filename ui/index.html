@@ -728,6 +728,31 @@
         </div>
       </div>
 
+      <!-- Translate Captions Modal -->
+      <div id="translate-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="translate-title">
+        <div class="modal-content dialog-modal-content">
+          <div class="modal-header">
+            <h3 id="translate-title">🌐 Translate captions</h3>
+            <button class="modal-close" id="translate-close" aria-label="Close dialog">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p class="muted">Translate this clip's captions into another language using your local AI (Ollama). Writes translated .srt + .vtt files next to the clip.</p>
+            <label class="option">
+              <span>Language</span>
+              <select id="translate-lang"><option value="">Loading…</option></select>
+            </label>
+            <label class="option" style="margin-top:10px;">
+              <span>Or type a language</span>
+              <input type="text" id="translate-lang-custom" placeholder="e.g. Tagalog" />
+            </label>
+            <div class="dialog-actions">
+              <button class="btn btn-secondary" id="translate-cancel">Cancel</button>
+              <button class="btn btn-primary" id="translate-go">Translate</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Multi-Aspect Preview & Export Modal -->
       <div id="multi-aspect-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="multi-aspect-title">
         <div class="modal-content">

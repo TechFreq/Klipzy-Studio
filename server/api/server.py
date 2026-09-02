@@ -900,6 +900,87 @@ def api_remove_silence(req: RemoveSilenceRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+class RemoveFillersRequest(BaseModel):
+    video_path: str
+    words: List[dict] = []
+    output_path: Optional[str] = None
+    extra_fillers: List[str] = []
+    also_remove_silence: bool = True
+
+
+@app.post("/tools/remove-fillers")
+def api_remove_fillers(req: RemoveFillersRequest):
+    """Cut filler words ('um', 'uh', ...) and optionally dead air from a clip,
+    using its Whisper word timestamps."""
+    if not os.path.isfile(req.video_path):
+        raise HTTPException(status_code=400, detail=f"Clip not found: {req.video_path}")
+    from server.core.filler_cutter import remove_fillers
+    out_path = req.output_path
+    if not out_path:
+        p = Path(req.video_path)
+        out_path = str(p.parent / f"{p.stem}_nofiller{p.suffix}")
+    try:
+        return remove_fillers(
+            input_video=req.video_path,
+            output_video=out_path,
+            words=req.words,
+            extra_fillers=req.extra_fillers,
+            also_remove_silence=req.also_remove_silence,
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class TranslateCaptionsRequest(BaseModel):
+    srt_path: str
+    target_lang: str
+    output_dir: Optional[str] = None
+
+
+@app.get("/tools/languages")
+def get_languages():
+    from server.core.translator import COMMON_LANGUAGES
+    return {"languages": COMMON_LANGUAGES}
+
+
+@app.post("/tools/translate-captions")
+def api_translate_captions(req: TranslateCaptionsRequest):
+    """Translate a clip's SRT into a target language via the local Ollama model,
+    writing translated .srt + .vtt next to it. Requires Ollama running."""
+    from server.core import system_check as sc
+    if not os.path.isfile(req.srt_path):
+        raise HTTPException(status_code=400, detail=f"Subtitle file not found: {req.srt_path}")
+    if not sc.detect_ollama().get("running"):
+        raise HTTPException(status_code=400, detail="Ollama isn't running — start it to translate captions.")
+    from server.core.translator import translate_srt_file
+    try:
+        result = translate_srt_file(req.srt_path, req.target_lang, PREFERRED_OLLAMA_MODEL, req.output_dir)
+        result["model"] = PREFERRED_OLLAMA_MODEL
+        return result
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class DiarizeRequest(BaseModel):
+    video_path: str
+
+
+@app.get("/tools/diarization-available")
+def diarization_available_ep():
+    from server.core.diarizer import diarization_available
+    return {"available": diarization_available()}
+
+
+@app.post("/tools/diarize")
+def api_diarize(req: DiarizeRequest):
+    """Speaker diarization (optional; needs pyannote.audio + an HF token).
+    Returns availability + segments; never hard-fails for the not-installed case."""
+    if not os.path.isfile(req.video_path):
+        raise HTTPException(status_code=400, detail=f"File not found: {req.video_path}")
+    from server.core.diarizer import diarize
+    return diarize(req.video_path)
+
+
 @app.post("/tools/bleep-mute", response_model=BleepMuteResponse)
 def api_bleep_mute(req: BleepMuteRequest):
     """Censor audio profanity or custom words with 1000Hz bleep or mute."""

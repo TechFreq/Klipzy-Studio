@@ -8,7 +8,7 @@ import os
 import subprocess
 from pathlib import Path
 from typing import List, Dict, Tuple, Any, Optional
-from server.core.ffmpeg_tools import get_video_duration, detect_hw_encoder
+from server.core.ffmpeg_tools import get_video_duration, detect_hw_encoder, X264_FALLBACK_ARGS
 
 
 def detect_silence_intervals(
@@ -174,3 +174,44 @@ def remove_silence(
         "segments_kept": len(speech_segs),
         "message": f"Successfully removed {saved}s of dead air."
     }
+
+
+def render_kept_segments(input_video: str, output_video: str, speech_segs: List[Tuple[float, float]]) -> str:
+    """Render only the given keep-segments of a video into output_video, dropping
+    everything else (used by both silence removal and filler-word removal).
+    """
+    if not speech_segs:
+        import shutil
+        Path(output_video).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(input_video, output_video)
+        return output_video
+
+    v_expr = "+".join(f"between(t,{s},{e})" for s, e in speech_segs)
+    filter_complex = (
+        f"[0:v]select='{v_expr}',setpts=N/FRAME_RATE/TB[v];"
+        f"[0:a]aselect='{v_expr}',asetpts=N/SR/TB[a]"
+    )
+    encoder, enc_args = detect_hw_encoder()
+    Path(output_video).parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "ffmpeg", "-y", "-i", input_video,
+        "-filter_complex", filter_complex,
+        "-map", "[v]", "-map", "[a]",
+        "-c:v", encoder, *enc_args,
+        "-c:a", "aac", "-b:a", "192k",
+        output_video,
+    ]
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if res.returncode != 0:
+        cmd_fb = [
+            "ffmpeg", "-y", "-i", input_video,
+            "-filter_complex", filter_complex,
+            "-map", "[v]", "-map", "[a]",
+            "-c:v", "libx264", *X264_FALLBACK_ARGS,
+            "-c:a", "aac", "-b:a", "192k",
+            output_video,
+        ]
+        res_fb = subprocess.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if res_fb.returncode != 0:
+            raise RuntimeError(f"Segment render failed: {res_fb.stderr[-500:]}")
+    return output_video

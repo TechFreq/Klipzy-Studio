@@ -21,9 +21,18 @@ def detect_highlights_llm(segments: List[TranscriptSegment], model: str = "gemma
             f"[{seg.start:.1f}-{seg.end:.1f}] {seg.text}" for seg in segments[:200]
         )
 
-        prompt = f"""You are a viral short-form video editor. Given this transcript with timestamps,
-identify the 3-5 most engaging, clip-worthy moments (20-60 seconds each).
-Return ONLY a JSON array of objects with keys: start, end, title, reason.
+        prompt = f"""You are a viral short-form video editor. From this timestamped transcript,
+pick the 3-5 most engaging moments to cut as standalone shorts (20-60s each).
+
+Choose by MEANING, not just loud moments:
+- Each clip must be a COMPLETE THOUGHT — start where a new idea/topic begins and
+  end where it resolves, so it makes sense on its own with no missing setup.
+- Prefer a strong hook line, a clear payoff, and a single topic per clip.
+- Snap start/end to natural sentence boundaries in the transcript timestamps.
+- Do not overlap clips or cut mid-sentence.
+
+Return ONLY a JSON array of objects with keys: start, end, title, reason
+(reason = why it works as a self-contained clip).
 Transcript:
 {compact}"""
 

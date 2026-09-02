@@ -2086,6 +2086,9 @@ function buildClipCard(clip, idx) {
       <button class="btn btn-small" data-action="multi-aspect" title="Render 9:16 + 1:1 + 4:5 + 16:9 in one pass">📐 Multi-Aspect</button>
       <button class="btn btn-small" data-action="overlay" title="Add B-roll video cutaway or reaction image">🎭 B-Roll</button>
       <button class="btn btn-small" data-action="snip-silence" title="Auto-cut dead air pauses">✂️ Snip Silence</button>
+      <button class="btn btn-small" data-action="remove-fillers" title="Cut filler words (um, uh…) + dead air using the transcript">🧹 Fillers</button>
+      <button class="btn btn-small" data-action="translate" title="Translate this clip's captions to another language (local AI)">🌐 Translate</button>
+      <button class="btn btn-small" data-action="speakers" title="Detect who spoke when (optional — needs pyannote)">🗣 Speakers</button>
       <button class="btn btn-small" data-action="bleep" title="Bleep or mute profanity">🔇 Bleep</button>
       <button class="btn btn-small" data-action="open-folder">📂 Open</button>
       <button class="btn btn-small btn-danger" data-action="delete" title="Remove this clip">🗑 Delete</button>
@@ -2163,6 +2166,9 @@ function buildClipCard(clip, idx) {
       case 'multi-aspect': exportMultiAspectPack(idx2); break;
       case 'overlay': openOverlayModal(idx2); break;
       case 'snip-silence': quickCutSilence(idx2); break;
+      case 'remove-fillers': quickRemoveFillers(idx2, actionBtn); break;
+      case 'translate': openTranslateModal(idx2); break;
+      case 'speakers': detectSpeakers(idx2, actionBtn); break;
       case 'bleep': quickBleepClip(idx2); break;
       case 'open-folder': revealInFolder(clip.output_file); break;
       case 'mute':
@@ -4068,6 +4074,110 @@ async function quickRerollHook(idx, btn) {
       showToast(`🎣 New hook: "${newHook}"`, 'success');
     } else {
       showAlert(`Could not update hook: ${data.detail || 'error'}`);
+    }
+  } catch (e) {
+    showAlert(`Error: ${e.message}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
+  }
+}
+
+// #13 Filler-word + dead-air removal for a clip (uses its word timestamps).
+async function quickRemoveFillers(idx, btn) {
+  const clip = generatedClips[idx];
+  if (!clip || !clip.output_file) { showAlert('No rendered clip yet.'); return; }
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Cutting…'; }
+  try {
+    const res = await fetch(`${serverUrl}/tools/remove-fillers`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video_path: clip.output_file, words: clip.words || [], also_remove_silence: true }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      clip.output_file = data.output_path;
+      if (typeof data.cut_duration === 'number') clip.duration = data.cut_duration;
+      const card = document.querySelector(`.clip-card[data-clip-idx="${idx}"]`);
+      const vid = card && card.querySelector('video');
+      if (vid) { vid.src = fileUrl(clip.output_file, true); vid.load(); }
+      saveCurrentProjectSilently();
+      playSuccessSound();
+      showToast(`🧹 ${data.message || 'Fillers removed'}`, 'success');
+    } else {
+      showAlert(`Filler removal failed: ${data.detail || 'error'}`);
+    }
+  } catch (e) {
+    showAlert(`Error: ${e.message}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
+  }
+}
+
+// #14 Translate a clip's captions into another language (local Ollama).
+let translateClip = null;
+async function openTranslateModal(idx) {
+  const clip = generatedClips[idx];
+  if (!clip) return;
+  if (!clip.srt_path) { showAlert('No subtitle file for this clip yet — generate captions first.'); return; }
+  translateClip = clip;
+  const sel = document.getElementById('translate-lang');
+  if (sel && sel.dataset.loaded !== '1') {
+    try {
+      const r = await fetch(`${serverUrl}/tools/languages`);
+      const d = await r.json();
+      sel.innerHTML = (d.languages || []).map((l) => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+      sel.dataset.loaded = '1';
+    } catch (_) { sel.innerHTML = '<option value="Spanish">Spanish</option>'; }
+  }
+  document.getElementById('translate-modal')?.classList.remove('hidden');
+}
+document.getElementById('translate-close')?.addEventListener('click', () => document.getElementById('translate-modal')?.classList.add('hidden'));
+document.getElementById('translate-cancel')?.addEventListener('click', () => document.getElementById('translate-modal')?.classList.add('hidden'));
+document.getElementById('translate-go')?.addEventListener('click', async () => {
+  if (!translateClip) return;
+  const custom = (document.getElementById('translate-lang-custom')?.value || '').trim();
+  const lang = custom || document.getElementById('translate-lang')?.value || '';
+  if (!lang) { showToast('Pick or type a language', 'info'); return; }
+  const btn = document.getElementById('translate-go');
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Translating…'; }
+  try {
+    const res = await fetch(`${serverUrl}/tools/translate-captions`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ srt_path: translateClip.srt_path, target_lang: lang }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      document.getElementById('translate-modal')?.classList.add('hidden');
+      playSuccessSound();
+      showAlert(`✅ Translated ${data.translated} caption lines to ${lang}.\nSaved:\n• ${data.srt}\n• ${data.vtt}`, 'Translation Complete', data.srt || null);
+    } else {
+      showAlert(`Translation failed: ${data.detail || 'error'}`);
+    }
+  } catch (e) {
+    showAlert(`Error: ${e.message}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
+  }
+});
+
+// #16 Speaker diarization (optional — needs pyannote + HF token).
+async function detectSpeakers(idx, btn) {
+  const clip = generatedClips[idx];
+  if (!clip || !clip.output_file) return;
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Analyzing…'; }
+  try {
+    const res = await fetch(`${serverUrl}/tools/diarize`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video_path: clip.output_file }),
+    });
+    const d = await res.json();
+    if (d.available) {
+      const lines = (d.segments || []).slice(0, 15).map((s) => `${s.speaker}: ${s.start}s–${s.end}s`).join('\n');
+      showAlert(`🗣 ${d.message}\n\n${lines}`, 'Speakers');
+    } else {
+      showAlert(`Speaker detection is optional and not enabled yet.\n\n${d.message}\n\nTo enable, in the app's Python env:\n  pip install pyannote.audio\nand set an HF_TOKEN environment variable.`, 'Speaker Diarization (optional)');
     }
   } catch (e) {
     showAlert(`Error: ${e.message}`);
