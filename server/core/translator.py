@@ -76,6 +76,28 @@ def _srt_time_to_vtt(t: str) -> str:
     return t.replace(",", ".")
 
 
+def _ts_to_sec(ts: str) -> float:
+    ts = ts.strip().replace(",", ".")
+    parts = ts.split(":")
+    try:
+        if len(parts) == 3:
+            h, m, s = parts
+            return int(h) * 3600 + int(m) * 60 + float(s)
+        if len(parts) == 2:
+            m, s = parts
+            return int(m) * 60 + float(s)
+        return float(ts)
+    except Exception:
+        return 0.0
+
+
+def _parse_timing(timing: str) -> Tuple[float, float]:
+    if "-->" not in (timing or ""):
+        return (0.0, 0.0)
+    a, b = timing.split("-->")
+    return (_ts_to_sec(a), _ts_to_sec(b))
+
+
 def translate_srt_file(srt_path: str, target_lang: str, model: str,
                        out_dir: Optional[str] = None) -> Dict[str, str]:
     """Translate an SRT into target_lang; write <name>.<lang>.srt and .vtt.
@@ -104,4 +126,14 @@ def translate_srt_file(srt_path: str, target_lang: str, model: str,
         for c, t in zip(cues, translated):
             fh.write(f"{_srt_time_to_vtt(c['timing'])}\n{t}\n\n")
 
-    return {"srt": str(srt_out), "vtt": str(vtt_out), "translated": len(cues), "used_ai": used_ai}
+    # Numeric cues (absolute source-timeline seconds) so callers can build a
+    # styled ASS and burn the translated captions into a fresh clip.
+    numeric_cues = []
+    for c, t in zip(cues, translated):
+        start, end = _parse_timing(c["timing"])
+        numeric_cues.append({"start": start, "end": end, "text": t})
+
+    return {
+        "srt": str(srt_out), "vtt": str(vtt_out),
+        "translated": len(cues), "used_ai": used_ai, "cues": numeric_cues,
+    }

@@ -22,6 +22,20 @@ from server.core.silence_cutter import (
 # extras explicitly if they want a more aggressive cut.
 DEFAULT_FILLERS = {"um", "uh", "erm", "uhm", "hmm", "mm", "mmm", "eh", "ah", "er"}
 
+# Multi-word filler phrases, only used when remove_phrases=True (opt-in), since
+# cutting these mid-sentence can occasionally change meaning. Each is a tuple of
+# cleaned tokens.
+DEFAULT_FILLER_PHRASES = [
+    ("you", "know", "what", "i", "mean"),
+    ("you", "know"),
+    ("i", "mean"),
+    ("i", "guess"),
+    ("or", "something"),
+    ("or", "whatever"),
+    ("kind", "of"),
+    ("sort", "of"),
+]
+
 
 def _clean_token(word: str) -> str:
     return re.sub(r"[^a-z]", "", (word or "").lower())
@@ -49,33 +63,57 @@ def remove_fillers(
     words: List[Dict[str, Any]],
     extra_fillers: List[str] = None,
     also_remove_silence: bool = True,
+    remove_phrases: bool = True,
     pad_seconds: float = 0.04,
 ) -> Dict[str, Any]:
-    """Cut filler words (and optionally dead air) from a clip.
+    """Cut filler words/phrases (and optionally dead air) from a clip.
 
     words: [{"word","start","end"}, ...] for THIS clip (clip-local timestamps).
+    remove_phrases: also cut multi-word fillers ("you know", "i mean", ...).
+    extra_fillers: additional single words, or phrases (entries with spaces).
     Returns metadata incl. output_path, durations, and how much was trimmed.
     """
     orig_dur = get_video_duration(input_video)
     if orig_dur <= 0:
         raise ValueError(f"Invalid duration for video: {input_video}")
 
+    # Single-word fillers + phrase list (default + user extras).
     fillers = set(DEFAULT_FILLERS)
+    phrases: List[tuple] = list(DEFAULT_FILLER_PHRASES) if remove_phrases else []
     for f in (extra_fillers or []):
-        c = _clean_token(f)
-        if c:
-            fillers.add(c)
+        toks = [_clean_token(t) for t in str(f).split() if _clean_token(t)]
+        if len(toks) == 1:
+            fillers.add(toks[0])
+        elif len(toks) > 1:
+            phrases.append(tuple(toks))
+    # Longest phrases first so "you know what i mean" wins over "you know".
+    phrases.sort(key=len, reverse=True)
 
-    # Build cut intervals from filler words (with a hair of padding).
+    toks = [_clean_token(w.get("word", "")) for w in (words or [])]
+
+    # Scan the word list, matching phrases (multi-token) then single fillers.
     cuts: List[Dict[str, float]] = []
     n_filler = 0
-    for w in words or []:
-        if _clean_token(w.get("word", "")) in fillers:
-            s = float(w.get("start", 0)) - pad_seconds
-            e = float(w.get("end", 0)) + pad_seconds
+    i = 0
+    n = len(words or [])
+    while i < n:
+        matched = 0
+        for ph in phrases:
+            L = len(ph)
+            if i + L <= n and tuple(toks[i:i + L]) == ph:
+                matched = L
+                break
+        if not matched and toks[i] in fillers:
+            matched = 1
+        if matched:
+            s = float(words[i].get("start", 0)) - pad_seconds
+            e = float(words[i + matched - 1].get("end", 0)) + pad_seconds
             if e > s:
                 cuts.append({"start": max(0.0, s), "end": min(orig_dur, e)})
-                n_filler += 1
+                n_filler += matched
+            i += matched
+        else:
+            i += 1
 
     if also_remove_silence:
         try:

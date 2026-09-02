@@ -906,6 +906,7 @@ class RemoveFillersRequest(BaseModel):
     output_path: Optional[str] = None
     extra_fillers: List[str] = []
     also_remove_silence: bool = True
+    remove_phrases: bool = True
 
 
 @app.post("/tools/remove-fillers")
@@ -926,6 +927,7 @@ def api_remove_fillers(req: RemoveFillersRequest):
             words=req.words,
             extra_fillers=req.extra_fillers,
             also_remove_silence=req.also_remove_silence,
+            remove_phrases=req.remove_phrases,
         )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(e))
@@ -935,6 +937,14 @@ class TranslateCaptionsRequest(BaseModel):
     srt_path: str
     target_lang: str
     output_dir: Optional[str] = None
+    # Optional: also render a finished clip with the translated captions burned in.
+    burn: bool = False
+    source_video: Optional[str] = None
+    start_seconds: Optional[float] = None
+    end_seconds: Optional[float] = None
+    aspect_ratio: str = "9:16"
+    style_preset: str = "viral_yellow"
+    font_size: Optional[int] = None
 
 
 @app.get("/tools/languages")
@@ -956,9 +966,41 @@ def api_translate_captions(req: TranslateCaptionsRequest):
     try:
         result = translate_srt_file(req.srt_path, req.target_lang, PREFERRED_OLLAMA_MODEL, req.output_dir)
         result["model"] = PREFERRED_OLLAMA_MODEL
-        return result
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(e))
+
+    # Optionally render a finished clip with the translated captions burned in.
+    # We re-cut from the SOURCE (not the already-captioned clip) so captions
+    # don't double up, mirroring the /export/subtitles re-render path.
+    if req.burn and req.source_video and os.path.isfile(req.source_video) \
+            and req.start_seconds is not None and req.end_seconds is not None:
+        try:
+            from server.core.caption_styler import generate_karaoke_captions
+            from server.core.ffmpeg_tools import render_clip
+            from server.models import TranscriptSegment
+
+            cues = result.get("cues", [])
+            segs = [
+                TranscriptSegment(id=i, start=float(c["start"]), end=float(c["end"]),
+                                  text=c["text"], words=[])
+                for i, c in enumerate(cues) if c.get("text")
+            ]
+            base = Path(result["srt"]).with_suffix("")  # <name>.<lang>
+            trans_ass = f"{base}.ass"
+            generate_karaoke_captions(
+                segs, trans_ass, style_preset=req.style_preset, font_size=req.font_size,
+            )
+            burned_out = f"{base}.mp4"
+            render_clip(
+                input_video=req.source_video, output_video=burned_out,
+                start_time=float(req.start_seconds), end_time=float(req.end_seconds),
+                aspect_ratio=req.aspect_ratio, burn_captions=True, subtitle_path=trans_ass,
+            )
+            result["burned_video"] = burned_out
+        except Exception as e:  # noqa: BLE001
+            result["burn_error"] = str(e)
+
+    return result
 
 
 class DiarizeRequest(BaseModel):

@@ -4138,19 +4138,35 @@ document.getElementById('translate-go')?.addEventListener('click', async () => {
   const custom = (document.getElementById('translate-lang-custom')?.value || '').trim();
   const lang = custom || document.getElementById('translate-lang')?.value || '';
   if (!lang) { showToast('Pick or type a language', 'info'); return; }
+  const burn = !!document.getElementById('translate-burn')?.checked;
   const btn = document.getElementById('translate-go');
   const orig = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Translating…'; }
+  if (btn) { btn.disabled = true; btn.textContent = burn ? '⏳ Translating + rendering…' : '⏳ Translating…'; }
   try {
+    const body = { srt_path: translateClip.srt_path, target_lang: lang };
+    if (burn) {
+      body.burn = true;
+      body.source_video = selectedVideo;
+      body.start_seconds = translateClip.start_time;
+      body.end_seconds = translateClip.end_time;
+      body.aspect_ratio = document.getElementById('clip-aspect-ratio')?.value || '9:16';
+      body.style_preset = document.getElementById('generated-caption-preset')?.value || 'viral_yellow';
+      body.font_size = parseInt(document.getElementById('generated-caption-font-size')?.value || '', 10) || undefined;
+    }
     const res = await fetch(`${serverUrl}/tools/translate-captions`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ srt_path: translateClip.srt_path, target_lang: lang }),
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     if (res.ok) {
       document.getElementById('translate-modal')?.classList.add('hidden');
       playSuccessSound();
-      showAlert(`✅ Translated ${data.translated} caption lines to ${lang}.\nSaved:\n• ${data.srt}\n• ${data.vtt}`, 'Translation Complete', data.srt || null);
+      let msg = `✅ Translated ${data.translated} caption lines to ${lang}.\nSaved:\n• ${data.srt}\n• ${data.vtt}`;
+      const reveal = data.burned_video || data.srt || null;
+      if (data.burned_video) msg += `\n\n🎬 Burned video:\n• ${data.burned_video}`;
+      else if (data.burn_error) msg += `\n\n⚠️ Couldn't burn the video: ${data.burn_error}`;
+      if (reveal) revealInFolder(reveal);
+      showAlert(msg, 'Translation Complete', reveal);
     } else {
       showAlert(`Translation failed: ${data.detail || 'error'}`);
     }
