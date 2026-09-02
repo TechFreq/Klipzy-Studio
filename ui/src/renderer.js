@@ -3863,7 +3863,7 @@ async function loadGpuAcceleration() {
   }
 
   const expWarn = (g.experimental && (g.state === 'dormant' || g.state === 'not_installed'))
-    ? '<p class="gpu-exp small">⚠️ This is an experimental path for your GPU — it may not accelerate every feature. CPU stays a reliable fallback.</p>'
+    ? '<p class="gpu-exp small">⚠️ Community-supported path — AMD/Intel acceleration on this OS isn\'t officially tested here. It may not speed up every feature, and CPU stays a reliable fallback. If it works great (or not at all), please <a href="#" class="gpu-feedback">report feedback</a> so we can improve it for your hardware.</p>'
     : '';
 
   // Transcription accelerator (MLX on Apple / faster-whisper elsewhere).
@@ -3898,6 +3898,15 @@ async function loadGpuAcceleration() {
     try { await navigator.clipboard.writeText(b.dataset.cmd); showToast('Command copied', 'success'); }
     catch (_) { showToast('Copy failed — select the text manually', 'error'); }
   }));
+
+  // "Report feedback" — open the project's issues/links (resolved at click time
+  // so it works even if the support links loaded after this card rendered).
+  el.querySelector('.gpu-feedback')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    const url = supportLinks.issues || supportLinks.github || supportLinks.beacons;
+    if (url && window.open) { window.open(url, '_blank', 'noopener'); }
+    else { openSettings(); showToast('Feedback & issue links are in the Support section.', 'info'); }
+  });
 
   const enableBtn = document.getElementById('gpu-enable-btn');
   if (enableBtn) enableBtn.addEventListener('click', async () => {

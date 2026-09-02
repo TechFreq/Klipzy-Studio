@@ -177,6 +177,8 @@ body {
   margin: 4px 0 10px; padding: 6px 10px; border-radius: 6px;
   background: rgba(234, 179, 8, 0.10); border: 1px solid rgba(234, 179, 8, 0.30); color: #eab308;
 }
+.gpu-exp a, .gpu-feedback { color: #fbbf24; text-decoration: underline; cursor: pointer; }
+.gpu-exp a:hover, .gpu-feedback:hover { color: #fde68a; }
 .gpu-trans { display: flex; align-items: center; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 .gpu-trans-info { flex: 1 1 auto; }
 .ai-models-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
