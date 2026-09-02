@@ -118,6 +118,42 @@ body {
 .health-status-btn:hover { background: rgba(255, 255, 255, 0.06); }
 .health-status-btn:focus-visible { outline: 2px solid var(--accent, #6366f1); outline-offset: 2px; }
 .health-hint { font-size: 12px; opacity: 0.6; flex: 0 0 auto; }
+
+/* Live device-usage footer (CPU / RAM / GPU / VRAM / disk). Sits under the
+   health indicator; each chip hides itself when its data can't be read. */
+.resource-footer {
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.resource-footer.hidden { display: none; }
+.resource-chip {
+  display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted);
+}
+.resource-chip .resource-label { flex: 0 0 34px; font-weight: 600; letter-spacing: 0.02em; }
+.resource-chip .resource-val { flex: 0 0 auto; margin-left: auto; color: var(--text); font-variant-numeric: tabular-nums; }
+.resource-meter {
+  flex: 1 1 auto; height: 5px; border-radius: 999px; background: var(--surface-3, #2a2f3e); overflow: hidden;
+}
+.resource-meter > span { display: block; height: 100%; border-radius: 999px; background: var(--accent, #6366f1); transition: width 0.4s ease; }
+.resource-meter.warn > span { background: #eab308; }
+.resource-meter.hot > span { background: var(--danger, #ef4444); }
+
+/* Output-mode preset row in Clipping Options */
+.output-mode-row { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+.output-mode-option { min-width: 320px; }
+.output-mode-hint { margin: 0 0 4px 0; }
+
+/* Activity log header row (title + clear button) */
+.activity-log-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.activity-log-header h4 { margin: 0; }
+/* Lifecycle entries stand out from plain step lines */
+.transcription-log .log-entry.start > span:last-child { color: var(--accent, #6366f1); font-weight: 600; }
+.transcription-log .log-entry.ok > span:last-child { color: var(--success, #22c55e); font-weight: 600; }
+.transcription-log .log-entry.err > span:last-child { color: var(--danger, #ef4444); font-weight: 600; }
+
+/* Model catalog transparency badges */
+.model-badge.tested { background: rgba(34, 197, 94, 0.14); color: #34d399; border: 1px solid rgba(34, 197, 94, 0.35); }
+.model-badge.license { background: var(--surface-2, #232735); color: var(--text-muted); border: 1px solid var(--border); }
 .ai-models-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
 @media (max-width: 720px) { .ai-models-grid { grid-template-columns: 1fr; } }
 #install-all-status:not(:empty) { margin: 8px 0; }

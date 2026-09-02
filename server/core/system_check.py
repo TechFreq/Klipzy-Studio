@@ -260,6 +260,55 @@ def detect_cpu() -> Dict[str, str]:
     return {"cores": cores, "ram_gb": ram_gb, "name": _detect_cpu_name()}
 
 
+def live_resources() -> Dict:
+    """Live system usage for the persistent resource footer.
+
+    Returns CPU %, RAM used/total/%, GPU utilization %, VRAM used/total, and free
+    disk on the app's drive. EVERY field degrades to None on any problem (missing
+    psutil, no NVIDIA GPU, etc.) so the footer simply hides what it can't read —
+    this must never raise, it's polled every couple of seconds.
+    """
+    out: Dict = {
+        "cpu_percent": None,
+        "ram_used_gb": None, "ram_total_gb": None, "ram_percent": None,
+        "gpu_name": None, "gpu_percent": None,
+        "vram_used_gb": None, "vram_total_gb": None,
+        "disk_free_gb": None, "disk_total_gb": None,
+    }
+    try:
+        import psutil
+        # interval=None is non-blocking: returns %CPU since the previous call,
+        # which is exactly right for a footer that polls on a timer.
+        out["cpu_percent"] = round(psutil.cpu_percent(interval=None))
+        vm = psutil.virtual_memory()
+        out["ram_used_gb"] = round(vm.used / (1024 ** 3), 1)
+        out["ram_total_gb"] = round(vm.total / (1024 ** 3), 1)
+        out["ram_percent"] = round(vm.percent)
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        du = psutil.disk_usage(root)
+        out["disk_free_gb"] = round(du.free / (1024 ** 3), 1)
+        out["disk_total_gb"] = round(du.total / (1024 ** 3), 1)
+    except Exception:
+        pass
+    # NVIDIA live GPU util + VRAM. AMD/Intel/Apple have no cheap equivalent, so
+    # they just leave the GPU fields as None (the footer omits the GPU chip).
+    try:
+        smi = _run([
+            "nvidia-smi",
+            "--query-gpu=utilization.gpu,memory.used,memory.total,name",
+            "--format=csv,noheader,nounits",
+        ])
+        if smi:
+            util, used, total, name = smi.splitlines()[0].split(",")
+            out["gpu_percent"] = round(float(util.strip()))
+            out["vram_used_gb"] = round(float(used.strip()) / 1024, 1)
+            out["vram_total_gb"] = round(float(total.strip()) / 1024, 1)
+            out["gpu_name"] = name.strip()
+    except Exception:
+        pass
+    return out
+
+
 def _detect_cpu_name() -> Optional[str]:
     """Human-readable CPU brand (e.g. 'AMD Ryzen 7 5800X', 'Intel Core i7')."""
     system = platform.system()
@@ -478,6 +527,31 @@ _MODEL_LADDER = [
 ]
 
 
+# Models we've ACTUALLY measured for clip selection on real footage (RTX 3060,
+# Sept 2026). Everything else in the catalog should work — it's driven the same
+# way — but we haven't benchmarked whether it picks better clips, so the UI is
+# honest about that instead of implying every model is vetted.
+_TESTED_MODELS = {"gemma2:2b", "qwen2.5:7b", "qwen2.5:14b"}
+
+# Best-effort model licenses, keyed by family (the part before the ':'). Shown in
+# the model catalog so users who care about commercial/permissive terms can pick
+# accordingly. "Gemma"/"Llama x" are the vendors' own community licenses (usable
+# but with their terms); Apache-2.0 / MIT are fully permissive.
+_MODEL_LICENSES = {
+    "gemma2": "Gemma", "gemma3": "Gemma",
+    "qwen2.5": "Apache-2.0", "qwen3": "Apache-2.0",
+    "llama3.1": "Llama 3.1", "llama3.2": "Llama 3.2", "llama3.3": "Llama 3.3",
+    "mistral": "Apache-2.0", "mistral-nemo": "Apache-2.0", "mixtral": "Apache-2.0",
+    "phi3": "MIT", "phi4": "MIT", "deepseek-r1": "MIT", "gpt-oss": "Apache-2.0",
+}
+
+
+def _model_license(name: str) -> str:
+    """License label for a model name, matched on its family prefix."""
+    fam = name.split(":")[0]
+    return _MODEL_LICENSES.get(fam, "")
+
+
 def _model_fits_ram(name: str, ram_gb: float) -> bool:
     m = next((x for x in OLLAMA_MODEL_CATALOG if x["name"] == name), None)
     if not m:
@@ -566,6 +640,9 @@ def ollama_model_catalog(preset: str = "") -> Dict:
             # Fully GPU-accelerated when there's enough VRAM; otherwise it still
             # runs by splitting onto CPU/RAM (slower), which the note explains.
             "fits_vram": bool(vram) and vram >= m.get("min_vram_gb", 0),
+            # Transparency: have we actually benchmarked this one, and its license.
+            "tested": m["name"] in _TESTED_MODELS,
+            "license": _model_license(m["name"]),
         })
     return {"models": models, "recommended": recommended, "installed": installed,
             "ram_gb": ram, "vram_gb": vram}

@@ -2052,6 +2052,15 @@ def setup_estimate(duration: float = 30.0, layout: str = "vertical"):
     return sc.estimate_render_time(duration, layout)
 
 
+@app.get("/api/setup/resources")
+def setup_resources():
+    """Live system resource usage (CPU/RAM/GPU/VRAM/disk) for the persistent
+    footer. Polled every couple of seconds by the UI; never raises — each field
+    is None when it can't be read."""
+    from server.core import system_check as sc
+    return sc.live_resources()
+
+
 @app.get("/api/setup/support")
 def setup_support():
     """Support / social links for the app footer."""

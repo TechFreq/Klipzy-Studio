@@ -285,6 +285,7 @@ async function init() {
   loadSetupPanel();
   populateCaptionPresets();
   loadOutputFolder();
+  startResourcePolling();
 }
 
 // Surfaces backend lifecycle events from the Electron main process. The window
@@ -307,6 +308,7 @@ function handleServerStatus({ state, detail }) {
         loadSetupPanel();
         populateCaptionPresets();
         loadOutputFolder();
+        startResourcePolling();
       }).catch(() => checkHealth());
     } else {
       checkHealth();
@@ -317,6 +319,129 @@ function handleServerStatus({ state, detail }) {
     showError(detail || 'The Python backend is not running.');
   }
 }
+
+// ------------------------------------------------------------------
+// Live resource footer (CPU / RAM / GPU / VRAM / disk). Polls the backend
+// every ~2.5s and reassures the user that everything runs on their machine.
+// Every field is optional — a chip only renders when its data is present.
+// ------------------------------------------------------------------
+let resourceTimer = null;
+
+function startResourcePolling() {
+  if (resourceTimer) return;
+  pollResources();
+  resourceTimer = setInterval(pollResources, 2500);
+}
+
+async function pollResources() {
+  try {
+    const res = await fetch(`${serverUrl}/api/setup/resources`);
+    if (!res.ok) return;               // server not ready yet; try again next tick
+    renderResourceFooter(await res.json());
+  } catch (_) {
+    /* transient network blip — keep the last render, retry next tick */
+  }
+}
+
+function _resMeter(pct) {
+  const p = Math.max(0, Math.min(100, Math.round(pct || 0)));
+  const cls = p >= 90 ? 'hot' : (p >= 70 ? 'warn' : '');
+  return `<div class="resource-meter ${cls}"><span style="width:${p}%"></span></div>`;
+}
+
+function renderResourceFooter(r) {
+  const el = document.getElementById('resource-footer');
+  if (!el || !r) return;
+  const chips = [];
+  if (r.cpu_percent != null) {
+    chips.push(`<div class="resource-chip"><span class="resource-label">CPU</span>${_resMeter(r.cpu_percent)}<span class="resource-val">${r.cpu_percent}%</span></div>`);
+  }
+  if (r.ram_percent != null) {
+    const detail = (r.ram_used_gb != null && r.ram_total_gb != null)
+      ? `${r.ram_used_gb}/${r.ram_total_gb} GB` : `${r.ram_percent}%`;
+    chips.push(`<div class="resource-chip"><span class="resource-label">RAM</span>${_resMeter(r.ram_percent)}<span class="resource-val">${detail}</span></div>`);
+  }
+  if (r.gpu_percent != null) {
+    chips.push(`<div class="resource-chip" title="${escapeHtml(r.gpu_name || 'GPU')}"><span class="resource-label">GPU</span>${_resMeter(r.gpu_percent)}<span class="resource-val">${r.gpu_percent}%</span></div>`);
+  }
+  if (r.vram_total_gb != null) {
+    const used = r.vram_used_gb != null ? r.vram_used_gb : 0;
+    const pct = (used / r.vram_total_gb) * 100;
+    chips.push(`<div class="resource-chip"><span class="resource-label">VRAM</span>${_resMeter(pct)}<span class="resource-val">${used}/${r.vram_total_gb} GB</span></div>`);
+  }
+  if (r.disk_free_gb != null) {
+    chips.push(`<div class="resource-chip"><span class="resource-label">Disk</span><span class="resource-val">${r.disk_free_gb} GB free</span></div>`);
+  }
+  if (!chips.length) { el.classList.add('hidden'); return; }
+  el.innerHTML = chips.join('');
+  el.classList.remove('hidden');
+}
+
+// ------------------------------------------------------------------
+// Output-mode presets: one pick sets aspect ratio + durations + reframing to
+// match a target platform. Purely a convenience over the manual controls; the
+// values it writes still flow through buildProcessPayload() unchanged.
+// ------------------------------------------------------------------
+const OUTPUT_MODE_PRESETS = {
+  shorts:   { hint: 'Vertical 9:16, clips up to 60s — TikTok / Reels / Shorts.',
+              set: { 'clip-aspect-ratio': '9:16', 'min-duration': 20, 'max-duration': 60 },
+              check: { 'vertical-crop': true } },
+  x:        { hint: 'Square 1:1, clips up to 140s — X / Twitter.',
+              set: { 'clip-aspect-ratio': '1:1', 'min-duration': 30, 'max-duration': 140 },
+              check: { 'vertical-crop': true } },
+  longform: { hint: 'Landscape 16:9, longer highlights up to 90s — YouTube.',
+              set: { 'clip-aspect-ratio': '16:9', 'min-duration': 30, 'max-duration': 90 },
+              check: { 'vertical-crop': false } },
+  tight:    { hint: 'Vertical 9:16 up to 60s with dead-air removed — punchy edits.',
+              set: { 'clip-aspect-ratio': '9:16', 'min-duration': 20, 'max-duration': 60 },
+              check: { 'vertical-crop': true, 'remove-silence': true } },
+};
+
+function applyOutputPreset() {
+  const sel = document.getElementById('output-mode-preset');
+  const hintEl = document.getElementById('output-mode-hint');
+  if (!sel) return;
+  const preset = OUTPUT_MODE_PRESETS[sel.value];
+  if (!preset) {
+    if (hintEl) hintEl.textContent = 'Or fine-tune everything manually below.';
+    return;
+  }
+  Object.entries(preset.set || {}).forEach(([id, val]) => {
+    const node = document.getElementById(id);
+    if (node) node.value = val;
+  });
+  Object.entries(preset.check || {}).forEach(([id, val]) => {
+    const node = document.getElementById(id);
+    if (node && node.type === 'checkbox') node.checked = !!val;
+  });
+  if (hintEl) hintEl.textContent = preset.hint;
+}
+
+document.getElementById('output-mode-preset')?.addEventListener('change', applyOutputPreset);
+
+// ------------------------------------------------------------------
+// Activity log: append a timestamped event to the process feed. Lifecycle
+// events (start / done / error) get a colored class so they stand out from the
+// per-stage progress lines.
+// ------------------------------------------------------------------
+function logActivity(text, cls) {
+  const logEl = document.getElementById('transcription-log');
+  if (!logEl) return;
+  // Drop the "Waiting for events…" placeholder on the first real entry.
+  const placeholder = logEl.querySelector('p.muted');
+  if (placeholder) placeholder.remove();
+  const p = document.createElement('p');
+  const timeStr = new Date().toLocaleTimeString([], { hour12: false });
+  p.className = 'log-entry' + (cls ? ' ' + cls : '');
+  p.innerHTML = `<span class="log-time">[${timeStr}]</span> <span>${escapeHtml(text)}</span>`;
+  logEl.appendChild(p);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+document.getElementById('clear-activity-log-btn')?.addEventListener('click', () => {
+  const logEl = document.getElementById('transcription-log');
+  if (logEl) logEl.innerHTML = '<p class="muted">Waiting for events…</p>';
+});
 
 // Kept in sync with the server-side default (server/api/server.py) so the
 // "Clear / reset" button knows what to restore to when offline.
@@ -1813,6 +1938,7 @@ function pollJob(jobId) {
   if (pollTimer) clearInterval(pollTimer);
   currentActiveJobId = jobId;
   setProcessingActive(true);
+  logActivity('▶️ Processing started', 'start');
 
   const cancelBtn = document.getElementById('cancel-active-job-btn');
   if (cancelBtn) {
@@ -1894,12 +2020,15 @@ function pollJob(jobId) {
 
       if (data.status === 'completed') {
         stopPolling();
+        logActivity(`✅ Done — ${(data.clips || []).length} clip(s) generated`, 'ok');
         showResults(data.clips);
       } else if (data.status === 'cancelled') {
         stopPolling();
+        logActivity('🛑 Job cancelled', 'err');
         showError('Job was cancelled by user.');
       } else if (data.status === 'failed') {
         stopPolling();
+        logActivity('❌ ' + (data.error || 'Processing failed'), 'err');
         showError(data.error || 'Processing failed');
       }
     } catch (e) {
@@ -3337,6 +3466,8 @@ async function renderModelCatalog() {
     if (m.recommended) badges.push('<span class="model-badge rec">⭐ Recommended</span>');
     if (isActive) badges.push('<span class="model-badge active">● In use</span>');
     else if (m.installed) badges.push('<span class="model-badge dl">✓ Downloaded</span>');
+    if (m.tested) badges.push('<span class="model-badge tested" title="Benchmarked for clip selection on real footage">🧪 Tested</span>');
+    if (m.license) badges.push('<span class="model-badge license" title="Model license">' + escapeHtml(m.license) + '</span>');
     if (!m.fits_ram) badges.push('<span class="model-badge warn">Needs ' + m.min_ram_gb + 'GB+ RAM</span>');
 
     let actions;
@@ -3366,6 +3497,11 @@ async function renderModelCatalog() {
     grid.insertAdjacentHTML('afterbegin',
       '<p class="muted small" style="grid-column:1/-1;">Ollama isn\'t installed yet — install it from the dependencies above to download and run these models.</p>');
   }
+
+  // Transparency footnote (Clips-Kitty-style honesty): be clear about which
+  // models we've actually measured vs. ones that just "should work".
+  grid.insertAdjacentHTML('beforeend',
+    '<p class="muted small" style="grid-column:1/-1; margin-top:6px;">🧪 <strong>Tested</strong> models were benchmarked for clip-selection quality on real footage (RTX 3060). The rest run the same way but haven\'t been measured for pick quality. License badges are best-effort — verify terms before commercial use.</p>');
 
   grid.querySelectorAll('[data-pull]').forEach((btn) => {
     btn.addEventListener('click', () => startModelPull(btn.dataset.pull, btn));

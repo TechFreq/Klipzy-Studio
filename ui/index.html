@@ -45,6 +45,11 @@
           </span>
           <span class="health-hint" aria-hidden="true">⚙️</span>
         </button>
+        <!-- Live device-usage footer: reassures the user everything runs on
+             their own machine. Populated by pollResources(); hidden until data. -->
+        <div id="resource-footer" class="resource-footer hidden" role="status" aria-live="off"
+             title="Live system usage — everything runs locally on your machine">
+        </div>
       </div>
     </aside>
 
@@ -243,6 +248,22 @@
           <div class="panel-header-row">
             <h3>✂️ Clipping Options</h3>
             <button class="btn btn-small btn-secondary" id="step2-back-btn">⬅️ Back to Project/Video</button>
+          </div>
+          <!-- Output-mode presets: one pick sets aspect ratio + durations +
+               reframing to match a target platform. "Custom" leaves the manual
+               controls below untouched. -->
+          <div class="output-mode-row">
+            <label class="option output-mode-option">
+              <span>🎯 Output mode</span>
+              <select id="output-mode-preset" title="Pick a target format — it presets the options below. Choose Custom to set them yourself.">
+                <option value="custom" selected>Custom (use the settings below)</option>
+                <option value="shorts">📱 Shorts / TikTok — vertical, up to 60s</option>
+                <option value="x">✖️ X / Twitter — square, up to 140s</option>
+                <option value="longform">📺 Longform highlights — 16:9, up to 90s</option>
+                <option value="tight">✂️ Tight edit — vertical 60s, silence removed</option>
+              </select>
+            </label>
+            <p class="output-mode-hint muted small" id="output-mode-hint">Or fine-tune everything manually below.</p>
           </div>
           <div class="options-grid">
             <label class="option">
@@ -532,9 +553,12 @@
           </div>
 
           <div class="live-transcription-box">
-            <h4>🎙️ Process Log & Transcription Feed</h4>
-            <div id="transcription-log" class="transcription-log" role="log" aria-live="polite" aria-label="Processing log">
-              <p class="muted">Waiting for Whisper speech recognition model to transcribe audio...</p>
+            <div class="activity-log-header">
+              <h4>📋 Activity Log</h4>
+              <button type="button" id="clear-activity-log-btn" class="btn btn-small btn-secondary" title="Clear the activity log">Clear</button>
+            </div>
+            <div id="transcription-log" class="transcription-log" role="log" aria-live="polite" aria-label="Activity log">
+              <p class="muted">Waiting for events…</p>
             </div>
           </div>
         </div>
