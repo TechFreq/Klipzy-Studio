@@ -4,9 +4,163 @@ Sends transcript to a local LLM to identify viral moments. Falls back gracefully
 """
 
 import json
-from typing import List
+from typing import Any, List, Optional, Tuple
 
 from server.models import ClipCandidate, TranscriptSegment
+
+
+def _seg_field(seg: Any, key: str, default: float = 0.0) -> float:
+    if isinstance(seg, dict):
+        return float(seg.get(key, default))
+    return float(getattr(seg, key, default))
+
+
+def _snap_window(
+    start: float,
+    end: float,
+    segments: List[Any],
+    min_dur: float = 8.0,
+    max_dur: float = 90.0,
+) -> Optional[Tuple[float, float]]:
+    """Snap an LLM-proposed [start, end] to real transcript sentence boundaries
+    and enforce duration bounds. Pure + testable. Returns a clean (start, end)
+    or None when the window can't be made valid — the guardrail that stops a
+    hallucinated/misaligned timestamp from producing a clip that cuts mid-word.
+    """
+    if not segments:
+        return None
+    starts = [_seg_field(s, "start") for s in segments]
+    ends = [_seg_field(s, "end") for s in segments]
+    lo, hi = min(starts), max(ends)
+
+    start = max(lo, min(float(start), hi))
+    end = max(lo, min(float(end), hi))
+
+    ss = min(starts, key=lambda x: abs(x - start))
+    ee = min(ends, key=lambda x: abs(x - end))
+
+    if ee <= ss:
+        greater = [e for e in ends if e > ss]
+        if not greater:
+            return None
+        ee = min(greater)
+
+    dur = ee - ss
+    if dur < min_dur:
+        target = ss + min_dur
+        greater = [e for e in ends if e >= target]
+        ee = min(greater) if greater else max(ends)
+        dur = ee - ss
+        if dur < min_dur * 0.6:  # still too short to be a real clip
+            return None
+    if dur > max_dur:
+        target = ss + max_dur
+        lesser = [e for e in ends if ss < e <= target]
+        if lesser:
+            ee = max(lesser)
+    return (round(ss, 3), round(ee, 3))
+
+
+def _apply_llm_rankings(
+    candidates: List[Any],
+    rankings: Any,
+    weight: float = 0.6,
+) -> List[Any]:
+    """Merge LLM judgements onto REAL candidate windows and re-rank. Pure + testable.
+
+    The LLM only references candidate ids (never invents timestamps), so this
+    blends its 0-10 quality score into each candidate's score and adopts its
+    hook/title/reason when provided. Returns the candidates sorted best-first.
+    Ignores malformed entries and out-of-range ids.
+    """
+    if not candidates or not isinstance(rankings, list):
+        return candidates
+    by_id = {}
+    for r in rankings:
+        if not isinstance(r, dict):
+            continue
+        try:
+            idx = int(r.get("id"))
+        except (TypeError, ValueError):
+            continue
+        if 0 <= idx < len(candidates):
+            by_id[idx] = r
+
+    for i, c in enumerate(candidates):
+        r = by_id.get(i)
+        if not r:
+            continue
+        try:
+            llm_score = max(0.0, min(10.0, float(r.get("score"))))
+            c.score = round((1.0 - weight) * float(c.score) + weight * llm_score, 3)
+        except (TypeError, ValueError):
+            pass
+        hook = str(r.get("hook") or "").strip()
+        if hook:
+            c.hook_text = hook[:90]
+        title = str(r.get("title") or "").strip()
+        if title:
+            c.title = title[:70]
+        reason = str(r.get("reason") or "").strip()
+        if reason:
+            c.reason = reason[:200]
+    return sorted(candidates, key=lambda c: getattr(c, "score", 0.0), reverse=True)
+
+
+def rank_candidates_llm(
+    candidates: List[ClipCandidate],
+    model: str = "qwen2.5:7b",
+    preset: str = "",
+) -> List[ClipCandidate]:
+    """Grounded "rank-and-refine" selection: instead of asking the LLM to invent
+    clip timestamps (which it hallucinates), give it the REAL candidate windows
+    and let it score them + write a hook/title. Falls back to the unchanged
+    candidates if Ollama isn't available or the response can't be parsed.
+    """
+    if not candidates:
+        return candidates
+    try:
+        import ollama
+    except Exception:
+        return candidates
+
+    listing = []
+    for i, c in enumerate(candidates):
+        txt = (getattr(c, "full_text", "") or getattr(c, "hook_text", "") or "")
+        txt = " ".join(str(txt).split())
+        dur = getattr(c, "duration", 0.0) or 0.0
+        listing.append(f"{i}: [{dur:.0f}s] {txt[:280]}")
+
+    prompt = (
+        "You are a short-form video editor choosing which moments to publish as "
+        "standalone vertical shorts. Below are CANDIDATE clips, each as "
+        "`id: [duration] transcript`.\n\n"
+        "Score EACH candidate 0-10 on how well it works as a standalone short:\n"
+        "- is it a complete, self-contained thought (no missing setup)?\n"
+        "- does it open with a strong hook and land a clear payoff?\n"
+        "- is it a single focused topic?\n\n"
+        "For each candidate also write a punchy hook (3-9 words) and a short title, "
+        "grounded in that candidate's own transcript.\n"
+        "Return ONLY JSON: an array of objects "
+        '{"id": <int>, "score": <0-10 number>, "hook": "...", "title": "...", "reason": "..."}. '
+        "Use only the ids shown; do not invent clips.\n\n"
+        "Candidates:\n" + "\n".join(listing)
+    )
+
+    try:
+        resp = ollama.chat(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            format="json",
+        )
+        content = (resp.get("message", {}) or {}).get("content", "") or ""
+        data = json.loads(content)
+        # Some models wrap the array in an object (e.g. {"clips": [...]}).
+        if isinstance(data, dict):
+            data = next((v for v in data.values() if isinstance(v, list)), [])
+        return _apply_llm_rankings(candidates, data)
+    except Exception:
+        return candidates
 
 
 def detect_highlights_llm(segments: List[TranscriptSegment], model: str = "gemma2:2b") -> List[ClipCandidate]:
@@ -46,13 +200,25 @@ Transcript:
         data = json.loads(content)
         candidates = []
         for i, item in enumerate(data):
+            try:
+                raw_start = float(item["start"])
+                raw_end = float(item["end"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            # Ground the model's timestamps: snap to real sentence boundaries and
+            # drop windows that can't be made valid, so we never emit a clip that
+            # starts/ends mid-sentence from a hallucinated time.
+            snapped = _snap_window(raw_start, raw_end, segments)
+            if not snapped:
+                continue
+            start_time, end_time = snapped
             candidates.append(
                 ClipCandidate(
                     id=f"llm_{i}",
                     title=item.get("title", f"AI Highlight #{i}"),
-                    start_time=float(item["start"]),
-                    end_time=float(item["end"]),
-                    duration=round(float(item["end"]) - float(item["start"]), 2),
+                    start_time=start_time,
+                    end_time=end_time,
+                    duration=round(end_time - start_time, 2),
                     score=9.0,
                     hook_text=item.get("reason", "")[:60],
                     full_text=item.get("reason", ""),

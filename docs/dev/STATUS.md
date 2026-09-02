@@ -106,9 +106,20 @@ These lean into the moat cloud tools can't match: unlimited length, no per-minut
 14. **Multi-language captions** — translate the generated SRT/ASS lines into target languages using the
     local Ollama model (catalog already exists) and burn/attach translated captions. Whisper's translate
     task covers →English; other languages via the LLM. Reach multiplier, fully local.
-15. **Semantic / topic-based clipping** — use the local LLM (`llm_detector` already exists) to pick
-    topic-coherent, complete-thought segments instead of only loudness/motion windows. Enhance the LLM
-    highlight path + a toggle; smarter clip boundaries.
+15. **Semantic / topic-based clipping** — DONE (session 2026-09-02). Grounded "rank-and-refine": the
+    local LLM SCORES the real heuristic/energy candidate windows (and writes hook+title) instead of
+    inventing timestamps — no hallucinated cuts. `rank_candidates_llm` + pure `_apply_llm_rankings`
+    (blends LLM 0-10 score at weight 0.6, adopts hook/title/reason, re-ranks) in `llm_detector.py`;
+    wired into `pipeline.process_video` behind the existing `use_llm` toggle (top-12 pool sent to keep
+    the prompt tight). The old free-form `detect_highlights_llm` now snaps every proposed window to real
+    sentence boundaries + enforces duration via pure `_snap_window` (drops un-snappable windows). Falls
+    back to heuristic ordering when Ollama is absent. Unit-tested (tests/test_llm_selection.py).
+    - **Stronger default model** — `resolve_default_ollama_model()` picks the strongest model that
+      actually runs well on this machine, preferring one already installed (exact-name match; never
+      points at an un-pulled model). Set at server startup; users still override in Setup. On an RTX
+      3060 12GB, pulling qwen2.5:14b makes it the auto-default.
+    - **Sharper hook prompt** — `hook_writer` now asks for DISTINCT angles (curiosity gap / bold claim /
+      question / cliffhanger / stat / contrarian) with few-shot examples and specificity guidance.
 16. **Speaker diarization (multi-person podcasts)** — "who spoke when" + labels + reliable active-speaker
     crop on 2-3 person interviews. NOTE: needs a heavy new dependency (pyannote.audio + model + HF token,
     kept OUT of Install-All) — installed on demand from Setup → Optional AI add-ons.

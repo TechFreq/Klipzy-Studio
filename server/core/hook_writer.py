@@ -35,12 +35,25 @@ def generate_hooks_llm(
 
     prompt = (
         "You write scroll-stopping hooks for vertical short-form videos "
-        "(TikTok / Reels / YouTube Shorts).\n"
-        f"From the transcript of ONE clip below, write {count} punchy hook options "
-        "a viewer sees in the first 2 seconds.\n"
-        "Rules: each hook 3-9 words, 60 characters max, no hashtags, no emojis, no "
-        "surrounding quotes, no numbering. Ground them in what's actually said, and "
-        f"make them curiosity-driving.{tone_line}{current_line}\n"
+        "(TikTok / Reels / YouTube Shorts). The hook is the first line a viewer "
+        "sees in the first 2 seconds; it must make them NEED to keep watching.\n\n"
+        f"From the transcript of ONE clip below, write {count} DISTINCT hook options. "
+        "Use a different angle for each — for example:\n"
+        "- a curiosity gap (tease a payoff without giving it away)\n"
+        "- a bold or surprising claim\n"
+        "- a sharp question the viewer wants answered\n"
+        "- a cliffhanger / mid-story tension\n"
+        "- a specific number or concrete detail\n"
+        "- a contrarian take\n\n"
+        "What makes a hook strong: specificity over vagueness, a clear stake or "
+        "tension, and words that open a loop the clip then closes. Avoid generic "
+        "openers ('In this video', 'Today I') and clickbait that the clip doesn't pay off.\n\n"
+        "Examples (spoken line -> hook):\n"
+        '"we drove around for hours looking for parking" -> Why nobody warns you about this\n'
+        '"I quit my job in 2019 and started selling online" -> Quitting was the easy part\n\n'
+        f"Rules: each hook 3-9 words, 60 characters max. Ground it in what's actually "
+        "said. No hashtags, no emojis, no surrounding quotes, no numbering."
+        f"{tone_line}{current_line}\n"
         "Return ONLY the hooks, one per line.\n\n"
         f"Transcript:\n{text[:1800]}"
     )

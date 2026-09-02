@@ -580,6 +580,60 @@ def list_ollama_models() -> List[str]:
         if parts and parts[0] and parts[0].upper() != "NAME":
             models.append(parts[0])
     return models
+
+
+def resolve_default_ollama_model(preset: str = "") -> str:
+    """Pick the app's default local LLM: the STRONGEST model that will actually
+    run well on this machine, preferring one that's already installed.
+
+    Order of preference:
+      1. The hardware recommendation, if it's already pulled -> use it.
+      2. Otherwise the strongest INSTALLED model that fits this machine's RAM,
+         ranked by the model ladder (so a user who pulled a big model gets it).
+      3. Otherwise the hardware recommendation name (LLM features fall back to
+         the heuristic until it's pulled — the Setup catalog nudges the user).
+      4. Absolute floor: "gemma2:2b".
+
+    Users can always override via /api/setup/ai-model; this only sets the start
+    value so good hardware gets a good model without any manual step.
+    """
+    try:
+        recommended = recommend_ollama_model(preset)
+    except Exception:
+        recommended = "gemma2:2b"
+
+    try:
+        installed = list_ollama_models()
+    except Exception:
+        installed = []
+    if not installed:
+        return recommended
+
+    # Exact-name matching only: gemma2:2b and gemma2:9b are DIFFERENT models, so
+    # a shared family name must not count a bigger, un-pulled size as installed.
+    installed_set = set(installed)
+
+    if recommended in installed_set:
+        return recommended
+
+    ram = 0
+    try:
+        ram = detect_cpu().get("ram_gb") or 0
+    except Exception:
+        ram = 0
+
+    # Strongest INSTALLED model that fits, by ladder order (strongest last). We
+    # never point the default at a model that isn't pulled — using the installed
+    # smaller model beats a bigger one that would just fall back to the heuristic.
+    best = None
+    for name in _MODEL_LADDER:
+        if name in installed_set and _model_fits_ram(name, ram):
+            best = name  # keep the highest ladder index that fits
+    if best:
+        return best
+    return recommended
+
+
 # ----------------------------------------------------------------------
 # Hardware-aware model recommendations
 # ----------------------------------------------------------------------

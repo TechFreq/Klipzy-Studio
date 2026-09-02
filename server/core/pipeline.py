@@ -220,6 +220,20 @@ class VideoClipperEngine:
         floor = min(min_duration, 5.0)
         candidates = [c for c in candidates if c.duration >= floor]
 
+        # Semantic "rank-and-refine": let the local LLM SCORE the real candidate
+        # windows (and write hook/title) rather than invent timestamps — grounded
+        # selection, no hallucinated cuts. Only the top pool is sent to keep the
+        # prompt tight; degrades to the heuristic ordering if Ollama is absent.
+        if use_llm and candidates:
+            try:
+                from server.core.llm_detector import rank_candidates_llm
+                report("Ranking clips with local AI...", 48)
+                ordered = sorted(candidates, key=lambda c: c.score, reverse=True)
+                pool, rest = ordered[:12], ordered[12:]
+                candidates = rank_candidates_llm(pool, model=llm_model, preset=caption_style) + rest
+            except Exception:
+                pass
+
         # #16.2 Speaker-aware selection: gently boost candidates that stay on one
         # speaker or a clean two-way exchange, and dampen messy 3+ speaker /
         # talk-over windows. Mutates scores in place; the sort below picks it up.

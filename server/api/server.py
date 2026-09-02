@@ -150,9 +150,19 @@ def _load_hf_token_env():
 
 _load_hf_token_env()
 
-# App-wide preferred local LLM (Ollama) model. Set from the Setup panel; used by
-# both the AI Edit Chat and LLM highlight discovery. Whisper is chosen per-job.
-PREFERRED_OLLAMA_MODEL = "gemma2:2b"
+# App-wide preferred local LLM (Ollama) model. Auto-resolved to the strongest
+# model that runs well on this machine (preferring one already installed) so
+# good hardware gets sharp hooks/selection out of the box. Users override it in
+# the Setup panel (/api/setup/ai-model). Whisper is chosen per-job.
+def _resolve_startup_ollama_model() -> str:
+    try:
+        from server.core.system_check import resolve_default_ollama_model
+        return resolve_default_ollama_model()
+    except Exception:
+        return "gemma2:2b"
+
+
+PREFERRED_OLLAMA_MODEL = _resolve_startup_ollama_model()
 
 
 def _ensure_output_root():
