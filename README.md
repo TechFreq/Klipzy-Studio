@@ -151,8 +151,18 @@ faster with a CUDA GPU or Apple Silicon (MLX).
 
 ## 📦 Packaging
 
-See [docs/dev/PACKAGING.md](docs/dev/PACKAGING.md) for building desktop installers
-and the notes on bundling a Python runtime.
+Build desktop installers from `ui/` with electron-builder:
+
+```bash
+cd ui
+npm run dist:win     # Windows (NSIS installer + portable)
+npm run dist:mac     # macOS (DMG)
+npm run dist:linux   # Linux (AppImage)
+```
+
+Output lands in `ui/dist/`. The packaged app currently expects **Python 3.10+** on
+the target machine — the Python runtime isn't bundled yet, so a fully
+self-contained build (via PyInstaller) is planned.
 
 ---
 

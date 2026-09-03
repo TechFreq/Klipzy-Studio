@@ -70,7 +70,6 @@ server/          FastAPI backend + processing pipeline
 scripts/         main.py (backend entry) + launchers/helpers
 ui/              Electron app — index.html, src/renderer.js, src/styles.css, electron/main.js
 tests/           pytest suite (pure/testable core logic)
-docs/dev/        internal engineering notes (PACKAGING, PORTABLE_BUILD, STATUS, ...)
 ```
 
 ---

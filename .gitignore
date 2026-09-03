@@ -39,3 +39,6 @@ logs/preferred_ollama_model.txt
 
 # Pre-restore backup of the deleted stub + old UI files (local safety copy)
 _prerestore_backup/
+
+# Internal/personal developer notes — kept locally, never pushed to the public repo
+Developer of Klipzy studio/
