@@ -300,71 +300,94 @@
               </select>
             </label>
           </div>
-          <div class="options-grid" style="margin-top: 12px;">
-            <label class="toggle">
-              <input type="checkbox" id="vertical-crop" checked />
-              <span>Smart speaker reframing</span>
-            </label>
-            <label class="toggle">
-              <input type="checkbox" id="audio-energy" checked />
-              <span>Audio energy detection</span>
-            </label>
-            <label class="toggle">
-              <input type="checkbox" id="burn-captions" checked />
-              <span>Burn animated captions</span>
-            </label>
-            <label class="toggle">
-              <input type="checkbox" id="remove-silence" />
-              <span>✂️ Auto-cut dead air & silence</span>
-            </label>
-            <label class="toggle">
-              <input type="checkbox" id="censor-profanity" />
-              <span>🔇 Bleep / Mute profanity</span>
-            </label>
-            <label class="toggle">
-              <input type="checkbox" id="filler-aggressive" />
-              <span>🧹 Aggressive filler cut (also remove "you know", "I mean"…)</span>
-            </label>
-            <label class="toggle">
-              <input type="checkbox" id="use-llm" />
-              <span>Use Ollama for AI highlight selection
-                <span class="tooltip-toggle" tabindex="0" role="tooltip" aria-label="More info about Ollama" title="">
-                  ❓<span class="tooltip-text">Ollama is a free, local AI model runner (no cloud, no fees).<br><br>What this does: it sends your video transcript to a local AI model (e.g. gemma2:2b) to pick the most viral, dramatic 30-60s moments.<br><br>Check it ONLY if you have Ollama installed and running on this PC.<br><br>If unchecked OR if Ollama isn't running, the app automatically falls back to its built-in fast detector (audio volume spikes + viral hook keywords) — no Ollama needed.</span>
-                </span>
-              </span>
-            </label>
-            <label class="toggle">
-              <input type="checkbox" id="speaker-aware-selection" />
-              <span>🗣 Speaker-aware clip selection
-                <span class="tooltip-toggle" tabindex="0" role="tooltip" aria-label="More info about speaker-aware selection" title="">
-                  ❓<span class="tooltip-text">Optional (needs the pyannote add-on + a Hugging Face token — install from Setup → Optional AI add-ons).<br><br>Prefers highlight windows that stay on one speaker or capture a clean back-and-forth, and avoids messy moments where 3+ people talk over each other.<br><br>If the add-on isn't installed this toggle simply does nothing.</span>
-                </span>
-              </span>
-            </label>
-            <label class="toggle">
-              <input type="checkbox" id="speaker-aware-crop" />
-              <span>🎯 Follow active speaker (diarized crop)
-                <span class="tooltip-toggle" tabindex="0" role="tooltip" aria-label="More info about diarized active-speaker crop" title="">
-                  ❓<span class="tooltip-text">Optional / experimental (needs the pyannote add-on + a Hugging Face token).<br><br>Uses "who spoke when" plus face detection to pan the vertical crop toward whoever is talking on multi-person footage.<br><br>Falls back to the standard head-motion reframing when the add-on is missing or a speaker's face can't be located.</span>
-                </span>
-              </span>
-            </label>
-            <label class="toggle">
-              <input type="checkbox" id="normalize-audio" checked />
-              <span>🔊 Normalize loudness (-14 LUFS)
-                <span class="tooltip-toggle" tabindex="0" role="tooltip" aria-label="More info about loudness normalization" title="">
-                  ❓<span class="tooltip-text">Levels every clip to the loudness TikTok / YouTube / Reels expect (~-14 LUFS), so your shorts aren't quiet or inconsistent. Fully local, recommended on.</span>
-                </span>
-              </span>
-            </label>
-            <label class="toggle">
-              <input type="checkbox" id="auto-zoom" />
-              <span>🔍 Auto-zoom (subtle push-in)
-                <span class="tooltip-toggle" tabindex="0" role="tooltip" aria-label="More info about auto-zoom" title="">
-                  ❓<span class="tooltip-text">Adds a slow, gentle push-in over each clip — the "professionally edited" motion that keeps eyes on the screen. Purely visual, fully local.</span>
-                </span>
-              </span>
-            </label>
+          <div class="option-groups" style="margin-top: 14px;">
+            <div class="toggle-group">
+              <div class="toggle-group-title"><span class="tg-icon">🎬</span> Video &amp; Framing</div>
+              <div class="toggle-group-grid">
+                <label class="toggle">
+                  <input type="checkbox" id="vertical-crop" checked />
+                  <span>Smart speaker reframing</span>
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" id="auto-zoom" />
+                  <span>🔍 Auto-zoom (subtle push-in)
+                    <span class="tooltip-toggle" tabindex="0" role="tooltip" aria-label="More info about auto-zoom" title="">
+                      ❓<span class="tooltip-text">Adds a slow, gentle push-in over each clip — the "professionally edited" motion that keeps eyes on the screen. Purely visual, fully local.</span>
+                    </span>
+                  </span>
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" id="burn-captions" checked />
+                  <span>Burn animated captions</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="toggle-group">
+              <div class="toggle-group-title"><span class="tg-icon">🔊</span> Audio &amp; Cleanup</div>
+              <div class="toggle-group-grid">
+                <label class="toggle">
+                  <input type="checkbox" id="normalize-audio" checked />
+                  <span>🔊 Normalize loudness (-14 LUFS)
+                    <span class="tooltip-toggle" tabindex="0" role="tooltip" aria-label="More info about loudness normalization" title="">
+                      ❓<span class="tooltip-text">Levels every clip to the loudness TikTok / YouTube / Reels expect (~-14 LUFS), so your shorts aren't quiet or inconsistent. Fully local, recommended on.</span>
+                    </span>
+                  </span>
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" id="remove-silence" />
+                  <span>✂️ Auto-cut dead air & silence</span>
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" id="censor-profanity" />
+                  <span>🔇 Bleep / Mute profanity</span>
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" id="filler-aggressive" />
+                  <span>🧹 Aggressive filler cut (also remove "you know", "I mean"…)</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="toggle-group">
+              <div class="toggle-group-title"><span class="tg-icon">🧠</span> Highlight Detection</div>
+              <div class="toggle-group-grid">
+                <label class="toggle">
+                  <input type="checkbox" id="audio-energy" checked />
+                  <span>Audio energy detection</span>
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" id="use-llm" />
+                  <span>Use Ollama for AI highlight selection
+                    <span class="tooltip-toggle" tabindex="0" role="tooltip" aria-label="More info about Ollama" title="">
+                      ❓<span class="tooltip-text">Ollama is a free, local AI model runner (no cloud, no fees).<br><br>What this does: it sends your video transcript to a local AI model (e.g. gemma2:2b) to pick the most viral, dramatic 30-60s moments.<br><br>Check it ONLY if you have Ollama installed and running on this PC.<br><br>If unchecked OR if Ollama isn't running, the app automatically falls back to its built-in fast detector (audio volume spikes + viral hook keywords) — no Ollama needed.</span>
+                    </span>
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <div class="toggle-group experimental">
+              <div class="toggle-group-title"><span class="tg-icon">🧪</span> Experimental add-ons <span class="muted small" style="text-transform:none;letter-spacing:0;font-weight:500;">needs pyannote + a Hugging Face token</span></div>
+              <div class="toggle-group-grid">
+                <label class="toggle">
+                  <input type="checkbox" id="speaker-aware-selection" />
+                  <span>🗣 Speaker-aware clip selection
+                    <span class="tooltip-toggle" tabindex="0" role="tooltip" aria-label="More info about speaker-aware selection" title="">
+                      ❓<span class="tooltip-text">Optional (needs the pyannote add-on + a Hugging Face token — install from Setup → Optional AI add-ons).<br><br>Prefers highlight windows that stay on one speaker or capture a clean back-and-forth, and avoids messy moments where 3+ people talk over each other.<br><br>If the add-on isn't installed this toggle simply does nothing.</span>
+                    </span>
+                  </span>
+                </label>
+                <label class="toggle">
+                  <input type="checkbox" id="speaker-aware-crop" />
+                  <span>🎯 Follow active speaker (diarized crop)
+                    <span class="tooltip-toggle" tabindex="0" role="tooltip" aria-label="More info about diarized active-speaker crop" title="">
+                      ❓<span class="tooltip-text">Optional / experimental (needs the pyannote add-on + a Hugging Face token).<br><br>Uses "who spoke when" plus face detection to pan the vertical crop toward whoever is talking on multi-person footage.<br><br>Falls back to the standard head-motion reframing when the add-on is missing or a speaker's face can't be located.</span>
+                    </span>
+                  </span>
+                </label>
+              </div>
+            </div>
           </div>
 
           <!-- Background music (optional, mixed under the speech + auto-ducked) -->
@@ -434,7 +457,7 @@
                     </label>
 
                     <label class="caption-field caption-font-size">
-                      <span>Font Size (<output id="generated-caption-font-size-label" for="generated-caption-font-size">40</output>px in ASS)</span>
+                      <span>Font Size (<output id="generated-caption-font-size-label" for="generated-caption-font-size">40</output>px)</span>
                       <input type="range" id="generated-caption-font-size" min="12" max="80" step="1" value="40" />
                     </label>
 
@@ -529,7 +552,7 @@
             </div>
           </div>
 
-          <div class="step-actions" style="margin-top: 20px;">
+          <div class="step-actions">
             <button class="btn btn-primary btn-large" id="start-clipping">🚀 Start Clipping & Transcribing</button>
             <button class="btn btn-secondary btn-large" id="batch-process-btn" title="Pick several videos and queue them with these same settings">📦 Batch process multiple videos</button>
           </div>

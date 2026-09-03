@@ -154,8 +154,38 @@ _load_hf_token_env()
 # App-wide preferred local LLM (Ollama) model. Auto-resolved to the strongest
 # model that runs well on this machine (preferring one already installed) so
 # good hardware gets sharp hooks/selection out of the box. Users override it in
-# the Setup panel (/api/setup/ai-model). Whisper is chosen per-job.
+# the Setup panel (/api/setup/ai-model), and that choice is now remembered
+# across restarts so every AI feature (highlight selection, clip copywriting,
+# AI-rewrite-hook, chat, translate) keeps using the model picked from the list.
+# Whisper is chosen per-job.
+def _preferred_model_path() -> Path:
+    """Where the user's chosen Ollama model is remembered (gitignored logs dir)."""
+    base = Path(os.environ["KLIPZY_LOG_DIR"]) if os.environ.get("KLIPZY_LOG_DIR") \
+        else (Path(__file__).resolve().parents[2] / "logs")
+    return base / "preferred_ollama_model.txt"
+
+
+def _save_preferred_model(model: str) -> None:
+    """Persist the user's model pick so it survives an app restart."""
+    try:
+        p = _preferred_model_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text((model or "").strip(), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _resolve_startup_ollama_model() -> str:
+    # Honor a model the user explicitly picked from the AI Models list in an
+    # earlier session; only auto-resolve when nothing has been saved yet.
+    try:
+        p = _preferred_model_path()
+        if p.is_file():
+            saved = p.read_text(encoding="utf-8").strip()
+            if saved:
+                return saved
+    except Exception:
+        pass
     try:
         from server.core.system_check import resolve_default_ollama_model
         return resolve_default_ollama_model()
@@ -1489,6 +1519,55 @@ def rewrite_hook(req: RewriteHookRequest):
     return {"used_ai": False, "ollama_running": True, "model": PREFERRED_OLLAMA_MODEL, "hooks": heuristic}
 
 
+class RewriteCopyRequest(BaseModel):
+    text: str = ""
+    words: List[dict] = []
+    current_hook: str = ""
+    preset: str = ""  # caption preset name, kept for parity with rewrite-hook
+
+
+@app.post("/tools/rewrite-copy")
+def rewrite_copy(req: RewriteCopyRequest):
+    """Rewrite a clip's HOOK + TITLE + DESCRIPTION in one shot with the active
+    local Ollama model (the CapCut / OpusClips-style copywriter), grounded in the
+    clip's transcript. Degrades to offline transcript heuristics when Ollama
+    isn't running so the button always returns usable copy.
+    """
+    from server.core.highlight_detector import rank_hook_candidates, choose_hook_and_title
+    from server.core import system_check as sc
+
+    text = (req.text or "").strip()
+    if not text and req.words:
+        text = " ".join(str(w.get("word", "")) for w in req.words if isinstance(w, dict) and w.get("word"))
+
+    # Offline pieces — used when Ollama is down or the model returns nothing.
+    heuristic_hooks = rank_hook_candidates(text, 1)
+    h_hook, h_title = choose_hook_and_title(text)
+    fallback = {
+        "hook": (heuristic_hooks[0] if heuristic_hooks else h_hook) or (req.current_hook or ""),
+        "title": h_title or "",
+        "description": "",
+    }
+
+    running = bool(sc.detect_ollama().get("running"))
+    if not running:
+        return {"used_ai": False, "ollama_running": False, "model": None, **fallback}
+
+    from server.core.hook_writer import generate_clip_copy_llm
+    copy = generate_clip_copy_llm(text, current_hook=req.current_hook, model=PREFERRED_OLLAMA_MODEL)
+    if copy:
+        return {
+            "used_ai": True,
+            "ollama_running": True,
+            "model": PREFERRED_OLLAMA_MODEL,
+            "hook": copy.get("hook") or fallback["hook"],
+            "title": copy.get("title") or fallback["title"],
+            "description": copy.get("description") or "",
+        }
+    # Ollama up but returned nothing usable — fall back rather than error.
+    return {"used_ai": False, "ollama_running": True, "model": PREFERRED_OLLAMA_MODEL, **fallback}
+
+
 @app.post("/tools/suggest-emojis", response_model=EmojiSuggestResponse)
 def api_suggest_emojis(req: EmojiSuggestRequest):
     """Analyze transcript segments and return contextual emoji suggestions."""
@@ -2024,6 +2103,7 @@ def set_ai_model(req: AIModelRequest):
         raise HTTPException(status_code=400, detail="model is required")
     if req.kind == "ollama":
         PREFERRED_OLLAMA_MODEL = model
+        _save_preferred_model(model)  # remember it across restarts
         return {"ok": True, "ollama": PREFERRED_OLLAMA_MODEL}
     raise HTTPException(status_code=400, detail=f"Unknown model kind: {req.kind}")
 

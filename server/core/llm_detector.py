@@ -97,10 +97,10 @@ def _apply_llm_rankings(
             pass
         hook = str(r.get("hook") or "").strip()
         if hook:
-            c.hook_text = hook[:90]
+            c.hook_text = hook[:120]
         title = str(r.get("title") or "").strip()
         if title:
-            c.title = title[:70]
+            c.title = title[:90]
         reason = str(r.get("reason") or "").strip()
         if reason:
             c.reason = reason[:200]
@@ -165,8 +165,8 @@ def rank_candidates_llm(
         "- is it a complete, self-contained thought (no missing setup)?\n"
         "- does it open with a strong hook and land a clear payoff?\n"
         "- is it a single focused topic?\n\n"
-        "For each candidate also write a punchy hook (3-9 words) and a short title, "
-        "grounded in that candidate's own transcript.\n"
+        "For each candidate also write a punchy hook (roughly 4-12 words) and a "
+        "short catchy title, grounded in that candidate's own transcript.\n"
         'Return ONLY a JSON object of the form {"rankings": [ ... ]} where "rankings" '
         f"is an array with EXACTLY {n} objects, one for every id 0 to {n - 1}, each "
         '{"id": <int>, "score": <0-10 number>, "hook": "...", "title": "...", "reason": "..."}. '

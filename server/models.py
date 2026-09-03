@@ -43,6 +43,9 @@ class ClipCandidate(BaseModel):
     hook_text: str
     full_text: str
     reason: str
+    # Optional AI-written social caption/description (1-2 engaging sentences).
+    # Empty unless the local-LLM copywriting step fills it in (use_llm on).
+    description: str = ""
     virality: Optional[ViralityBreakdown] = None
     words: List[WordTimestamp] = Field(default_factory=list)
 
@@ -56,6 +59,12 @@ class ClipResult(BaseModel):
     duration: float
     hook_text: str
     output_file: str
+    # AI-written social caption/description shown on the clip card (may be empty
+    # when the LLM copywriting step didn't run or Ollama wasn't available).
+    description: str = ""
+    # The clip's own transcript text, so the editor's AI hook rewrite / caption
+    # tools have the full context to work from (not just the short hook line).
+    full_text: str = ""
     virality: Optional[ViralityBreakdown] = None
     words: List[WordTimestamp] = Field(default_factory=list)
     thumbnail_path: Optional[str] = None

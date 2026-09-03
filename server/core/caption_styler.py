@@ -103,8 +103,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         # Top-center ({\an8}); optionally a bigger font via \fs so the hook can
         # stand out from the body captions (CapCut/Opus-style).
         size_tag = f"\\fs{int(intro_font_size)}" if intro_font_size else ""
+        # NOTE: the Name field is set to "intro" (Dialogue: Layer,Start,End,
+        # Style,Name,...). This is authored in CLIP-RELATIVE time (0..duration),
+        # so the clip-offset rebasing in ffmpeg_tools._shift_subtitle_times must
+        # NOT shift it — the "intro" tag is how that step recognises and skips it.
         event_lines.append(
-            f"Dialogue: 0,0:00:00.00,0:00:{intro_end:05.2f},Default,,0,0,0,,{{\\an8{size_tag}}}{intro_text}"
+            f"Dialogue: 0,0:00:00.00,0:00:{intro_end:05.2f},Default,intro,0,0,0,,{{\\an8{size_tag}}}{intro_text}"
         )
 
     for seg in segments:

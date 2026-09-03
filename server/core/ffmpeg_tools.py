@@ -436,7 +436,12 @@ def _shift_subtitle_times(subtitle_path: str, clip_offset: float) -> str:
             for line in text.splitlines():
                 if line.startswith("Dialogue:"):
                     parts = line.split(",", 9)
-                    if len(parts) == 10:
+                    # The intro hook (Name field == "intro") is authored in
+                    # clip-relative time (0..duration), so it must NOT be rebased
+                    # by the clip offset. Without this guard, on any clip that
+                    # doesn't start at 0 its 0..N window collapses to zero length
+                    # (max(0, t - offset) == 0) and the hook silently never shows.
+                    if len(parts) == 10 and parts[4].strip() != "intro":
                         parts[1] = shift_ass_time(parts[1], clip_offset)
                         parts[2] = shift_ass_time(parts[2], clip_offset)
                     line = ",".join(parts)

@@ -303,6 +303,36 @@ class VideoClipperEngine:
             unique.append(c)
         candidates = unique[:max_clips]
 
+        # Viral copywriting pass (opt-in via use_llm): rewrite each FINAL clip's
+        # hook + title and add an engaging 1-2 sentence description — the
+        # CapCut / OpusClips-style copy that shows on the clip card and drives the
+        # auto intro hook. Runs only on the small final set (<= max_clips) and is
+        # grounded in each clip's own transcript. Per-clip try/except means a
+        # missing/offline Ollama silently keeps the heuristic hook/title.
+        if use_llm and candidates:
+            report("Writing viral titles & descriptions with local AI...", 49)
+            try:
+                from server.core.hook_writer import generate_clip_copy_llm
+                for clip in candidates:
+                    try:
+                        copy = generate_clip_copy_llm(
+                            clip.full_text or clip.hook_text,
+                            current_hook=clip.hook_text,
+                            model=llm_model,
+                        )
+                    except Exception:
+                        copy = None
+                    if not copy:
+                        continue
+                    if copy.get("hook"):
+                        clip.hook_text = copy["hook"]
+                    if copy.get("title"):
+                        clip.title = copy["title"]
+                    if copy.get("description"):
+                        clip.description = copy["description"]
+            except Exception:
+                pass
+
         # Generate subtitle files
         srt_path = str(job_dir / "captions.srt")
         vtt_path = str(job_dir / "captions.vtt")
@@ -491,6 +521,8 @@ class VideoClipperEngine:
                     duration=clip.duration,
                     hook_text=clip.hook_text,
                     output_file=output_clip_path,
+                    description=getattr(clip, "description", "") or "",
+                    full_text=getattr(clip, "full_text", "") or "",
                     virality=clip.virality,
                     words=clip.words,
                     thumbnail_path=thumb_path if os.path.exists(thumb_path) else None,

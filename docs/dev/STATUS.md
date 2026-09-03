@@ -5,15 +5,23 @@ _Last updated: 2026-08-31. Local-first "Long Form to Shorts" studio (Electron UI
 ## TL;DR
 The app was recovered from a near-total loss and is now genuinely working end-to-end,
 verified on real footage (talking-head, iPhone HEVC, and Call-of-Duty gameplay).
-**67 tests pass. Everything is committed on `master`. Nothing has been pushed to a
-remote yet** (holding until Apple Silicon / MLX work is done).
+**115 tests pass. Everything is committed on `master`. Nothing has been pushed to a
+remote yet.**
+
+> **Latest session (2026-09-02 continued):** UI polish pass, phone-preview fix, "ASS"
+> removed from the UI, **AI clip copywriting** (viral hook/title/description via the local
+> LLM when `use_llm` is on), **persisted LLM model pick** (`logs/preferred_ollama_model.txt`),
+> upgraded AI-rewrite-hook prompt + new `/tools/rewrite-copy`, fixed the card "New Hook"
+> button (was re-picking the same line), and fixed the **intro hook only showing on one clip**
+> (clip-relative intro line was being time-rebased to zero length). See
+> `docs/dev/SESSION_HANDOFF.md` for the full trail. Prepping for GitHub under a separate account.
 
 ## How to run / verify
 ```bash
 # from repo root, venv active
 python scripts/main.py            # backend on 127.0.0.1:8765
 cd ui && npm start                # desktop app (spawns backend itself)
-pytest tests/ -q                  # 67 tests
+pytest tests/ -q                  # 115 tests
 ```
 - Transcription auto-selects: mlx-whisper (Apple Silicon) → faster-whisper → openai-whisper.
 - `/health` and the sidebar status show the active backend; click the status to open Setup.

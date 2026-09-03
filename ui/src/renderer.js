@@ -2134,7 +2134,9 @@ function buildClipCard(clip, idx) {
 
   const v = clip.virality || { hook_score: 8.5, flow_score: 8.0, engagement_score: 9.0, trend_potential: 'High' };
   const title = clip.title || (clip.hook_text ? clip.hook_text.slice(0, 48) : 'Highlight');
-  const desc = clip.hook_text || clip.reason || 'AI-selected moment with strong virality signals.';
+  // Prefer the AI-written social description (populated when the Ollama toggle
+  // is on); fall back to the hook line / reason for the heuristic path.
+  const desc = clip.description || clip.hook_text || clip.reason || 'AI-selected moment with strong virality signals.';
   const score = clip.score != null ? Number(clip.score).toFixed(1) : '–';
   // escapeHtml covers quotes, so a path containing " cannot break out of the
   // attribute and inject markup (e.g. an onerror handler).
@@ -3091,30 +3093,32 @@ async function showHookVariants() {
 document.getElementById('ai-rewrite-hook-btn')?.addEventListener('click', async () => {
   if (!currentEditingClip) return;
   const input = document.getElementById('edit-intro-hook');
+  const titleInput = document.getElementById('edit-clip-title');
   const btn = document.getElementById('ai-rewrite-hook-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Rewriting…'; }
   try {
-    const res = await fetch(`${serverUrl}/tools/rewrite-hook`, {
+    // Full copywriter pass: regenerate the hook AND the title (and a description)
+    // together, so clicking "AI rewrite" visibly refreshes both fields.
+    const res = await fetch(`${serverUrl}/tools/rewrite-copy`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text: currentEditingClip.full_text || currentEditingClip.reason || currentEditingClip.hook_text || '',
         words: currentEditingClip.words || [],
         current_hook: input?.value || '',
-        count: 6,
         preset: document.getElementById('generated-caption-preset')?.value || '',
       }),
     });
     const data = await res.json();
-    const hooks = (data.hooks || []).filter(Boolean);
-    if (!hooks.length) { showToast('No hooks generated for this clip', 'info'); return; }
-    // Feed into the same rotation list so the user can cycle the AI options too.
-    hookCandidates = hooks;
-    hookCandidateIdx = 0;
-    if (input) input.value = hooks[0];
+    const newHook = (data.hook || '').trim();
+    const newTitle = (data.title || '').trim();
+    if (!newHook && !newTitle) { showToast('No copy generated for this clip', 'info'); return; }
+    if (input && newHook) { input.value = newHook; }
+    if (titleInput && newTitle) { titleInput.value = newTitle; }
+    if (data.description) currentEditingClip.description = data.description;
     updateHookPreview();
-    if (data.used_ai) showToast(`✨ AI hooks from ${data.model} — click again or “Suggest another” to cycle`, 'success');
-    else showToast('Ollama not running — used offline suggestions instead. Install/start Ollama in Setup for AI rewrites.', 'info');
+    if (data.used_ai) showToast(`✨ AI hook + title from ${data.model} — edit or Save & Apply to keep`, 'success');
+    else showToast('Ollama not running — used offline suggestions. Start Ollama in Setup for AI rewrites.', 'info');
   } catch (e) {
     showToast('AI rewrite failed — try again', 'error');
   } finally {
@@ -3222,9 +3226,12 @@ document.getElementById('save-captions-btn')?.addEventListener('click', async ()
           vid.src = fileUrl(currentEditingClip.output_file, true);
           vid.load();
         }
-        // Reflect the edited hook + title on the card immediately.
+        // Reflect the edited hook + title on the card immediately. Prefer the
+        // AI-written description for the card blurb (matches buildClipCard),
+        // falling back to the hook line when there's no description.
         const descEl = card && card.querySelector('.clip-desc');
-        if (descEl && newHook) descEl.textContent = newHook;
+        const cardBlurb = (currentEditingClip.description || newHook || '').trim();
+        if (descEl && cardBlurb) descEl.textContent = cardBlurb;
         const titleEl = card && card.querySelector('.clip-title');
         if (titleEl && newTitle) titleEl.textContent = newTitle;
       }
@@ -4379,12 +4386,28 @@ async function exportForPlatform(idx, platform, ratio, btnEl) {
 async function quickRerollHook(idx, btn) {
   const clip = generatedClips[idx];
   if (!clip || !clip.output_file) { showAlert('No rendered clip to update yet.'); return; }
-  // Fetch + cache suggestions per clip, then rotate on each click.
+  // Build the richest transcript context we have for this clip: prefer the full
+  // clip transcript, then the clip's own word list (present even on older clips),
+  // falling back to the hook line. Using ONLY hook_text returned a single
+  // candidate, so "New Hook" kept re-picking the exact same line — which is why
+  // the text never appeared to change.
+  const clipText = clip.full_text || clip.reason
+    || (Array.isArray(clip.words) && clip.words.length ? clip.words.map((w) => w.word).join(' ') : '')
+    || clip.hook_text || '';
+  // Fetch + cache AI hook options per clip (grounded in that transcript), then
+  // rotate on each click. rewrite-hook returns several DISTINCT viral hooks and
+  // falls back to offline suggestions server-side when Ollama isn't running.
   if (!Array.isArray(clip._hookCandidates) || !clip._hookCandidates.length) {
     try {
-      const res = await fetch(`${serverUrl}/tools/suggest-hooks`, {
+      const res = await fetch(`${serverUrl}/tools/rewrite-hook`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: clip.full_text || clip.reason || clip.hook_text || '', words: clip.words || [], count: 8 }),
+        body: JSON.stringify({
+          text: clipText,
+          words: clip.words || [],
+          current_hook: clip.hook_text || '',
+          count: 6,
+          preset: document.getElementById('generated-caption-preset')?.value || '',
+        }),
       });
       const data = await res.json();
       clip._hookCandidates = (data.hooks || []).filter(Boolean);
@@ -4392,8 +4415,14 @@ async function quickRerollHook(idx, btn) {
     } catch (_) { clip._hookCandidates = []; }
   }
   if (!clip._hookCandidates.length) { showToast('No alternative hooks found for this clip', 'info'); return; }
+  // Rotate to the next candidate; if it matches the current hook, skip once so
+  // the burned text visibly changes.
   clip._hookIdx = ((clip._hookIdx == null ? -1 : clip._hookIdx) + 1) % clip._hookCandidates.length;
-  const newHook = clip._hookCandidates[clip._hookIdx];
+  let newHook = clip._hookCandidates[clip._hookIdx];
+  if (clip._hookCandidates.length > 1 && newHook.trim() === (clip.hook_text || '').trim()) {
+    clip._hookIdx = (clip._hookIdx + 1) % clip._hookCandidates.length;
+    newHook = clip._hookCandidates[clip._hookIdx];
+  }
 
   const orig = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Re-rendering…'; }

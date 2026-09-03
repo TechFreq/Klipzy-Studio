@@ -31,6 +31,8 @@ gitstatus.txt
 logs/api_token.txt
 # Hugging Face token for optional diarization (never commit a secret)
 logs/hf_token.txt
+# Remembered local LLM pick (machine-specific runtime preference)
+logs/preferred_ollama_model.txt
 
 # ML model weights downloaded on first use (YOLO etc.)
 *.pt
