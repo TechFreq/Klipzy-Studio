@@ -8,16 +8,18 @@ A **local-first Long Form to Shorts studio by TechFreq Developments** for Window
 
 ## 📸 Screenshots
 
-<!-- Images live in assets/screenshots/ — see that folder's README for the expected filenames. -->
-
 <table>
   <tr>
-    <td width="50%"><img src="assets/screenshots/clipper.png" alt="Long Form to Shorts — clipping & style options" /></td>
-    <td width="50%"><img src="assets/screenshots/generated-clips.png" alt="Generated viral clips with burned-in captions" /></td>
+    <td width="50%"><img src="assets/screenshots/generated-clips.png" alt="Viral clips generated with AI hooks, titles and descriptions" /><br/><sub><b>Viral clips generated</b> — AI-scored, auto-captioned, each with its own hook, title & description.</sub></td>
+    <td width="50%"><img src="assets/screenshots/clipping-options.png" alt="Clipping and style options" /><br/><sub><b>Clipping &amp; style</b> — durations, aspect ratio, smart framing, audio cleanup, highlight detection.</sub></td>
   </tr>
   <tr>
-    <td width="50%"><img src="assets/screenshots/caption-editor.png" alt="Caption editor with live portrait preview" /></td>
-    <td width="50%"><img src="assets/screenshots/setup.png" alt="Setup — hardware detection, models & GPU acceleration" /></td>
+    <td width="50%"><img src="assets/screenshots/caption-customization.png" alt="CapCut-style caption customization with live portrait preview" /><br/><sub><b>Caption customization</b> — CapCut-style presets, colors & fonts with a live portrait preview.</sub></td>
+    <td width="50%"><img src="assets/screenshots/setup-system.png" alt="Setup and system: hardware, GPU acceleration and models" /><br/><sub><b>Setup &amp; System</b> — hardware detection, GPU (CUDA) acceleration & hardware-matched models.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/ai-edit-chat.png" alt="Local AI edit chat" /><br/><sub><b>AI Edit Chat</b> — hook ideas, captions & editing advice from your local model (Ollama).</sub></td>
+    <td width="50%"><img src="assets/screenshots/projects-home.png" alt="Projects home screen" /><br/><sub><b>Projects</b> — your saved clip projects; every step runs locally on your own machine.</sub></td>
   </tr>
 </table>
 
