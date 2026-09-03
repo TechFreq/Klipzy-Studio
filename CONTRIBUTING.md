@@ -33,8 +33,8 @@ See INSTRUCTIONS.md §1 for per-OS FFmpeg install.
 
 ### Easiest: the one-click launcher
 ```bash
-git clone https://github.com/TechFreq/klipzy-studio.git
-cd klipzy-studio
+git clone https://github.com/TechFreq/Klipzy-Studio.git
+cd Klipzy-Studio
 # Windows:
 start_klipzy.bat
 # macOS / Linux:

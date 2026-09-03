@@ -60,8 +60,8 @@ Before running Klipzy Studio, ensure you have the following installed on your ma
 
 ### Step 1: Clone the repository
 ```bash
-git clone https://github.com/TechFreq/clippy-studio.git
-cd clippy-studio
+git clone https://github.com/TechFreq/Klipzy-Studio.git
+cd Klipzy-Studio
 ```
 
 ### Step 2: Set up Python virtual environment
