@@ -86,6 +86,49 @@ class VideoClipperEngine:
         except Exception:
             pass
 
+    def _free_gpu_memory(self, unload_llm_model: Optional[str] = None) -> None:
+        """Release GPU memory once a job is done so VRAM returns to ~idle instead
+        of staying reserved. Drops the per-job model references (Whisper + YOLO —
+        they reload lazily on the next run), empties PyTorch's CUDA allocator
+        cache, and unloads the Ollama LLM from VRAM. Best-effort: never raises,
+        so cleanup can't break a finished render.
+        """
+        # Drop the face-tracking (YOLO) weights.
+        try:
+            if getattr(self, "face_tracker", None) is not None:
+                self.face_tracker.model = None
+        except Exception:
+            pass
+        # Drop the Whisper weights (reloads lazily next transcribe; the transcript
+        # cache still avoids re-transcribing the same video).
+        try:
+            if getattr(self, "transcriber", None) is not None:
+                self.transcriber._model = None
+                self.transcriber._backend = None
+        except Exception:
+            pass
+        # Return PyTorch's cached CUDA blocks to the OS.
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+        except Exception:
+            pass
+        # Unload the Ollama model from VRAM immediately (keep_alive=0) rather than
+        # letting it linger for its ~5-minute idle timeout.
+        if unload_llm_model:
+            try:
+                import ollama
+                ollama.generate(model=unload_llm_model, prompt="", keep_alive=0)
+            except Exception:
+                pass
+        try:
+            import gc
+            gc.collect()
+        except Exception:
+            pass
+
     def process_video(
         self,
         video_path: str,
@@ -465,6 +508,10 @@ class VideoClipperEngine:
         # Cleanup temp audio
         if os.path.exists(temp_audio):
             os.remove(temp_audio)
+
+        # Free GPU memory now that the job is done, so VRAM drops back to ~idle
+        # instead of staying reserved by Whisper/YOLO/PyTorch cache + the LLM.
+        self._free_gpu_memory(unload_llm_model=llm_model if use_llm else None)
 
         report("Done!", 100)
         return results
