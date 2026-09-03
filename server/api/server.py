@@ -2183,9 +2183,9 @@ def setup_support():
     return {
         "paypal": "https://www.paypal.me/techfreq",
         "beacons": "https://beacons.ai/techfreq",
-        "github": "https://github.com/techfreq",
-        "issues": "https://github.com/techfreq",
-        "star": "https://github.com/techfreq",
+        "github": "https://github.com/TechFreq",
+        "issues": "https://github.com/TechFreq",
+        "star": "https://github.com/TechFreq",
     }
 
 
