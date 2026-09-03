@@ -248,11 +248,12 @@ These are observed bugs/rough edges in the running app. Verify each against
   refs). Until then: consolidate Setup + queue + support + model management behind
   a clear settings entry point.
 
-## Test footage on this machine
-- `C:\Users\ROGPC\Downloads\Street interviews day 2 Segment 3  BEN DJ MAYO.mp4` — 9:16 talking-head, ~50s (fast hook/title tests).
-- `C:\Users\ROGPC\Downloads\IMG_0499.MOV` — iPhone HEVC vertical, ~24min.
-- `C:\Users\ROGPC\Videos\SteelSeries Moments\*.mp4` — Call-of-Duty gameplay, 1080p60 (action-highlight tests).
-- `D:\@TechFreq Data\...\Converted Clips for TikTok-YouTube Shorts...` and `...\PRODUCTION` — more real clips (not yet used).
+## Test footage (kinds used during verification)
+_Use your own local files — specific paths are intentionally not committed._
+- A ~50s 9:16 talking-head interview clip — fast hook/title tests.
+- A ~24-min vertical iPhone HEVC clip — long-source / transcript-cache tests.
+- 1080p60 gameplay clips — action-highlight (audio+motion) tests.
+- Assorted real production shorts/clips for spot-checks.
 
 ## Commit trail (this work, newest first)
 `8c5ccb0` motion+audio fusion · `1c57c56` action highlights + AMD + cache/delete ·

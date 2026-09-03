@@ -16,7 +16,7 @@ Saved from the Mac session so it's ready to run on the Windows machine (RTX 3060
 
 1. **Confirm the environment.** Check Ollama is running and list installed models. Then pull a strong model that fits a 12GB GPU — try `qwen2.5:14b` first (the card can handle it), and also pull `qwen2.5:7b` as a faster fallback. Confirm `resolve_default_ollama_model()` now auto-selects the 14B (it should, since it'll be the strongest installed model that fits).
 
-2. **Pick a test clip.** Use a real interview/talking clip from the Downloads folder (search for the "Street interviews" files, or ask which to use). Prefer one with a few distinct topics so clip selection has real choices to make.
+2. **Pick a test clip.** Use a real interview/talking clip you have locally. Prefer one with a few distinct topics so clip selection has real choices to make.
 
 3. **Run an A/B comparison — this is the point.** For the same clip, transcribe once, build the heuristic candidates, then compare:
    - **Hooks:** run `generate_hooks_llm` with `gemma2:2b` vs `qwen2.5:14b` and print both sets side by side.
