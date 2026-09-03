@@ -11,7 +11,7 @@
     "dist:linux": "electron-builder --linux"
   },
   "author": "TechFreq Developments",
-  "license": "SEE LICENSE IN ../LICENSE",
+  "license": "SEE LICENSE IN ../LICENSE.md",
   "devDependencies": {
     "electron": "^28.0.0",
     "electron-builder": "^24.13.3"

@@ -2,7 +2,7 @@
 
 A **local-first Long Form to Shorts studio by TechFreq Developments** for Windows, macOS, and Linux. Turn long videos, podcasts, and streams into ready-to-post vertical Shorts — entirely on your own machine. **No cloud AI, no fees.**
 
-> ⚖️ Licensed under the **TechFreq Developments Open-Attribution License** (see [LICENSE](LICENSE)). Free to use and modify, provided you credit TechFreq Developments as the original author.
+> ⚖️ Licensed under the **TechFreq Developments Open-Attribution License** (see [LICENSE.md](LICENSE.md)). Free to use and modify, provided you credit TechFreq Developments as the original author.
 
 ---
 
@@ -206,6 +206,6 @@ self-contained build (via PyInstaller) is planned.
 
 Licensed under the **TechFreq Developments Open-Attribution License**. Free to use
 and modify, provided credit is given to **TechFreq Developments** as the original
-author. See [LICENSE](LICENSE) for full details.
+author. See [LICENSE.md](LICENSE.md) for full details.
 
 **Third-party notices:** Whisper (MIT), FFmpeg (LGPL/GPL), Ollama (MIT), ultralytics (AGPL-3.0).

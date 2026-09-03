@@ -128,7 +128,7 @@ inputs, and never shell out with unsanitized user strings.
 
 ## License & attribution
 
-Klipzy Studio is under the **TechFreq Developments Open-Attribution License** ([LICENSE](LICENSE)) —
+Klipzy Studio is under the **TechFreq Developments Open-Attribution License** ([LICENSE.md](LICENSE.md)) —
 free to use and modify **provided you credit TechFreq Developments** as the original author. By
 contributing, you agree your contributions are licensed under the same terms.
 
