@@ -6,6 +6,23 @@ A **local-first Long Form to Shorts studio by TechFreq Developments** for Window
 
 ---
 
+## 📸 Screenshots
+
+<!-- Images live in assets/screenshots/ — see that folder's README for the expected filenames. -->
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/clipper.png" alt="Long Form to Shorts — clipping & style options" /></td>
+    <td width="50%"><img src="assets/screenshots/generated-clips.png" alt="Generated viral clips with burned-in captions" /></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/caption-editor.png" alt="Caption editor with live portrait preview" /></td>
+    <td width="50%"><img src="assets/screenshots/setup.png" alt="Setup — hardware detection, models & GPU acceleration" /></td>
+  </tr>
+</table>
+
+---
+
 ## ✨ Features
 
 | Feature | Description |
