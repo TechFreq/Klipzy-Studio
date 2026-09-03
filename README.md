@@ -23,6 +23,32 @@ A **local-first Long Form to Shorts studio by TechFreq Developments** for Window
   </tr>
 </table>
 
+<details>
+<summary><b>More screenshots</b> — workflow, processing, per-clip tools, model catalog &amp; setup</summary>
+
+<br/>
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/drop-video.png" alt="Step 1 — drop a video; guided 4-step workflow" /><br/><sub><b>1. Drop a video</b> — the guided 4-step flow: Project → Clipping &amp; Style → Transcribe → Clips.</sub></td>
+    <td width="50%"><img src="assets/screenshots/new-project.png" alt="New project dialog" /><br/><sub><b>New project</b> — name it and go; projects are saved locally.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/processing.png" alt="Local AI processing pipeline with live activity log" /><br/><sub><b>Processing</b> — live log: audio energy, local-LLM ranking, viral titles/descriptions, rendering.</sub></td>
+    <td width="50%"><img src="assets/screenshots/clip-actions.png" alt="Per-clip tools" /><br/><sub><b>Per-clip tools</b> — new hook, edit captions, multi-aspect, B-roll, silence/filler cuts, translate, bleep, export.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/model-catalog.png" alt="Local AI model catalog" /><br/><sub><b>Local AI model catalog</b> — pick/download local LLMs matched to your hardware.</sub></td>
+    <td width="50%"><img src="assets/screenshots/dependency-checker.png" alt="Dependency checker" /><br/><sub><b>Dependency checker</b> — one-click install of Ollama, FFmpeg, PyTorch, Whisper &amp; more.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/export-bundle.png" alt="Export complete — clip bundle" /><br/><sub><b>Export</b> — clip + audio (MP3) + subtitles (SRT/ASS) exported together.</sub></td>
+    <td width="50%"></td>
+  </tr>
+</table>
+
+</details>
+
 ---
 
 ## ✨ Features
