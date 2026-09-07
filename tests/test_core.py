@@ -132,7 +132,9 @@ def test_karaoke_caption_generation(tmp_path):
     assert ass_out.exists()
     content = ass_out.read_text(encoding="utf-8")
     assert "[Script Info]" in content
-    assert "\\k" in content
+    # Active-word highlight: each word event colors the current word (\c...) and
+    # resets the rest to the style default (\r).
+    assert "\\c" in content and "\\r" in content
 
 
 def test_karaoke_captions_custom_font_size(tmp_path):
@@ -184,7 +186,8 @@ def test_caption_presets_library(tmp_path):
         generate_karaoke_captions([seg], str(out), style_preset=p)
         assert out.exists()
         content = out.read_text(encoding="utf-8")
-        assert "\\k" in content
+        # Per-word active highlight: the current word is recolored inline.
+        assert "\\c" in content
         assert "Default" in content
 
 

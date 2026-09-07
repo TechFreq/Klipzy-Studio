@@ -2196,6 +2196,7 @@ function buildClipCard(clip, idx) {
       <button class="btn btn-small" data-action="pick-thumb" title="Generate AI Thumbnail poster from current video frame">🖼️ Pick Frame</button>
       <button class="btn btn-small" data-action="edit-captions">✏️ Edit Captions</button>
       <button class="btn btn-small" data-action="reroll-hook" title="Swap in a fresh hook for this clip and re-render it">🎣 New Hook</button>
+      <button class="btn btn-small" data-action="remove-hook" title="Remove the burned-in intro hook and re-render this clip without it">🚫 Remove Hook</button>
       <button class="btn btn-small" data-action="multi-aspect" title="Render 9:16 + 1:1 + 4:5 + 16:9 in one pass">📐 Multi-Aspect</button>
       <button class="btn btn-small" data-action="overlay" title="Add B-roll video cutaway or reaction image">🎭 B-Roll</button>
       <button class="btn btn-small" data-action="snip-silence" title="Auto-cut dead air pauses">✂️ Snip Silence</button>
@@ -2276,6 +2277,7 @@ function buildClipCard(clip, idx) {
       case 'pick-thumb': pickClipThumbnail(idx2, video); break;
       case 'edit-captions': openCaptionEditor(idx2); break;
       case 'reroll-hook': quickRerollHook(idx2, actionBtn); break;
+      case 'remove-hook': quickRemoveHook(idx2, actionBtn); break;
       case 'multi-aspect': exportMultiAspectPack(idx2); break;
       case 'overlay': openOverlayModal(idx2); break;
       case 'snip-silence': quickCutSilence(idx2); break;
@@ -4546,6 +4548,71 @@ async function quickRerollHook(idx, btn) {
       showToast(`🎣 New hook: "${newHook}"`, 'success');
     } else {
       showAlert(`Could not update hook: ${data.detail || 'error'}`);
+    }
+  } catch (e) {
+    showAlert(`Error: ${e.message}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
+  }
+}
+
+// Remove the burned-in intro hook from a clip and re-render it. Mirrors
+// quickRerollHook but disables the intro so no hook is drawn on the video.
+async function quickRemoveHook(idx, btn) {
+  const clip = generatedClips[idx];
+  if (!clip || !clip.output_file) { showAlert('No rendered clip to update yet.'); return; }
+  if (!clip.intro_caption && !clip.hook_text) {
+    showToast('This clip has no intro hook to remove', 'info');
+    return;
+  }
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Re-rendering…'; }
+
+  const words = (clip.words && clip.words.length)
+    ? clip.words
+    : (clip.hook_text || '').split(' ').map((w, i) => ({ word: w, start: i * 0.4, end: (i + 1) * 0.4 }));
+  const captionOpts = collectCaptionOptions();
+  const outputPath = clip.ass_path ? clip.ass_path.replace(/\.ass$/i, '.srt') : `${clip.output_file}.srt`;
+  try {
+    const res = await fetch(`${serverUrl}/export/subtitles`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        output_path: outputPath,
+        words,
+        style_preset: captionOpts.style_preset,
+        font_size: captionOpts.font_size,
+        font_name: captionOpts.font_name,
+        primary_color: captionOpts.primary_color,
+        highlight_color: captionOpts.highlight_color,
+        outline_color: captionOpts.outline_color,
+        outline_width: captionOpts.outline_width,
+        position: captionOpts.position,
+        chunk_size: captionOpts.chunk_size,
+        uppercase: captionOpts.uppercase,
+        bold: captionOpts.bold,
+        italic: captionOpts.italic,
+        source_video: selectedVideo,
+        clip_output_file: clip.output_file,
+        start_seconds: clip.start_time,
+        end_seconds: clip.end_time,
+        aspect_ratio: document.getElementById('clip-aspect-ratio')?.value || '9:16',
+        intro_caption: '',
+        intro_enabled: false,
+        re_render: true,
+      }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      clip.intro_caption = '';
+      if (data.export_path) clip.srt_path = data.export_path;
+      const card = document.querySelector(`.clip-card[data-clip-idx="${idx}"]`);
+      const vid = card && card.querySelector('video');
+      if (vid) { vid.src = fileUrl(clip.output_file, true); vid.load(); }
+      saveCurrentProjectSilently();
+      playSuccessSound();
+      showToast('🚫 Intro hook removed', 'success');
+    } else {
+      showAlert(`Could not remove hook: ${data.detail || 'error'}`);
     }
   } catch (e) {
     showAlert(`Error: ${e.message}`);

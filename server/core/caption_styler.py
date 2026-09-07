@@ -129,32 +129,41 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         f_chunk = chunk_size if (chunk_size is not None and chunk_size > 0) else 3
         for i in range(0, len(words), f_chunk):
             chunk = words[i:i + f_chunk]
-            chunk_start = chunk[0].start
-            chunk_end = chunk[-1].end
-            
-            karaoke_text = ""
             n_chunk = len(chunk)
-            for idx, w in enumerate(chunk):
-                w_text = case(getattr(w, "word", str(w)))
-                # ASS \k durations are cumulative from the line's start, so each
-                # word's highlight must span until the NEXT word actually begins.
-                # Using only the word's own length (w.end - w.start) drops the
-                # silent gaps between words, so the karaoke playhead runs ahead
-                # of the audio and drifts out of sync as the line plays. Holding
-                # each word until the next one's start keeps the highlight locked
-                # to the spoken timing; the last word uses its own duration.
-                if idx < n_chunk - 1:
-                    span = chunk[idx + 1].start - w.start
-                else:
-                    span = w.end - w.start
-                dur_cs = max(1, int(round(span * 100)))
-                karaoke_text += f"{{\\k{dur_cs}}}{w_text} "
+            chunk_words = [case(getattr(w, "word", str(w))) for w in chunk]
 
-            # Only the first chunk of the segment carries the speaker label.
-            prefix = speaker_prefix if i == 0 else ""
-            start_str = fmt_ass_time(chunk_start)
-            end_str = fmt_ass_time(chunk_end)
-            event_lines.append(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{prefix}{karaoke_text.strip()}")
+            # Emit one Dialogue event PER WORD so that only the word currently
+            # being spoken is shown in the accent (highlight) color, with the
+            # rest of the chunk in the base color — a timing-accurate "active
+            # word" highlight (CapCut/Opus style). Progressive \k karaoke put
+            # the accent on the *upcoming* word instead of the current one and
+            # drifted out of sync across pauses; keying each word's own line to
+            # [word.start, next_word.start] locks the highlight to the audio and
+            # holds it through any inter-word gap.
+            for k, w in enumerate(chunk):
+                seg_start = float(getattr(w, "start", 0.0) or 0.0)
+                if k < n_chunk - 1:
+                    seg_end = float(getattr(chunk[k + 1], "start", seg_start) or seg_start)
+                else:
+                    seg_end = float(getattr(w, "end", seg_start) or seg_start)
+                if seg_end <= seg_start:
+                    seg_end = seg_start + 0.04  # guarantee at least one visible frame
+
+                # Colour only the active word; {\r} resets the rest to the style
+                # default (base colour, style bold/italic preserved).
+                rendered = []
+                for j, wt in enumerate(chunk_words):
+                    if j == k:
+                        rendered.append(f"{{\\c{h_color}&}}{wt}{{\\r}}")
+                    else:
+                        rendered.append(wt)
+                line_text = " ".join(rendered)
+
+                # The speaker label stays on the segment's first chunk.
+                prefix = speaker_prefix if i == 0 else ""
+                start_str = fmt_ass_time(seg_start)
+                end_str = fmt_ass_time(seg_end)
+                event_lines.append(f"Dialogue: 0,{start_str},{end_str},Default,,0,0,0,,{prefix}{line_text}")
 
     Path(output_ass_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_ass_path, "w", encoding="utf-8") as f:
