@@ -26,10 +26,17 @@ class TranscriptSegment(BaseModel):
 
 
 class ViralityBreakdown(BaseModel):
-    hook_score: float = 8.5
-    flow_score: float = 8.0
-    engagement_score: float = 9.0
-    trend_potential: str = "High"
+    """Per-clip score breakdown shown on the clip card.
+
+    Every field is Optional and defaults to None ON PURPOSE. These used to
+    default to 8.5 / 8.0 / 9.0 / "High", which meant any detector that didn't
+    compute a breakdown still rendered confident-looking numbers the app had
+    never measured. A missing signal must read as unknown, not as a good score.
+    """
+    hook_score: Optional[float] = None
+    flow_score: Optional[float] = None
+    engagement_score: Optional[float] = None
+    trend_potential: Optional[str] = None
     hook_keywords: List[str] = Field(default_factory=list)
 
 

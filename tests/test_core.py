@@ -817,3 +817,59 @@ def test_compute_crop_rect_even_dimensions_and_guards():
     assert compute_crop_rect(1920, 1080, "3:7") is None
     assert compute_crop_rect(0, 1080, "9:16") is None
     assert compute_crop_rect(1920, 0, "9:16") is None
+
+
+# ---------------------------------------------------------------------------
+# Virality breakdown honesty: never report a score nothing measured
+# ---------------------------------------------------------------------------
+
+def test_virality_breakdown_has_no_flattering_defaults():
+    """Regression: these defaulted to 8.5/8.0/9.0/'High', so any detector that
+    computed no breakdown still rendered confident numbers. Unknown must be
+    None so the card can show '-' instead of inventing analysis."""
+    from server.models import ViralityBreakdown
+
+    empty = ViralityBreakdown()
+    assert empty.hook_score is None
+    assert empty.flow_score is None
+    assert empty.engagement_score is None
+    assert empty.trend_potential is None
+
+
+def test_audio_energy_clips_report_only_measured_signals():
+    """The energy detector measures loudness + duration, not hook wording."""
+    from server.core.audio_energy import _flow_from_duration, _trend_from_score
+
+    # Flow peaks near the ~35s sweet spot and degrades away from it.
+    assert _flow_from_duration(35.0) == 10.0
+    assert _flow_from_duration(5.0) < _flow_from_duration(30.0)
+    # Bounded to the documented 6-10 range whatever the length.
+    for d in (0.5, 12.0, 35.0, 90.0, 600.0):
+        assert 6.0 <= _flow_from_duration(d) <= 10.0
+
+    assert _trend_from_score(9.0) == "Very High"
+    assert _trend_from_score(7.5) == "High"
+    assert _trend_from_score(5.0) == "Good"
+
+
+def test_heuristic_detector_still_fills_a_full_breakdown():
+    """The keyword detector DOES analyse hook wording, so it must keep
+    reporting hook_score (this is the one detector that legitimately can)."""
+    from server.core.highlight_detector import HighlightDetector
+    from server.models import TranscriptSegment, WordTimestamp
+
+    words = [WordTimestamp(word=w, start=float(i), end=float(i) + 0.5)
+             for i, w in enumerate(
+                 ("here is the secret nobody tells you about why this "
+                  "always works and the truth is insane").split())]
+    seg = TranscriptSegment(id=0, start=0.0, end=25.0,
+                            text=" ".join(w.word for w in words), words=words)
+
+    det = HighlightDetector(min_duration=5.0, max_duration=60.0)
+    clips = det.detect_highlights_heuristic([seg])
+    assert clips, "expected the keyword detector to find a candidate"
+    v = clips[0].virality
+    assert v is not None
+    assert v.hook_score is not None      # genuinely measured from keywords
+    assert v.trend_potential in ("Good", "High", "Very High")
+    assert v.hook_keywords                # the words it actually matched

@@ -6,8 +6,20 @@ Finds loudness spikes = excitement peaks, mapped onto transcript segments.
 import os
 from typing import List
 
-from server.models import ClipCandidate, TranscriptSegment, WordTimestamp
+from server.models import ClipCandidate, TranscriptSegment, ViralityBreakdown, WordTimestamp
 from server.core.highlight_detector import choose_hook_and_title
+
+
+def _flow_from_duration(duration: float) -> float:
+    """Pacing score from clip length alone: shorts land best around ~35s, and
+    this is genuinely all the duration tells us. Same curve the keyword
+    detector uses, kept here so both report flow on one comparable scale."""
+    return round(min(10.0, max(6.0, 10.0 - abs(float(duration) - 35.0) * 0.15)), 1)
+
+
+def _trend_from_score(score: float) -> str:
+    """Bucket an overall 0-10 score into the card's Trend label."""
+    return "Very High" if score >= 8.5 else ("High" if score >= 7.0 else "Good")
 
 
 def detect_highlights_audio_energy(
@@ -112,6 +124,15 @@ def detect_highlights_audio_energy(
                 full_text=text,
                 words=words,
                 reason=f"High audio energy ({peak:.2f})",
+                # Report only what this detector actually measured. It finds
+                # loudness peaks, so it can speak to energy and pacing but has
+                # NOT analysed hook wording — hook_score stays None (the card
+                # renders it as "–") rather than inventing a number.
+                virality=ViralityBreakdown(
+                    flow_score=_flow_from_duration(duration),
+                    engagement_score=round(score, 1),
+                    trend_potential=_trend_from_score(score),
+                ),
             )
         )
     return _deduplicate(candidates)
@@ -281,6 +302,13 @@ def detect_action_highlights(
                 full_text="",
                 words=[],
                 reason=f"Action peak ({sig_kind} {signal[k]:.2f})",
+                # Transcript-free detector: it fuses loudness + visual motion,
+                # so there is no hook wording to score at all.
+                virality=ViralityBreakdown(
+                    flow_score=_flow_from_duration(end - start),
+                    engagement_score=score,
+                    trend_potential=_trend_from_score(score),
+                ),
             )
         )
         if len(picked) >= top_k:

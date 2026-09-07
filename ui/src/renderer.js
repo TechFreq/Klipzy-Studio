@@ -2128,7 +2128,12 @@ function buildClipCard(clip, idx) {
   card.className = 'clip-card';
   card.dataset.clipIdx = String(idx);
 
-  const v = clip.virality || { hook_score: 8.5, flow_score: 8.0, engagement_score: 9.0, trend_potential: 'High' };
+  // Show "–" for anything the detectors didn't actually measure. This used to
+  // fall back to a hardcoded { hook_score: 8.5, flow_score: 8.0, ... }, so
+  // energy/action/LLM clips (which compute no breakdown) displayed invented
+  // scores as if they were real analysis.
+  const v = clip.virality || {};
+  const metric = (val) => (val === null || val === undefined || val === '' ? '–' : val);
   const title = clip.title || (clip.hook_text ? clip.hook_text.slice(0, 48) : 'Highlight');
   // Prefer the AI-written social description (populated when the Ollama toggle
   // is on); fall back to the hook line / reason for the heuristic path.
@@ -2164,9 +2169,9 @@ function buildClipCard(clip, idx) {
         <span class="ready-badge" title="Rendered and ready to export/share">✅ Ready</span>
       </div>
       <div class="virality-metrics">
-        <span class="metric-pill">Hook: <strong>${escapeHtml(String(v.hook_score))}</strong></span>
-        <span class="metric-pill">Flow: <strong>${escapeHtml(String(v.flow_score))}</strong></span>
-        <span class="metric-pill">Trend: <strong>${escapeHtml(String(v.trend_potential))}</strong></span>
+        <span class="metric-pill" title="Hook wording strength — only scored by the keyword detector">Hook: <strong>${escapeHtml(String(metric(v.hook_score)))}</strong></span>
+        <span class="metric-pill" title="Pacing, from clip length">Flow: <strong>${escapeHtml(String(metric(v.flow_score)))}</strong></span>
+        <span class="metric-pill" title="Overall trend potential, bucketed from the clip's score">Trend: <strong>${escapeHtml(String(metric(v.trend_potential)))}</strong></span>
       </div>
       <div class="clip-meta">${escapeHtml(String(clip.duration))}s duration</div>
       <div class="clip-desc">${escapeHtml(desc)}</div>
@@ -3003,6 +3008,14 @@ document.getElementById('clear-music-btn')?.addEventListener('click', () => {
 // Builds the /process request body from the current UI settings. Shared by the
 // single-video "Start Clipping" flow and the batch flow (which swaps in a list
 // of video_paths).
+function censorProfanity() {
+  return !!document.getElementById('censor-profanity')?.checked;
+}
+
+function censorMode() {
+  return document.getElementById('censor-mode')?.value || 'bleep';
+}
+
 function buildProcessPayload() {
   const captionOpts = collectCaptionOptions();
   return {
@@ -3035,8 +3048,11 @@ function buildProcessPayload() {
     speaker_aware_crop: document.getElementById('speaker-aware-crop') ? document.getElementById('speaker-aware-crop').checked : false,
     burn_captions: document.getElementById('burn-captions').checked,
     remove_silence: document.getElementById('remove-silence') ? document.getElementById('remove-silence').checked : false,
-    bleep_profanity: document.getElementById('censor-profanity') ? document.getElementById('censor-profanity').checked : false,
-    mute_profanity: false,
+    // One checkbox arms censoring; the mode select picks bleep vs mute. The
+    // pipeline already implemented both, but mute_profanity was hardcoded
+    // false, so the "Mute" half of the old label was unreachable.
+    bleep_profanity: censorProfanity() && censorMode() === 'bleep',
+    mute_profanity: censorProfanity() && censorMode() === 'mute',
     normalize_audio: document.getElementById('normalize-audio') ? document.getElementById('normalize-audio').checked : false,
     auto_zoom: document.getElementById('auto-zoom') ? document.getElementById('auto-zoom').checked : false,
     music_path: (document.getElementById('music-path') && document.getElementById('music-path').value) || null,

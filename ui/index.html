@@ -340,11 +340,22 @@
                 </label>
                 <label class="toggle">
                   <input type="checkbox" id="censor-profanity" />
-                  <span>🔇 Bleep / Mute profanity</span>
+                  <span>🔇 Censor profanity</span>
+                </label>
+                <label class="toggle censor-mode-row">
+                  <span class="muted small">Mode</span>
+                  <select id="censor-mode" title="Bleep replaces the word with a 1kHz tone; Mute silences it instead.">
+                    <option value="bleep" selected>Bleep (1kHz tone)</option>
+                    <option value="mute">Mute (silence)</option>
+                  </select>
                 </label>
                 <label class="toggle">
                   <input type="checkbox" id="filler-aggressive" />
-                  <span>🧹 Aggressive filler cut (also remove "you know", "I mean"…)</span>
+                  <span>🧹 Aggressive filler cut — applies to the per-clip 🧹 Fillers button
+                    <span class="tooltip-toggle" tabindex="0" role="tooltip" aria-label="More info about aggressive filler cutting" title="">
+                      ❓<span class="tooltip-text">This does NOT run during clipping. It sets how the 🧹 Fillers button on each finished clip behaves.<br><br>Off: cuts only clear disfluencies ("um", "uh", "err").<br>On: also cuts filler phrases like "you know" and "I mean".</span>
+                    </span>
+                  </span>
                 </label>
               </div>
             </div>
