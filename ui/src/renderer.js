@@ -2327,34 +2327,101 @@ function copyClipHook(idx) {
   });
 }
 
+// Pick Frame: generate a few scored candidate cover frames and let the user
+// choose one to set as the poster or download as an image (png/jpg/webp).
+let thumbState = { clipIdx: null, video: null, selected: null };
+
 async function pickClipThumbnail(idx, videoEl) {
   const clip = generatedClips[idx];
   if (!clip || !clip.output_file) return;
-  const currentTime = videoEl ? videoEl.currentTime : 0.5;
+  thumbState = { clipIdx: idx, video: videoEl, selected: null };
+  const wrap = document.getElementById('thumb-candidates');
+  if (wrap) wrap.innerHTML = '<p class="muted small">⏳ Finding the best frames…</p>';
+  document.getElementById('thumb-modal')?.classList.remove('hidden');
   try {
-    const res = await fetch(`${serverUrl}/export/thumbnail`, {
+    const res = await fetch(`${serverUrl}/export/thumbnail-candidates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video_path: clip.output_file, count: 3 }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Failed to generate candidates');
+    renderThumbCandidates(data.candidates || []);
+  } catch (err) {
+    if (wrap) wrap.innerHTML = `<p class="muted small">Couldn't generate candidates: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function renderThumbCandidates(cands) {
+  const wrap = document.getElementById('thumb-candidates');
+  if (!wrap) return;
+  if (!cands.length) { wrap.innerHTML = '<p class="muted small">No candidate frames found.</p>'; return; }
+  wrap.innerHTML = cands.map((c, i) => `
+    <button type="button" class="thumb-candidate${i === 0 ? ' selected' : ''}" data-ts="${c.timestamp}" data-path="${escapeHtml(c.path)}">
+      <img src="${escapeHtml(fileUrl(c.path, true))}" alt="Candidate frame at ${c.timestamp}s" />
+      <span class="thumb-ts">${Number(c.timestamp).toFixed(1)}s</span>
+    </button>`).join('');
+  // Default-select the first (highest-scored) candidate.
+  thumbState.selected = { path: cands[0].path, timestamp: cands[0].timestamp };
+  wrap.querySelectorAll('.thumb-candidate').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      wrap.querySelectorAll('.thumb-candidate').forEach((b) => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      thumbState.selected = { path: btn.dataset.path, timestamp: parseFloat(btn.dataset.ts) };
+    });
+  });
+}
+
+document.getElementById('thumb-close')?.addEventListener('click', () => {
+  document.getElementById('thumb-modal')?.classList.add('hidden');
+});
+
+document.getElementById('thumb-set-poster')?.addEventListener('click', () => {
+  const clip = generatedClips[thumbState.clipIdx];
+  if (!clip || !thumbState.selected) { showToast('Pick a frame first', 'info'); return; }
+  clip.thumbnail_path = thumbState.selected.path;
+  if (thumbState.video) thumbState.video.setAttribute('poster', fileUrl(thumbState.selected.path, true));
+  saveCurrentProjectSilently();
+  playSuccessSound();
+  showToast('🖼️ Cover frame set', 'success');
+  document.getElementById('thumb-modal')?.classList.add('hidden');
+});
+
+document.getElementById('thumb-download')?.addEventListener('click', async () => {
+  const clip = generatedClips[thumbState.clipIdx];
+  if (!clip || !thumbState.selected) { showToast('Pick a frame first', 'info'); return; }
+  const fmt = document.getElementById('thumb-format')?.value || 'png';
+  const folder = await chooseExportFolder();
+  if (!folder) return;
+  const btn = document.getElementById('thumb-download');
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Saving…'; }
+  try {
+    const res = await fetch(`${serverUrl}/export/thumbnail-save`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         video_path: clip.output_file,
-        timestamp: currentTime > 0 ? currentTime : 0.5,
-      })
+        timestamp: thumbState.selected.timestamp,
+        output_dir: folder,
+        image_format: fmt,
+        title: clip.title || clip.hook_text || 'thumbnail',
+      }),
     });
     const data = await res.json();
-    if (res.ok && data.thumbnail_path) {
-      clip.thumbnail_path = data.thumbnail_path;
-      if (videoEl) {
-        videoEl.setAttribute('poster', fileUrl(data.thumbnail_path, true));
-      }
-      showToast('🖼️ Thumbnail poster updated from current frame!', 'success');
-      saveCurrentProjectSilently();
+    if (res.ok) {
+      playSuccessSound();
+      revealInFolder(data.path);
+      showToast('⬇️ Thumbnail saved', 'success');
     } else {
-      showAlert(`Thumbnail error: ${data.detail || 'Unknown error'}`);
+      showAlert(`Thumbnail save failed: ${data.detail || 'error'}`);
     }
-  } catch (err) {
-    showAlert(`Thumbnail request failed: ${err.message}`);
+  } catch (e) {
+    showAlert(`Error: ${e.message}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
   }
-}
+});
 
 async function openSocialMetaModal(idx) {
   const clip = generatedClips[idx];

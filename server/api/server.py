@@ -25,6 +25,7 @@ from server.models import (
     DetectSilenceRequest, DetectSilenceResponse, RemoveSilenceRequest, RemoveSilenceResponse,
     BleepMuteRequest, BleepMuteResponse, CaptionPresetInfo,
     ThumbnailRequest, ThumbnailResponse, SocialMetadataRequest, SocialMetadataResponse,
+    ThumbnailCandidatesRequest, ThumbnailCandidatesResponse, ThumbnailSaveRequest, ThumbnailSaveResponse,
     MultiAspectExportRequest, MultiAspectExportResponse,
     OverlayRequest, OverlayResponse, EmojiSuggestRequest, EmojiSuggestResponse,
 )
@@ -34,7 +35,7 @@ from server.core.export_tools import export_fcpxml, export_edl, export_capcut_dr
 from server.core.ffmpeg_tools import (
     check_ffmpeg, get_media_info, get_video_duration, detect_hw_encoder, render_clip,
     export_clip_as, concat_clips, export_standalone_audio,
-    extract_best_thumbnail, extract_audio,
+    extract_best_thumbnail, extract_candidate_thumbnails, extract_audio,
 )
 from server.logging_setup import setup_logging
 from server.auth import (
@@ -617,6 +618,50 @@ def export_thumbnail_endpoint(req: ThumbnailRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     return ThumbnailResponse(thumbnail_path=thumb, message="Thumbnail extracted successfully")
+
+
+@app.post("/export/thumbnail-candidates", response_model=ThumbnailCandidatesResponse)
+def export_thumbnail_candidates(req: ThumbnailCandidatesRequest):
+    """Generate several scored candidate cover frames so the user can pick the
+    best one. Candidates are written to a cache folder under the output root."""
+    if not os.path.isfile(req.video_path):
+        raise HTTPException(status_code=400, detail=f"Clip file not found: {req.video_path}")
+    stem = os.path.splitext(os.path.basename(req.video_path))[0]
+    out_dir = req.output_dir or str(_ensure_output_root() / ".cache" / "thumbs" / stem)
+    try:
+        candidates = extract_candidate_thumbnails(
+            req.video_path, out_dir, count=max(1, min(int(req.count or 3), 6)),
+            img_format=req.image_format,
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(e))
+    if not candidates:
+        raise HTTPException(status_code=500, detail="Could not extract any candidate frames")
+    return ThumbnailCandidatesResponse(
+        candidates=candidates,
+        message=f"Generated {len(candidates)} candidate frame(s)",
+    )
+
+
+@app.post("/export/thumbnail-save", response_model=ThumbnailSaveResponse)
+def export_thumbnail_save(req: ThumbnailSaveRequest):
+    """Save the frame at a chosen timestamp into a folder, in any image format
+    (png / jpg / webp / bmp)."""
+    if not os.path.isfile(req.video_path):
+        raise HTTPException(status_code=400, detail=f"Clip file not found: {req.video_path}")
+    fmt = (req.image_format or "png").lower().lstrip(".")
+    if fmt not in ("png", "jpg", "jpeg", "webp", "bmp"):
+        raise HTTPException(status_code=400, detail=f"Unsupported image format: {fmt}")
+    base_dir = Path(req.output_dir).expanduser().resolve()
+    base_dir.mkdir(parents=True, exist_ok=True)
+    safe = "".join(c for c in (req.title or Path(req.video_path).stem) if c.isalnum() or c in " _-").strip()
+    safe = " ".join(safe.split())[:70] or "thumbnail"
+    out_path = str(base_dir / f"{safe}.{fmt}")
+    try:
+        saved = extract_best_thumbnail(req.video_path, out_path, timestamp=req.timestamp)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(e))
+    return ThumbnailSaveResponse(path=saved, message=f"Saved thumbnail to {saved}")
 
 
 @app.post("/social/metadata", response_model=SocialMetadataResponse)

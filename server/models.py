@@ -355,6 +355,33 @@ class ThumbnailResponse(BaseModel):
     message: str
 
 
+class ThumbnailCandidatesRequest(BaseModel):
+    """Generate several scored candidate cover frames to choose from."""
+    video_path: str
+    count: int = 3
+    image_format: str = "jpg"
+    output_dir: Optional[str] = None
+
+
+class ThumbnailCandidatesResponse(BaseModel):
+    candidates: List[dict] = Field(default_factory=list)  # [{path, timestamp, score}]
+    message: str
+
+
+class ThumbnailSaveRequest(BaseModel):
+    """Save a chosen frame (by timestamp) to a folder in any image format."""
+    video_path: str
+    timestamp: float = 0.5
+    output_dir: str
+    image_format: str = "png"
+    title: Optional[str] = None
+
+
+class ThumbnailSaveResponse(BaseModel):
+    path: str
+    message: str
+
+
 class ClipBundleResponse(BaseModel):
     export_dir: str
     video_path: str

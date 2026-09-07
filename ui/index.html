@@ -907,6 +907,31 @@
         </div>
       </div>
 
+      <!-- Pick Frame (Thumbnail Chooser) Modal -->
+      <div id="thumb-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="thumb-title">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3 id="thumb-title">🖼️ Pick a Thumbnail Frame</h3>
+            <button class="modal-close" id="thumb-close" aria-label="Close dialog">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p class="muted">Best frames picked from the clip. Choose one, then set it as the cover or download it as an image.</p>
+            <div id="thumb-candidates" class="thumb-candidates"></div>
+            <div class="thumb-actions">
+              <label>Format:
+                <select id="thumb-format" class="export-format-select" title="Image format for download">
+                  <option value="png">PNG</option>
+                  <option value="jpg">JPG</option>
+                  <option value="webp">WebP</option>
+                </select>
+              </label>
+              <button class="btn btn-secondary" id="thumb-set-poster">🖼️ Set as poster</button>
+              <button class="btn btn-primary" id="thumb-download">⬇️ Download image</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Toast Container -->
       <div id="toast-container" class="toast-container" role="status" aria-live="polite" aria-atomic="false"></div>
 

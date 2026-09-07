@@ -1164,6 +1164,33 @@ body {
   overflow: hidden;
 }
 
+/* Pick Frame (thumbnail chooser) */
+.thumb-candidates {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin: 10px 0 14px;
+}
+.thumb-candidate {
+  position: relative;
+  padding: 0;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  background: #000;
+  cursor: pointer;
+  overflow: hidden;
+  aspect-ratio: 9 / 16;
+}
+.thumb-candidate img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.thumb-candidate.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.thumb-candidate .thumb-ts {
+  position: absolute; bottom: 4px; right: 6px;
+  font-size: 11px; color: #fff; background: rgba(0,0,0,.7);
+  padding: 1px 6px; border-radius: 6px;
+}
+.thumb-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.thumb-actions label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted); }
+
 .caption-preview-size { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 8px 0 12px; color: var(--text-muted); font-size: 12px; }
 .caption-preview-size input[type="range"] { width: min(280px, 60%); }
 .caption-preview-size output { min-width: 24px; color: var(--text); font-weight: 600; }

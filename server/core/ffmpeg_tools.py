@@ -10,7 +10,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # libx264 fallback args reused across render / silence-cut / bleep / export paths.
 X264_FALLBACK_ARGS = ["-preset", "fast", "-crf", "22"]
@@ -770,7 +770,7 @@ def extract_best_thumbnail(
     for use as the video cover / poster image.
     """
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    if not out_path.lower().endswith((".jpg", ".jpeg", ".png")):
+    if not out_path.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".bmp")):
         out_path = f"{out_path}.jpg"
 
     cmd = [
@@ -797,6 +797,104 @@ def extract_best_thumbnail(
         raise RuntimeError(f"Thumbnail extraction failed for {video_path}")
     return out_path
 
+
+def _score_frame(frame) -> float:
+    """Score a BGR frame for thumbnail suitability: sharper + well-exposed is
+    better. Uses the Laplacian variance (focus measure) scaled down when the
+    frame is very dark or blown-out. Requires OpenCV; caller guards import."""
+    import cv2
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    brightness = float(gray.mean())
+    # Penalize near-black / blown-out frames (bad covers) but don't zero them.
+    exposure = 1.0 if 30.0 <= brightness <= 225.0 else 0.35
+    return sharpness * exposure
+
+
+def extract_candidate_thumbnails(
+    video_path: str,
+    out_dir: str,
+    count: int = 3,
+    img_format: str = "jpg",
+    sample: int = 15,
+) -> List[Dict[str, Any]]:
+    """Pick up to ``count`` strong candidate cover frames from a clip.
+
+    Samples frames across the clip, scores them by sharpness/exposure (OpenCV),
+    and returns the top spaced-out picks as saved images:
+    ``[{"path", "timestamp", "score"}, ...]`` in chronological order. Falls back
+    to evenly-spaced ffmpeg extractions (no scoring) when OpenCV can't decode.
+    """
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    count = max(1, int(count))
+    fmt = (img_format or "jpg").lower().lstrip(".")
+    if fmt not in ("jpg", "jpeg", "png", "webp", "bmp"):
+        fmt = "jpg"
+    dur = get_video_duration(video_path) or 0.0
+
+    # Preferred path: OpenCV sampling + scoring (opencv ships with the YOLO dep).
+    try:
+        import cv2
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise RuntimeError("OpenCV could not open the clip")
+        # Sample across the middle of the clip to skip black intro/outro frames.
+        lo, hi = (dur * 0.05, dur * 0.95) if dur > 1.0 else (0.0, max(0.0, dur))
+        n = max(count, min(int(sample), 30))
+        times = [lo + (hi - lo) * i / (n - 1) for i in range(n)] if n > 1 else [max(0.0, dur / 2)]
+        scored = []
+        for t in times:
+            cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000.0)
+            ok, frame = cap.read()
+            if ok and frame is not None:
+                scored.append((t, _score_frame(frame), frame))
+        if not scored:
+            cap.release()
+            raise RuntimeError("No frames decoded")
+        # Best score first, then greedily keep picks spaced apart in time so the
+        # candidates look meaningfully different (not 3 near-identical frames).
+        scored.sort(key=lambda x: x[1], reverse=True)
+        min_gap = max(0.5, dur / (count * 2)) if dur > 0 else 0.5
+        picked, picked_times = [], []
+        for t, sc, frame in scored:
+            if all(abs(t - pt) >= min_gap for pt in picked_times):
+                picked.append((t, sc, frame)); picked_times.append(t)
+            if len(picked) >= count:
+                break
+        if len(picked) < count:  # top up ignoring the spacing constraint
+            for t, sc, frame in scored:
+                if t in picked_times:
+                    continue
+                picked.append((t, sc, frame)); picked_times.append(t)
+                if len(picked) >= count:
+                    break
+        picked.sort(key=lambda x: x[0])  # chronological order for display
+        out: List[Dict[str, Any]] = []
+        for i, (t, sc, frame) in enumerate(picked, 1):
+            p = str(Path(out_dir) / f"thumb_{i}.{fmt}")
+            try:
+                if cv2.imwrite(p, frame) and os.path.exists(p) and os.path.getsize(p) > 0:
+                    out.append({"path": p, "timestamp": round(float(t), 3), "score": round(float(sc), 2)})
+            except Exception:
+                continue
+        cap.release()
+        if out:
+            return out
+    except Exception:
+        pass
+
+    # Fallback: evenly-spaced stills via ffmpeg, no scoring.
+    save_fmt = fmt if fmt in ("jpg", "jpeg", "png") else "jpg"
+    times = [dur * (i + 1) / (count + 1) for i in range(count)] if dur > 0 else [0.5]
+    out = []
+    for i, t in enumerate(times, 1):
+        p = str(Path(out_dir) / f"thumb_{i}.{save_fmt}")
+        try:
+            extract_best_thumbnail(video_path, p, timestamp=t)
+            out.append({"path": p, "timestamp": round(float(t), 3), "score": 0.0})
+        except Exception:
+            continue
+    return out
 
 
 def concat_clips(
