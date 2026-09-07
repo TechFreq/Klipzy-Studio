@@ -133,9 +133,21 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             chunk_end = chunk[-1].end
             
             karaoke_text = ""
-            for w in chunk:
-                dur_cs = max(1, int(round((w.end - w.start) * 100)))
+            n_chunk = len(chunk)
+            for idx, w in enumerate(chunk):
                 w_text = case(getattr(w, "word", str(w)))
+                # ASS \k durations are cumulative from the line's start, so each
+                # word's highlight must span until the NEXT word actually begins.
+                # Using only the word's own length (w.end - w.start) drops the
+                # silent gaps between words, so the karaoke playhead runs ahead
+                # of the audio and drifts out of sync as the line plays. Holding
+                # each word until the next one's start keeps the highlight locked
+                # to the spoken timing; the last word uses its own duration.
+                if idx < n_chunk - 1:
+                    span = chunk[idx + 1].start - w.start
+                else:
+                    span = w.end - w.start
+                dur_cs = max(1, int(round(span * 100)))
                 karaoke_text += f"{{\\k{dur_cs}}}{w_text} "
 
             # Only the first chunk of the segment carries the speaker label.
