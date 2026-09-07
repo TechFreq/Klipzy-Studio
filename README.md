@@ -169,6 +169,35 @@ launch installers and touch the filesystem).
 
 ---
 
+## 🧩 Editions & Release Channels
+
+Klipzy Studio ships in **two editions** so you can pick the AI setup you prefer. Both share
+the same core engine, UI, and features — they only differ in **how the language-model steps
+(highlight discovery, hook writing, AI Edit Chat) are powered**.
+
+| Edition | Branch | Release tag | LLM backend |
+|---------|--------|-------------|-------------|
+| **Klipzy Studio** (flagship) | `main` | `vX.Y.Z` | Built-in **Ollama** — zero config, fully local |
+| **Klipzy Studio — OpenAI-compatible** | `main-openai` | `vX.Y.Z-openai` | Any **OpenAI-compatible endpoint**: `whisper.cpp` / `llama-server`, LM Studio, or a cloud API |
+
+The OpenAI-compatible edition drops the bundled Ollama dependency in favor of a single
+**"base URL + model name"** setting, so one integration covers `llama.cpp`'s `llama-server`,
+LM Studio, and remote endpoints alike. Ollama itself can still be used — just point the base
+URL at its OpenAI-compatible route.
+
+> Both editions stay **local-first by default.** The OpenAI-compatible edition only reaches the
+> network if *you* configure a remote endpoint; point it at a local server and nothing leaves
+> your machine.
+
+**Which should I use?**
+- Want it to just work with no extra setup → **flagship** (`main`).
+- Already run `llama-server` / LM Studio, want a lighter install, or want to route to your own
+  cloud endpoint → **OpenAI-compatible** (`main-openai`).
+
+Downloads for each are published as separate, clearly labeled GitHub Releases.
+
+---
+
 ## 🧪 Tests
 
 ```bash
