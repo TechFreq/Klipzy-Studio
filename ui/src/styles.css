@@ -1100,14 +1100,17 @@ body {
 
 .caption-preview-stage {
   margin: 12px 0 4px;
-  padding: 14px;
+  /* Extra top padding leaves room for the absolutely-positioned hook overlay
+     so it never collides with the caption text sitting at the bottom. */
+  padding: 44px 14px 16px;
   background: #000;
   border: 1px solid var(--border);
   border-radius: 8px;
-  min-height: 90px;
+  min-height: 132px;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
+  overflow: hidden;
 }
 
 .caption-preview-size { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 8px 0 12px; color: var(--text-muted); font-size: 12px; }
@@ -1753,6 +1756,10 @@ body {
   left: 50%;
   transform: translateX(-50%);
   max-width: 92%;
+  /* Keep the hook to a couple of lines at the top so it can't overlap the
+     caption that sits at the bottom of the stage. */
+  max-height: 2.4em;
+  overflow: hidden;
   text-align: center;
   line-height: 1.1;
   font-weight: 800;

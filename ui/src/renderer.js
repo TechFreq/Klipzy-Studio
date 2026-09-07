@@ -2737,12 +2737,20 @@ function updateHookPreview() {
   const stage = el.parentElement;
   const ratio = document.getElementById('clip-aspect-ratio')?.value || '9:16';
   const canvasWidth = ratio === '16:9' ? 1920 : 1080;
-  const previewWidth = stage && stage.clientWidth > 0 ? stage.clientWidth : 540;
+  const stageStyle = stage ? getComputedStyle(stage) : null;
+  const padX = stageStyle
+    ? (parseFloat(stageStyle.paddingLeft) || 0) + (parseFloat(stageStyle.paddingRight) || 0)
+    : 28;
+  const previewWidth = (stage && stage.clientWidth > 0 ? stage.clientWidth : 540) - padX;
   const scale = previewWidth / canvasWidth;
+  // Keep the hook overlay bounded so a long title used as a hook can't flood
+  // the top of the stage and reach the caption.
+  const stageMinHeight = stageStyle ? (parseFloat(stageStyle.minHeight) || 132) : 132;
+  const maxHookFont = Math.max(12, stageMinHeight / 4);
 
   el.style.color = primary;
   el.style.fontFamily = font;
-  el.style.fontSize = `${Math.max(10, Math.round(hookSize * scale))}px`;
+  el.style.fontSize = `${Math.max(10, Math.round(Math.min(hookSize * scale, maxHookFont)))}px`;
   el.style.fontWeight = document.getElementById('caption-bold')?.checked ? '900' : '800';
   const w = parseInt(document.getElementById('caption-outline-width')?.value || '3', 10);
   const o = stroke || '#000000';
@@ -2776,9 +2784,25 @@ function applyCaptionPreviewStyle() {
   const previewStage = preview.parentElement;
   const ratio = document.getElementById('clip-aspect-ratio')?.value || '9:16';
   const canvasWidth = ratio === '16:9' ? 1920 : 1080;
-  const previewWidth = previewStage?.clientWidth > 0 ? previewStage.clientWidth : 540;
+  // Map the caption to the stage's *usable* width (minus horizontal padding) so
+  // it lands in the same 1080/1920-px coordinate space the exporter uses.
+  const stageStyle = previewStage ? getComputedStyle(previewStage) : null;
+  const padX = stageStyle
+    ? (parseFloat(stageStyle.paddingLeft) || 0) + (parseFloat(stageStyle.paddingRight) || 0)
+    : 28;
+  const previewWidth = (previewStage?.clientWidth > 0 ? previewStage.clientWidth : 540) - padX;
   const previewScale = previewWidth / canvasWidth;
-  preview.style.fontSize = `${Math.max(1, Math.round(captionFontSize() * previewScale))}px`;
+  // The stage is a short landscape box, so a purely width-based scale can look
+  // oversized. Clamp to a fraction of the stage's *fixed* min-height (not its
+  // live height, which would grow as text wraps and defeat the clamp) so the
+  // preview reads like one or two caption lines and never balloons.
+  const stageMinHeight = stageStyle ? (parseFloat(stageStyle.minHeight) || 90) : 90;
+  const padY = stageStyle
+    ? (parseFloat(stageStyle.paddingTop) || 0) + (parseFloat(stageStyle.paddingBottom) || 0)
+    : 28;
+  const maxPreviewFont = Math.max(14, (stageMinHeight - padY) / 1.5);
+  const scaledFont = Math.min(captionFontSize() * previewScale, maxPreviewFont);
+  preview.style.fontSize = `${Math.max(1, Math.round(scaledFont))}px`;
   preview.style.fontWeight = isBold ? '900' : 'normal';
   preview.style.fontStyle = isItalic ? 'italic' : 'normal';
   preview.style.textTransform = isUppercase ? 'uppercase' : 'none';
@@ -2989,9 +3013,19 @@ window.openCaptionEditor = function(clipIndex) {
     chipsContainer.appendChild(chip);
   });
 
-  // Seed the preview with a real snippet from this clip's words.
+  // Seed the preview with a SHORT snippet that mimics one on-screen caption
+  // line. Using the whole transcript (or the full hook_text title) floods the
+  // preview box and collides with the hook overlay, so cap it to a few words
+  // drawn from the actual spoken words.
   const preview = document.getElementById('caption-preview');
-  const sample = (clip.hook_text || (clip.words || []).map((x) => x.word).join(' ') || 'Your caption appears here').trim();
+  const sampleWords = (clip.words || [])
+    .map((x) => (x && x.word ? String(x.word) : ''))
+    .filter(Boolean);
+  let sample = sampleWords.slice(0, 6).join(' ').trim();
+  if (!sample) {
+    // No word-level data: fall back to the first few words of any available text.
+    sample = (clip.hook_text || '').trim().split(/\s+/).slice(0, 6).join(' ');
+  }
   if (preview) {
     preview.dataset.words = sample.length ? sample : 'Your caption appears here';
     refreshCaptionPreview();
