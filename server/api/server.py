@@ -1377,14 +1377,18 @@ def install_optional(req: OptionalInstallRequest):
 @app.post("/tools/bleep-mute", response_model=BleepMuteResponse)
 def api_bleep_mute(req: BleepMuteRequest):
     """Censor audio profanity or custom words with 1000Hz bleep or mute."""
-    from server.core.word_filter import apply_bleep_or_mute
+    from server.core.word_filter import apply_bleep_or_mute, filter_word_timestamps
     try:
         out_path = req.output_path
         if not out_path:
             p = Path(req.video_path)
             out_path = str(p.parent / f"{p.stem}_censored{p.suffix}")
-        
+
         ts = req.timestamps or []
+        # Narrow a full word list down to just profanity/custom words so the
+        # bleep hits the right moments instead of the entire clip.
+        if req.profanity_only:
+            ts = filter_word_timestamps(ts, req.custom_words)
         result = apply_bleep_or_mute(
             input_video=req.video_path,
             output_video=out_path,

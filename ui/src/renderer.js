@@ -3362,7 +3362,11 @@ window.quickBleepClip = async function(clipIndex) {
       body: JSON.stringify({
         video_path: clip.output_file,
         mode: 'bleep',
-        timestamps: clip.words ? clip.words.map(w => ({ word: w.word, start: w.start, end: w.end })) : [],
+        // Rebase to the clip's 0-based timeline (words carry absolute source
+        // times) and let the server keep only profanity, so the bleep lands on
+        // the right moments instead of the whole clip.
+        timestamps: wordsClipRelative(clip.words || [], clip),
+        profanity_only: true,
       }),
     });
     const data = await res.json();
@@ -4633,7 +4637,9 @@ async function quickRemoveFillers(idx, btn) {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         video_path: clip.output_file,
-        words: clip.words || [],
+        // Rebase to the clip's 0-based timeline so filler cuts line up with the
+        // rendered clip (clip.words carry absolute source-video times).
+        words: wordsClipRelative(clip.words || [], clip),
         also_remove_silence: true,
         remove_phrases: aggressive,  // conservative (disfluencies only) unless the toggle is on
       }),

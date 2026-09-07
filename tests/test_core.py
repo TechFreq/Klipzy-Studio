@@ -228,6 +228,43 @@ def test_profanity_filter_detection():
     assert swear_ts[0]["start"] == 0.8
 
 
+def test_bleep_filter_word_timestamps_precision():
+    """The quick-bleep path sends every clip word; the server must keep ONLY
+    profanity, and must not over-match innocent words that merely contain a
+    swear substring (peacock/Dickens/class)."""
+    from server.core.word_filter import filter_word_timestamps
+    words = [
+        {"word": "This", "start": 0.0, "end": 0.3},
+        {"word": "peacock", "start": 0.3, "end": 0.8},   # contains 'cock' -> NOT profane
+        {"word": "Dickens", "start": 0.8, "end": 1.2},   # contains 'dick' -> NOT profane
+        {"word": "class", "start": 1.2, "end": 1.6},     # contains 'ass' -> NOT profane
+        {"word": "fucking", "start": 1.6, "end": 2.0},   # profane
+        {"word": "bullshit", "start": 2.0, "end": 2.4},  # profane via 'shit' stem
+    ]
+    hits = filter_word_timestamps(words)
+    assert {h["word"] for h in hits} == {"fucking", "bullshit"}
+    assert all("start" in h and "end" in h and "duration" in h for h in hits)
+
+
+def test_bleep_custom_words():
+    from server.core.word_filter import filter_word_timestamps
+    words = [{"word": "banana", "start": 0.0, "end": 0.5}]
+    assert filter_word_timestamps(words) == []
+    hits = filter_word_timestamps(words, custom_words=["banana"])
+    assert len(hits) == 1 and hits[0]["word"] == "banana"
+
+
+def test_filler_elongation_matching():
+    from server.core.filler_cutter import _collapse_elongation, DEFAULT_FILLERS
+    assert _collapse_elongation("uhhh") == "uh"
+    assert _collapse_elongation("ummm") == "um"
+    assert _collapse_elongation("errr") == "er"
+    collapsed = {_collapse_elongation(f) for f in DEFAULT_FILLERS}
+    # Elongated variants normalize to a known filler.
+    assert _collapse_elongation("uhhhh") in collapsed
+    assert _collapse_elongation("ahhh") in collapsed
+
+
 # ---------------------------------------------------------------------------
 # ffmpeg_tools refactor tests
 # ---------------------------------------------------------------------------

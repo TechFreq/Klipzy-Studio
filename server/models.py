@@ -381,7 +381,7 @@ class RemoveSilenceRequest(BaseModel):
     output_path: Optional[str] = None
     noise_threshold_db: float = -30.0
     min_silence_duration: float = 0.6
-    pad_seconds: float = 0.08
+    pad_seconds: float = 0.10
 
 
 class RemoveSilenceResponse(BaseModel):
@@ -400,6 +400,10 @@ class BleepMuteRequest(BaseModel):
     timestamps: Optional[List[dict]] = None
     custom_words: Optional[List[str]] = None
     beep_freq: int = 1000
+    # When true, the supplied `timestamps` are treated as the clip's full word
+    # list and filtered down to profanity/custom words server-side (so callers
+    # can just send every word without bleeping the whole clip).
+    profanity_only: bool = True
 
 
 class BleepMuteResponse(BaseModel):

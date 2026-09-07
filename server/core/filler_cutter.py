@@ -20,7 +20,9 @@ from server.core.silence_cutter import (
 # Conservative, high-confidence disfluencies. Deliberately excludes ambiguous
 # words like "like"/"so"/"right" that are usually meaningful; callers can add
 # extras explicitly if they want a more aggressive cut.
-DEFAULT_FILLERS = {"um", "uh", "erm", "uhm", "hmm", "mm", "mmm", "eh", "ah", "er"}
+DEFAULT_FILLERS = {
+    "um", "uh", "erm", "uhm", "hmm", "mm", "mmm", "eh", "ah", "er", "ahem",
+}
 
 # Multi-word filler phrases, only used when remove_phrases=True (opt-in), since
 # cutting these mid-sentence can occasionally change meaning. Each is a tuple of
@@ -39,6 +41,13 @@ DEFAULT_FILLER_PHRASES = [
 
 def _clean_token(word: str) -> str:
     return re.sub(r"[^a-z]", "", (word or "").lower())
+
+
+def _collapse_elongation(tok: str) -> str:
+    """Collapse runs of a repeated letter to a single one so elongated
+    disfluencies ("uhhh", "ummm", "errr", "ahhh") match their base filler
+    without having to enumerate every spelling Whisper might emit."""
+    return re.sub(r"(.)\1+", r"\1", tok)
 
 
 def _merge_intervals(intervals: List[Dict[str, float]]) -> List[Dict[str, float]]:
@@ -89,6 +98,12 @@ def remove_fillers(
     # Longest phrases first so "you know what i mean" wins over "you know".
     phrases.sort(key=len, reverse=True)
 
+    # Elongation-normalized filler set so "uhhh"/"ummm"/"errr" match "uh"/"um"/"er".
+    collapsed_fillers = {_collapse_elongation(f) for f in fillers}
+
+    def _is_filler(tok: str) -> bool:
+        return bool(tok) and (tok in fillers or _collapse_elongation(tok) in collapsed_fillers)
+
     toks = [_clean_token(w.get("word", "")) for w in (words or [])]
 
     # Scan the word list, matching phrases (multi-token) then single fillers.
@@ -103,7 +118,7 @@ def remove_fillers(
             if i + L <= n and tuple(toks[i:i + L]) == ph:
                 matched = L
                 break
-        if not matched and toks[i] in fillers:
+        if not matched and _is_filler(toks[i]):
             matched = 1
         if matched:
             s = float(words[i].get("start", 0)) - pad_seconds
