@@ -510,16 +510,22 @@ def export_project(req: ExportProjectRequest):
     video_dir = os.path.dirname(os.path.abspath(req.video_path))
     stem = os.path.splitext(os.path.basename(req.video_path))[0]
 
+    # Write the timeline into the user-picked folder when provided.
+    base_dir = video_dir
+    if req.output_dir:
+        base_dir = str(Path(req.output_dir).expanduser().resolve())
+        os.makedirs(base_dir, exist_ok=True)
+
     if req.format.lower() == "fcpxml":
-        out_path = os.path.join(video_dir, f"{stem}_shorts.xml")
+        out_path = os.path.join(base_dir, f"{stem}_shorts.xml")
         export_fcpxml(req.video_path, req.clips, out_path, fps=req.fps)
         msg = "Exported Premiere Pro / DaVinci Resolve XML successfully"
     elif req.format.lower() == "edl":
-        out_path = os.path.join(video_dir, f"{stem}_shorts.edl")
+        out_path = os.path.join(base_dir, f"{stem}_shorts.edl")
         export_edl(req.video_path, req.clips, out_path, fps=req.fps)
         msg = "Exported EDL timeline successfully"
     elif req.format.lower() == "capcut":
-        out_path = os.path.join(video_dir, f"{stem}_capcut_draft.json")
+        out_path = os.path.join(base_dir, f"{stem}_capcut_draft.json")
         export_capcut_draft(req.video_path, req.clips, out_path)
         msg = "Exported CapCut Draft project structure successfully"
     else:
@@ -677,10 +683,14 @@ def export_compile(req: ExportCompileRequest):
         raise HTTPException(status_code=400, detail=f"Unsupported export format: {fmt}")
 
     stem = "".join(c for c in req.title if c.isalnum() or c in "-_" ).strip() or "highlights_reel"
-    out_path = req.output_path or os.path.join(
-        os.path.dirname(os.path.abspath(req.clip_paths[0])),
-        f"{stem}_reel.{fmt}",
-    )
+    # Prefer an explicit output_path; else a user-picked output_dir; else beside
+    # the first clip.
+    if req.output_dir:
+        base_dir = str(Path(req.output_dir).expanduser().resolve())
+        os.makedirs(base_dir, exist_ok=True)
+    else:
+        base_dir = os.path.dirname(os.path.abspath(req.clip_paths[0]))
+    out_path = req.output_path or os.path.join(base_dir, f"{stem}_reel.{fmt}")
 
     try:
         compiled_path, msg, total_dur = concat_clips(req.clip_paths, out_path, fmt)
@@ -710,9 +720,16 @@ def export_standalone(req: ExportStandaloneRequest):
     stem = os.path.splitext(os.path.basename(req.video_path))[0]
     asset = req.asset_type.lower()
 
+    # When the user picks a destination folder, write the asset there (with the
+    # default filename); otherwise fall back to beside the source video.
+    base_dir = video_dir
+    if req.output_dir:
+        base_dir = str(Path(req.output_dir).expanduser().resolve())
+        os.makedirs(base_dir, exist_ok=True)
+
     if asset.startswith("audio_"):
         fmt = asset.split("_", 1)[1]
-        out_path = req.output_path or os.path.join(video_dir, f"{stem}_audio.{fmt}")
+        out_path = req.output_path or os.path.join(base_dir, f"{stem}_audio.{fmt}")
         try:
             saved = export_standalone_audio(req.video_path, out_path, fmt)
             return ExportStandaloneResponse(
@@ -732,7 +749,7 @@ def export_standalone(req: ExportStandaloneRequest):
             "transcript_json": ".json",
         }
         target_ext = ext_map[asset]
-        out_path = req.output_path or os.path.join(video_dir, f"{stem}_standalone{target_ext}")
+        out_path = req.output_path or os.path.join(base_dir, f"{stem}_standalone{target_ext}")
 
         # Check if already generated in folder
         existing_candidate = os.path.join(video_dir, f"captions{target_ext}")

@@ -838,6 +838,20 @@ function bindEvents() {
     });
   }
 
+  // Remove hook: clear the intro-hook field and any rotating candidates so no
+  // hook is burned on the next Save & Apply (the save flow keys intro_enabled
+  // off whether this field has text). Also hides the live overlay immediately.
+  document.getElementById('remove-hook-btn')?.addEventListener('click', () => {
+    const hookInput = document.getElementById('edit-intro-hook');
+    if (hookInput) hookInput.value = '';
+    hookCandidates = [];
+    hookCandidateIdx = -1;
+    const vbox = document.getElementById('hook-variants');
+    if (vbox) { vbox.classList.add('hidden'); vbox.innerHTML = ''; }
+    updateHookPreview();
+    showToast('Intro hook removed — Save & Apply to re-render without it', 'info');
+  });
+
   // Wizard Stepper & Nav Actions
   for (let i = 1; i <= 4; i++) {
     const stepBtn = document.getElementById(`wizard-step-btn-${i}`);
@@ -2431,6 +2445,8 @@ async function exportProject(format) {
     return;
   }
 
+  const exportFolder = await chooseExportFolder();
+  if (!exportFolder) return;
   try {
     const res = await fetch(`${serverUrl}/export/project`, {
       method: 'POST',
@@ -2439,7 +2455,8 @@ async function exportProject(format) {
         video_path: selectedVideo,
         clips: generatedClips,
         format: format,
-        fps: 30.0
+        fps: 30.0,
+        output_dir: exportFolder,
       })
     });
     const data = await res.json();
@@ -2471,6 +2488,9 @@ async function exportStandaloneAsset() {
   }
   const sel = document.getElementById('standalone-asset');
   const assetType = sel ? sel.value : 'audio_mp3';
+  // Let the user choose the destination folder, matching the per-clip Export.
+  const exportFolder = await chooseExportFolder();
+  if (!exportFolder) return;
   const btn = document.getElementById('export-standalone-btn');
   if (btn) {
     btn.disabled = true;
@@ -2484,6 +2504,7 @@ async function exportStandaloneAsset() {
       body: JSON.stringify({
         video_path: selectedVideo,
         asset_type: assetType,
+        output_dir: exportFolder,
       })
     });
     const data = await res.json();
@@ -2592,6 +2613,9 @@ async function exportCompileReel() {
     return;
   }
   const fmt = document.getElementById('compile-format') ? document.getElementById('compile-format').value : 'mp4';
+  // Let the user choose where the reel lands, just like the per-clip Export.
+  const exportFolder = await chooseExportFolder();
+  if (!exportFolder) return;
   const btn = document.getElementById('export-compile');
   if (btn) {
     btn.disabled = true;
@@ -2606,6 +2630,7 @@ async function exportCompileReel() {
         clip_paths: clipPaths,
         format: fmt,
         title: 'highlights_reel',
+        output_dir: exportFolder,
       })
     });
     const data = await res.json();

@@ -141,6 +141,9 @@ class ExportProjectRequest(BaseModel):
     clips: List[dict] = Field(default_factory=list)
     format: str = "fcpxml"  # "fcpxml" | "edl" | "capcut"
     fps: float = 30.0
+    # Optional destination folder chosen by the user; when set, the timeline
+    # file is written here instead of beside the source video.
+    output_dir: Optional[str] = None
 
 
 class ExportProjectResponse(BaseModel):
@@ -299,6 +302,9 @@ class ExportCompileRequest(BaseModel):
     clip_paths: List[str] = Field(default_factory=list)
     format: str = "mp4"   # "mp4" | "mov" | "mkv" | "webm" | "av1" | "gif"
     output_path: Optional[str] = None
+    # Optional destination folder; when set (and output_path is not) the reel is
+    # written into this folder with the default filename.
+    output_dir: Optional[str] = None
     title: str = "highlights_reel"
 
 
@@ -316,6 +322,9 @@ class ExportStandaloneRequest(BaseModel):
     clip_index: Optional[int] = None
     asset_type: str = "audio_mp3" # "audio_mp3", "audio_wav", "audio_flac", "audio_aac", "audio_m4a", "sub_srt", "sub_vtt", "transcript_txt", "transcript_json"
     output_path: Optional[str] = None
+    # Optional destination folder; when set (and output_path is not) the asset is
+    # written into this folder with the default filename.
+    output_dir: Optional[str] = None
 
 
 class ExportStandaloneResponse(BaseModel):
