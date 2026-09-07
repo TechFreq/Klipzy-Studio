@@ -1168,6 +1168,12 @@
     </main>
   </div>
 
+  <!-- Classic scripts sharing one global scope. renderer.js holds the core
+       state + helpers and MUST load first; the feature files below only
+       register listeners at load time, so they can follow in any order. -->
   <script src="src/renderer.js"></script>
+  <script src="src/caption-editor.js"></script>
+  <script src="src/exports.js"></script>
+  <script src="src/setup-panel.js"></script>
 </body>
 </html>
