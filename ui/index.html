@@ -603,32 +603,58 @@
               <p class="muted" id="results-summary">AI-scored and cropped ready for TikTok, Reels & YouTube Shorts</p>
             </div>
             <div class="export-actions">
-              <button class="btn btn-secondary" id="step4-restart-btn">➕ New Clipping Project</button>
-              <span class="export-sep">|</span>
-              <button class="btn btn-secondary" id="export-premiere">🎬 Premiere Pro (XML)</button>
-              <button class="btn btn-secondary" id="export-davinci">🎞️ DaVinci (EDL)</button>
-              <button class="btn btn-secondary" id="export-capcut">✂️ CapCut</button>
-              <span class="export-sep">|</span>
-              <select id="standalone-asset" class="export-format-select" title="Standalone asset export" aria-label="Standalone asset export format">
-                <option value="audio_mp3">🎵 Audio Only (MP3 320k)</option>
-                <option value="audio_wav">🎵 Audio Only (WAV 44.1k)</option>
-                <option value="audio_flac">🎵 Audio Only (FLAC Lossless)</option>
-                <option value="audio_aac">🎵 Audio Only (AAC 256k)</option>
-                <option value="audio_m4a">🎵 Audio Only (M4A)</option>
-                <option value="sub_srt">📝 Subtitles (SRT)</option>
-                <option value="sub_vtt">📝 Subtitles (VTT)</option>
-              </select>
-              <button class="btn btn-secondary btn-small" id="export-standalone-btn">💾 Export Asset</button>
-              <span class="export-sep">|</span>
-              <select id="compile-format" class="export-format-select" title="Reel output format" aria-label="Reel output format">
-                <option value="mp4">Export All as MP4 Reel</option>
-                <option value="webm">Export All as WebM Reel</option>
-                <option value="av1">Export All as AV1 Reel</option>
-                <option value="mov">Export All as MOV Reel</option>
-                <option value="mkv">Export All as MKV Reel</option>
-                <option value="gif">Export All as GIF Reel</option>
-              </select>
-              <button class="btn btn-primary btn-small" id="export-compile">🎬 Export All as Reel</button>
+              <div class="export-group export-group-new">
+                <button class="btn btn-secondary" id="step4-restart-btn">➕ New Clipping Project</button>
+              </div>
+
+              <div class="export-group">
+                <span class="export-group-label">🎬 Editor timeline</span>
+                <div class="export-group-controls">
+                  <button class="btn btn-secondary btn-small" id="export-premiere">Premiere Pro (XML)</button>
+                  <button class="btn btn-secondary btn-small" id="export-davinci">DaVinci (EDL)</button>
+                  <button class="btn btn-secondary btn-small" id="export-capcut">✂️ CapCut</button>
+                </div>
+              </div>
+
+              <div class="export-group">
+                <span class="export-group-label">🎵 Audio</span>
+                <div class="export-group-controls">
+                  <select id="standalone-audio" class="export-format-select" title="Audio export format" aria-label="Audio export format">
+                    <option value="audio_mp3">MP3 (320k)</option>
+                    <option value="audio_wav">WAV (44.1k)</option>
+                    <option value="audio_flac">FLAC (Lossless)</option>
+                    <option value="audio_aac">AAC (256k)</option>
+                    <option value="audio_m4a">M4A</option>
+                  </select>
+                  <button class="btn btn-secondary btn-small" id="export-audio-btn" data-select="standalone-audio">💾 Export audio</button>
+                </div>
+              </div>
+
+              <div class="export-group">
+                <span class="export-group-label">📝 Captions / Subtitles</span>
+                <div class="export-group-controls">
+                  <select id="standalone-subs" class="export-format-select" title="Subtitle export format" aria-label="Subtitle export format">
+                    <option value="sub_srt">SRT</option>
+                    <option value="sub_vtt">VTT</option>
+                  </select>
+                  <button class="btn btn-secondary btn-small" id="export-subs-btn" data-select="standalone-subs">💾 Export captions</button>
+                </div>
+              </div>
+
+              <div class="export-group">
+                <span class="export-group-label">🎞️ Highlights reel</span>
+                <div class="export-group-controls">
+                  <select id="compile-format" class="export-format-select" title="Reel output format" aria-label="Reel output format">
+                    <option value="mp4">MP4 Reel</option>
+                    <option value="webm">WebM Reel</option>
+                    <option value="av1">AV1 Reel</option>
+                    <option value="mov">MOV Reel</option>
+                    <option value="mkv">MKV Reel</option>
+                    <option value="gif">GIF Reel</option>
+                  </select>
+                  <button class="btn btn-primary btn-small" id="export-compile">🎬 Export All as Reel</button>
+                </div>
+              </div>
             </div>
           </div>
           <div id="clips-grid" class="clips-grid"></div>

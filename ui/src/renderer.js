@@ -2480,18 +2480,22 @@ document.getElementById('export-capcut')?.addEventListener('click', () => export
 // ------------------------------------------------------------------
 // Export Standalone Assets (Audio Only MP3/WAV/FLAC/AAC/M4A, Subtitles SRT/VTT)
 // ------------------------------------------------------------------
-async function exportStandaloneAsset() {
+async function exportStandaloneAsset(ev) {
   if (!selectedVideo) {
     playErrorSound();
     showAlert("Please select and load a video file first.");
     return;
   }
-  const sel = document.getElementById('standalone-asset');
+  // The clicked button points at its own <select> via data-select (audio vs
+  // captions), so one handler drives both grouped export boxes.
+  const btn = ev?.currentTarget || document.getElementById('export-audio-btn');
+  const selectId = btn?.dataset?.select || 'standalone-audio';
+  const sel = document.getElementById(selectId);
   const assetType = sel ? sel.value : 'audio_mp3';
   // Let the user choose the destination folder, matching the per-clip Export.
   const exportFolder = await chooseExportFolder();
   if (!exportFolder) return;
-  const btn = document.getElementById('export-standalone-btn');
+  const originalLabel = btn ? btn.textContent : '';
   if (btn) {
     btn.disabled = true;
     btn.textContent = '⏳ Exporting…';
@@ -2521,12 +2525,13 @@ async function exportStandaloneAsset() {
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.textContent = '💾 Export Asset';
+      btn.textContent = originalLabel || '💾 Export';
     }
   }
 }
 
-document.getElementById('export-standalone-btn')?.addEventListener('click', exportStandaloneAsset);
+document.getElementById('export-audio-btn')?.addEventListener('click', exportStandaloneAsset);
+document.getElementById('export-subs-btn')?.addEventListener('click', exportStandaloneAsset);
 
 // ------------------------------------------------------------------
 // Export-As Media (single clip -> mp4/mov/mkv/webm/gif)

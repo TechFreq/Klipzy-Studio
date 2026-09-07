@@ -648,9 +648,37 @@ body {
 
 .export-actions {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
+  align-items: stretch;
+}
+
+/* Each export purpose (editor timeline, audio, captions, reel) is its own
+   labeled box so it's obvious what each control exports. */
+.export-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.export-group-new {
+  justify-content: center;
+}
+.export-group-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+}
+.export-group-controls {
+  display: flex;
   align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .export-sep {
