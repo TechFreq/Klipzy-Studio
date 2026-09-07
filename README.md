@@ -169,32 +169,29 @@ launch installers and touch the filesystem).
 
 ---
 
-## 🧩 Editions & Release Channels
+## 🔌 AI engine — bring your own (optional)
 
-Klipzy Studio ships in **two editions** so you can pick the AI setup you prefer. Both share
-the same core engine, UI, and features — they only differ in **how the language-model steps
-(highlight discovery, hook writing, AI Edit Chat) are powered**.
+One app, one setting. **Ollama is built in and used by default**, so there's nothing to
+configure if you just want it to work. But every AI feature (highlight discovery, hook/title
+copywriting, AI Edit Chat, caption translation) can be pointed at **any OpenAI-compatible
+server** instead — they all speak the same `/v1/chat/completions` contract, so a single
+"server address + model name" is all Klipzy needs:
 
-| Edition | Branch | Release tag | LLM backend |
-|---------|--------|-------------|-------------|
-| **Klipzy Studio** (flagship) | `main` | `vX.Y.Z` | Built-in **Ollama** — zero config, fully local |
-| **Klipzy Studio — OpenAI-compatible** | `main-openai` | `vX.Y.Z-openai` | Any **OpenAI-compatible endpoint**: `whisper.cpp` / `llama-server`, LM Studio, or a cloud API |
+| Server | Typical address |
+|---|---|
+| **LM Studio** | `http://localhost:1234/v1` |
+| **llama.cpp** (`llama-server`) | `http://localhost:8080/v1` |
+| **vLLM** | `http://localhost:8000/v1` |
+| **Ollama's OpenAI route** | `http://localhost:11434/v1` |
+| Cloud endpoint | provider's base URL + an API key |
 
-The OpenAI-compatible edition drops the bundled Ollama dependency in favor of a single
-**"base URL + model name"** setting, so one integration covers `llama.cpp`'s `llama-server`,
-LM Studio, and remote endpoints alike. Ollama itself can still be used — just point the base
-URL at its OpenAI-compatible route.
+Set it in **Setup → AI engine**: pick *Custom (OpenAI-compatible)*, paste the address, and hit
+**Test connection** before saving. Reasoning models that reply via `reasoning_content` are
+handled too.
 
-> Both editions stay **local-first by default.** The OpenAI-compatible edition only reaches the
-> network if *you* configure a remote endpoint; point it at a local server and nothing leaves
-> your machine.
-
-**Which should I use?**
-- Want it to just work with no extra setup → **flagship** (`main`).
-- Already run `llama-server` / LM Studio, want a lighter install, or want to route to your own
-  cloud endpoint → **OpenAI-compatible** (`main-openai`).
-
-Downloads for each are published as separate, clearly labeled GitHub Releases.
+> **Still local-first.** Nothing leaves your machine unless *you* deliberately enter a cloud
+> address. Every AI feature also degrades to offline heuristics when no engine is reachable, so
+> the app never hard-fails because a model is down.
 
 ---
 

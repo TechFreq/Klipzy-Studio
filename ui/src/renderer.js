@@ -2400,6 +2400,113 @@ function updateClipsSummary() {
 }
 
 // ------------------------------------------------------------------
+// AI engine (LLM backend): built-in Ollama, or any OpenAI-compatible server.
+// One endpoint covers llama.cpp/LM Studio/vLLM/cloud because they share the
+// /v1/chat/completions contract — hence a setting, not a separate build.
+// ------------------------------------------------------------------
+function llmSelectedBackend() {
+  return document.getElementById('llm-backend-openai')?.checked ? 'openai' : 'ollama';
+}
+
+function syncLlmFieldsVisibility() {
+  const custom = llmSelectedBackend() === 'openai';
+  document.getElementById('llm-custom-fields')?.classList.toggle('hidden', !custom);
+}
+
+function llmFormValues() {
+  return {
+    backend: llmSelectedBackend(),
+    base_url: document.getElementById('llm-base-url')?.value?.trim() || '',
+    model: document.getElementById('llm-model-name')?.value?.trim() || '',
+    api_key: document.getElementById('llm-api-key')?.value || '',
+  };
+}
+
+function setLlmStatus(text, kind) {
+  const el = document.getElementById('llm-backend-status');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.remove('status-ok', 'status-bad');
+  if (kind) el.classList.add(kind === 'ok' ? 'status-ok' : 'status-bad');
+}
+
+async function loadLlmEndpoint() {
+  try {
+    const res = await fetch(`${serverUrl}/api/setup/llm-endpoint`);
+    if (!res.ok) throw new Error('unavailable');
+    const d = await res.json();
+    const isCustom = d.backend === 'openai';
+    const radio = document.getElementById(isCustom ? 'llm-backend-openai' : 'llm-backend-ollama');
+    if (radio) radio.checked = true;
+    const url = document.getElementById('llm-base-url');
+    if (url) url.value = d.base_url || '';
+    const model = document.getElementById('llm-model-name');
+    if (model) model.value = d.model || '';
+    const key = document.getElementById('llm-api-key');
+    // The key is never returned; show a placeholder when one is stored.
+    if (key) key.placeholder = d.api_key_set ? '•••••••• (saved)' : 'Leave blank for local servers';
+    syncLlmFieldsVisibility();
+    const name = isCustom ? (d.base_url || 'custom endpoint') : 'Ollama (built-in)';
+    setLlmStatus(d.available ? `✅ Reachable — ${name}` : `⚠️ Not reachable — ${name}`,
+      d.available ? 'ok' : 'bad');
+  } catch (_) {
+    setLlmStatus('Could not read AI engine settings', 'bad');
+  }
+}
+
+(function wireLlmBackendControls() {
+  ['llm-backend-ollama', 'llm-backend-openai'].forEach((id) => {
+    document.getElementById(id)?.addEventListener('change', syncLlmFieldsVisibility);
+  });
+
+  document.getElementById('llm-test-btn')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    setBtnBusy(btn, '⏳ Testing…');
+    setLlmStatus('Testing…');
+    try {
+      const res = await fetch(`${serverUrl}/api/setup/llm-test`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(llmFormValues()),
+      });
+      const d = await res.json();
+      if (d.ok) {
+        setLlmStatus(`✅ Works — replied "${(d.reply || '').slice(0, 40)}"`, 'ok');
+        showToast('✅ AI engine reachable', 'success');
+      } else {
+        setLlmStatus(`❌ ${d.error || d.detail || 'Test failed'}`, 'bad');
+        showToast(`❌ ${d.error || d.detail || 'Test failed'}`, 'error');
+      }
+    } catch (err) {
+      setLlmStatus(`❌ ${err.message}`, 'bad');
+    } finally {
+      setBtnIdle(btn);
+    }
+  });
+
+  document.getElementById('llm-save-btn')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    setBtnBusy(btn, '⏳ Saving…');
+    try {
+      const res = await fetch(`${serverUrl}/api/setup/llm-endpoint`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(llmFormValues()),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.detail || 'Could not save');
+      playSuccessSound();
+      showToast('💾 AI engine saved — all AI features now use it', 'success');
+      const keyInput = document.getElementById('llm-api-key');
+      if (keyInput) keyInput.value = '';   // don't keep the secret in the DOM
+      loadLlmEndpoint();
+    } catch (err) {
+      showAlert(`Could not save AI engine: ${err.message}`);
+    } finally {
+      setBtnIdle(btn);
+    }
+  });
+})();
+
+// ------------------------------------------------------------------
 // Busy-state helpers for action buttons.
 //
 // These replace the old `const orig = btn.textContent` / restore pattern, which
@@ -3685,6 +3792,7 @@ async function loadSetupPanel() {
     bindInstallAll();
     bindClearCache();
     loadAiModels(data);
+    loadLlmEndpoint();
     renderModelCatalog();
     loadOptionalAddons();
   } catch (e) {

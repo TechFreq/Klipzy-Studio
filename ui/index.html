@@ -1064,6 +1064,52 @@
           </div>
           <p class="muted small" id="ai-models-note">Whisper size applies to the next clipping run. The LLM model is used by AI Edit Chat, LLM highlight discovery, and the optional AI hook rewrite.</p>
 
+          <!-- AI backend: built-in Ollama, or any OpenAI-compatible server -->
+          <div class="card-head-row" style="margin-top:18px;">
+            <h3>🔌 AI engine</h3>
+            <span class="muted small">Use the built-in Ollama, or point Klipzy at your own AI server</span>
+          </div>
+          <div class="llm-backend-block">
+            <div class="llm-backend-choices">
+              <label class="toggle" title="Klipzy talks to Ollama running on this machine. Simplest option — nothing to configure.">
+                <input type="radio" name="llm-backend" id="llm-backend-ollama" value="ollama" checked />
+                <span>🏠 Built-in (Ollama)</span>
+              </label>
+              <label class="toggle" title="Any server that speaks the OpenAI API: llama.cpp llama-server, LM Studio, vLLM, or a cloud endpoint. They all share the same /v1/chat/completions format, so one address is all Klipzy needs.">
+                <input type="radio" name="llm-backend" id="llm-backend-openai" value="openai" />
+                <span>🌐 Custom (OpenAI-compatible)</span>
+              </label>
+            </div>
+
+            <div id="llm-custom-fields" class="llm-custom-fields hidden">
+              <label class="option">
+                <span>Server address
+                  <span class="help-hint" title="The base URL of your AI server. Examples:&#10;• LM Studio → http://localhost:1234/v1&#10;• llama.cpp llama-server → http://localhost:8080/v1&#10;• Ollama's OpenAI route → http://localhost:11434/v1&#10;You can paste it with or without the /v1 — Klipzy sorts it out.">ⓘ</span>
+                </span>
+                <input type="text" id="llm-base-url" placeholder="http://localhost:1234/v1" spellcheck="false" />
+              </label>
+              <label class="option">
+                <span>Model name
+                  <span class="help-hint" title="Whatever your server calls the model. LM Studio and llama-server show this in their UI; leave blank to use the server's default.">ⓘ</span>
+                </span>
+                <input type="text" id="llm-model-name" placeholder="e.g. qwen2.5-7b-instruct" spellcheck="false" />
+              </label>
+              <label class="option">
+                <span>API key <span class="muted small">(optional)</span>
+                  <span class="help-hint" title="Only needed for servers that require auth, such as a cloud endpoint. Local servers usually need nothing. Stored locally and never displayed again.">ⓘ</span>
+                </span>
+                <input type="password" id="llm-api-key" placeholder="Leave blank for local servers" spellcheck="false" />
+              </label>
+            </div>
+
+            <div class="llm-backend-actions">
+              <button class="btn btn-secondary btn-small" id="llm-test-btn">🔍 Test connection</button>
+              <button class="btn btn-primary btn-small" id="llm-save-btn">💾 Save AI engine</button>
+              <span class="muted small" id="llm-backend-status">Checking…</span>
+            </div>
+            <p class="muted small">Everything stays local unless you deliberately point this at a cloud address. Ollama remains the default, and every AI feature falls back to offline heuristics if no engine is reachable.</p>
+          </div>
+
           <div class="model-catalog-head card-head-row" style="margin-top:18px;">
             <h3>🧠 Local AI model catalog</h3>
             <span class="muted small">Download bigger models for sharper hooks — pick to match your hardware</span>

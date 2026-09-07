@@ -39,10 +39,7 @@ def translate_lines(lines: List[str], target_lang: str, model: str) -> List[str]
     preserving count/order. Returns the originals unchanged on any failure."""
     if not lines:
         return []
-    try:
-        import ollama
-    except Exception:
-        return list(lines)
+    from server.core import llm_client
 
     out: List[str] = [None] * len(lines)
     # Batch to keep prompts small and numbering reliable.
@@ -58,8 +55,7 @@ def translate_lines(lines: List[str], target_lang: str, model: str) -> List[str]
             f"{numbered}"
         )
         try:
-            resp = ollama.chat(model=model, messages=[{"role": "user", "content": prompt}])
-            content = (resp.get("message", {}) or {}).get("content", "") or ""
+            content = llm_client.chat([{"role": "user", "content": prompt}], model=model)
         except Exception:
             content = ""
         parsed: Dict[int, str] = {}

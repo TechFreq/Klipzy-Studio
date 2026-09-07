@@ -67,14 +67,11 @@ def generate_clip_copy_llm(
     )
 
     try:
-        import ollama
+        from server.core import llm_client
 
-        resp = ollama.chat(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            format="json",
+        content = llm_client.chat(
+            [{"role": "user", "content": prompt}], json_mode=True, model=model,
         )
-        content = (resp.get("message", {}) or {}).get("content", "") or ""
         data = json.loads(content)
     except Exception:
         return None
@@ -148,10 +145,9 @@ def generate_hooks_llm(
     )
 
     try:
-        import ollama
+        from server.core import llm_client
 
-        resp = ollama.chat(model=model, messages=[{"role": "user", "content": prompt}])
-        content = (resp.get("message", {}) or {}).get("content", "") or ""
+        content = llm_client.chat([{"role": "user", "content": prompt}], model=model)
     except Exception:
         return []
 

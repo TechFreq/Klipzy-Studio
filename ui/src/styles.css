@@ -1199,6 +1199,42 @@ body {
   overflow: hidden;
 }
 
+/* AI engine (LLM backend) picker */
+.llm-backend-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  margin-top: 8px;
+}
+.llm-backend-choices { display: flex; gap: 14px; flex-wrap: wrap; }
+.llm-custom-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.llm-custom-fields.hidden { display: none; }
+.llm-backend-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#llm-backend-status.status-ok { color: #22c55e; }
+#llm-backend-status.status-bad { color: #f59e0b; }
+/* Small ⓘ affordance whose tooltip carries the setup guidance. */
+.help-hint {
+  display: inline-block;
+  margin-left: 4px;
+  width: 15px; height: 15px; line-height: 15px;
+  text-align: center;
+  font-size: 11px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  cursor: help;
+}
+.help-hint:hover { color: var(--text); }
+
 /* Pick Frame (thumbnail chooser) */
 .thumb-candidates {
   display: grid;

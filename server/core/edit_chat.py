@@ -29,14 +29,17 @@ Be concise, practical, and creative. You only know about the current clip contex
         user_content = f"Current clip context: {context}\n\nUser message: {message}"
 
         try:
-            import ollama
+            from server.core import llm_client
 
             messages = [{"role": "system", "content": system_prompt}]
             messages.extend(history)
             messages.append({"role": "user", "content": user_content})
 
-            response = ollama.chat(model=self.model, messages=messages)
-            return ChatResponse(reply=response["message"]["content"], source="ollama")
+            reply = llm_client.chat(messages, model=self.model)
+            if not reply:
+                raise RuntimeError("empty reply")
+            # Report which backend answered so the UI can be honest about it.
+            return ChatResponse(reply=reply, source=llm_client.load_config()["backend"])
         except Exception:
             # Smart fallback - rule-based editing advice
             return ChatResponse(reply=self._fallback_reply(message, context), source="fallback")

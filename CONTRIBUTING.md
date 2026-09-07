@@ -101,29 +101,25 @@ GPU, network, or Ollama running).
 
 ## Branch & PR flow
 
-Klipzy Studio maintains **two release channels** (see the README's *Editions & Release Channels*):
+**One app, one release line.** There is no separate "OpenAI edition": the LLM backend is a
+runtime setting (`server/core/llm_client.py` + Setup → AI engine), so Ollama and any
+OpenAI-compatible server are the same build.
 
-- `main` — the flagship edition (built-in Ollama).
-- `main-openai` — the OpenAI-compatible edition (whisper.cpp / `llama-server` / LM Studio / cloud
-  via a single "base URL + model" setting).
-- `develop` — active development for the flagship line; stabilized here before merging to `main`.
+- `main` — released code.
+- `develop` — active development; stabilized here before merging to `main`.
+- `feature/*` — in-progress work branched off `develop`.
 
-**Where to target your PR:**
-
-- **General fixes / features** (captions, rendering, UI, pipeline) → branch off `develop`, e.g.
-  `feat/url-import`, `fix/intro-hook-timing`. These land on `develop` → `main`, and are periodically
-  carried into `main-openai` too.
-- **OpenAI-compatible / de-Ollama work** → branch off `feature/whisper-openai-compat` (the
-  integration branch for that edition). Once proven, it merges into `main-openai` and ships as a
-  `-openai` release. Keep the LLM backend behind the same "base URL + model" abstraction rather than
-  hardcoding a single provider.
+**Adding an AI backend?** Don't add a call site. `llm_client.chat()` is the single seam every
+AI feature goes through (`llm_detector`, `hook_writer`, `edit_chat`, `translator`); extend that
+rather than importing a provider SDK somewhere new, and keep the graceful fallback so features
+still work when no engine is reachable.
 
 Then:
 
 - Keep commits focused; write a clear message describing the *why*, not just the *what*.
 - Make sure `pytest`, `node --check`, and `py_compile` all pass locally.
-- Open a PR describing the change, **which edition/branch it targets**, how you tested it, and any
-  platform caveats (Windows/macOS/Linux, GPU vs CPU).
+- Open a PR describing the change, how you tested it, and any platform caveats
+  (Windows/macOS/Linux, GPU vs CPU, vertical vs landscape footage).
 - Don't commit generated artifacts or secrets (see below).
 
 ---

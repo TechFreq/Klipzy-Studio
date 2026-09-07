@@ -199,6 +199,33 @@ def _resolve_startup_ollama_model() -> str:
 PREFERRED_OLLAMA_MODEL = _resolve_startup_ollama_model()
 
 
+def _active_llm_model() -> str:
+    """The model name to report/use for the CURRENT backend.
+
+    A custom OpenAI-compatible server names its models its own way, so the
+    configured value wins there; the built-in Ollama backend keeps using the
+    model picked in Setup.
+    """
+    try:
+        from server.core import llm_client
+        cfg = llm_client.load_config()
+        if cfg["backend"] == llm_client.BACKEND_OPENAI:
+            return cfg.get("model") or "local-model"
+    except Exception:
+        pass
+    return PREFERRED_OLLAMA_MODEL
+
+
+def _llm_available() -> bool:
+    """Is the configured LLM backend reachable? Backend-aware, so a remote
+    endpoint isn't judged by whether localhost:11434 happens to be up."""
+    try:
+        from server.core import llm_client
+        return llm_client.is_available()
+    except Exception:
+        return False
+
+
 def _ensure_output_root():
     """Return the current runtime output folder, creating it if missing."""
     global OUTPUT_ROOT
@@ -487,7 +514,7 @@ def list_jobs():
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
-    CHAT.model = PREFERRED_OLLAMA_MODEL  # honor the model chosen in Setup
+    CHAT.model = _active_llm_model()  # honor the backend + model chosen in Setup
     return CHAT.chat(
         message=req.message,
         conversation_history=req.conversation_history,
@@ -1131,12 +1158,17 @@ def api_translate_captions(req: TranslateCaptionsRequest):
     from server.core import system_check as sc
     if not os.path.isfile(req.srt_path):
         raise HTTPException(status_code=400, detail=f"Subtitle file not found: {req.srt_path}")
-    if not sc.detect_ollama().get("running"):
-        raise HTTPException(status_code=400, detail="Ollama isn't running — start it to translate captions.")
+    if not _llm_available():
+        raise HTTPException(
+            status_code=400,
+            detail="No AI model is reachable — start Ollama, or configure an "
+                   "OpenAI-compatible endpoint in Setup, to translate captions.",
+        )
     from server.core.translator import translate_srt_file
+    model = _active_llm_model()
     try:
-        result = translate_srt_file(req.srt_path, req.target_lang, PREFERRED_OLLAMA_MODEL, req.output_dir)
-        result["model"] = PREFERRED_OLLAMA_MODEL
+        result = translate_srt_file(req.srt_path, req.target_lang, model, req.output_dir)
+        result["model"] = model
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1625,16 +1657,18 @@ def rewrite_hook(req: RewriteHookRequest):
     count = max(1, min(int(req.count or 6), 10))
     heuristic = rank_hook_candidates(text, count)
 
-    running = bool(sc.detect_ollama().get("running"))
-    if not running:
+    model = _active_llm_model()
+    if not _llm_available():
+        # `ollama_running` is kept for UI back-compat; it now means "the active
+        # AI backend is reachable", whichever backend that is.
         return {"used_ai": False, "ollama_running": False, "model": None, "hooks": heuristic}
 
     from server.core.hook_writer import generate_hooks_llm
-    ai_hooks = generate_hooks_llm(text, req.current_hook, count, PREFERRED_OLLAMA_MODEL, req.preset)
+    ai_hooks = generate_hooks_llm(text, req.current_hook, count, model, req.preset)
     if ai_hooks:
-        return {"used_ai": True, "ollama_running": True, "model": PREFERRED_OLLAMA_MODEL, "hooks": ai_hooks}
-    # Ollama is up but returned nothing usable — fall back rather than error.
-    return {"used_ai": False, "ollama_running": True, "model": PREFERRED_OLLAMA_MODEL, "hooks": heuristic}
+        return {"used_ai": True, "ollama_running": True, "model": model, "hooks": ai_hooks}
+    # Backend is up but returned nothing usable — fall back rather than error.
+    return {"used_ai": False, "ollama_running": True, "model": model, "hooks": heuristic}
 
 
 class RewriteCopyRequest(BaseModel):
@@ -1667,23 +1701,23 @@ def rewrite_copy(req: RewriteCopyRequest):
         "description": "",
     }
 
-    running = bool(sc.detect_ollama().get("running"))
-    if not running:
+    model = _active_llm_model()
+    if not _llm_available():
         return {"used_ai": False, "ollama_running": False, "model": None, **fallback}
 
     from server.core.hook_writer import generate_clip_copy_llm
-    copy = generate_clip_copy_llm(text, current_hook=req.current_hook, model=PREFERRED_OLLAMA_MODEL)
+    copy = generate_clip_copy_llm(text, current_hook=req.current_hook, model=model)
     if copy:
         return {
             "used_ai": True,
             "ollama_running": True,
-            "model": PREFERRED_OLLAMA_MODEL,
+            "model": model,
             "hook": copy.get("hook") or fallback["hook"],
             "title": copy.get("title") or fallback["title"],
             "description": copy.get("description") or "",
         }
-    # Ollama up but returned nothing usable — fall back rather than error.
-    return {"used_ai": False, "ollama_running": True, "model": PREFERRED_OLLAMA_MODEL, **fallback}
+    # Backend up but returned nothing usable — fall back rather than error.
+    return {"used_ai": False, "ollama_running": True, "model": model, **fallback}
 
 
 @app.post("/tools/suggest-emojis", response_model=EmojiSuggestResponse)
@@ -2224,6 +2258,84 @@ def set_ai_model(req: AIModelRequest):
         _save_preferred_model(model)  # remember it across restarts
         return {"ok": True, "ollama": PREFERRED_OLLAMA_MODEL}
     raise HTTPException(status_code=400, detail=f"Unknown model kind: {req.kind}")
+
+
+class LlmEndpointRequest(BaseModel):
+    backend: str = "ollama"          # "ollama" | "openai"
+    base_url: str = ""               # e.g. http://localhost:1234/v1
+    api_key: str = ""                # optional; only for endpoints that need it
+    model: str = ""                  # model name as the endpoint calls it
+
+
+@app.get("/api/setup/llm-endpoint")
+def get_llm_endpoint():
+    """Active AI backend settings. Never returns the API key, only whether it's set."""
+    from server.core import llm_client
+    return llm_client.describe()
+
+
+@app.post("/api/setup/llm-endpoint")
+def set_llm_endpoint(req: LlmEndpointRequest):
+    """Point the app's AI features at the built-in Ollama or ANY OpenAI-compatible
+    server (llama.cpp llama-server, LM Studio, vLLM, a cloud endpoint...).
+
+    One setting covers all of them because they share the /v1/chat/completions
+    contract — which is why this is a config option rather than a separate build.
+    """
+    from server.core import llm_client
+    try:
+        llm_client.save_config(
+            backend=req.backend, base_url=req.base_url,
+            api_key=req.api_key, model=req.model,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Could not save AI backend settings: {e}")
+    return llm_client.describe()
+
+
+@app.post("/api/setup/llm-test")
+def test_llm_endpoint(req: LlmEndpointRequest):
+    """Try the supplied settings WITHOUT saving them, so the user can verify a
+    server before committing to it. Returns the model's own reply on success."""
+    from server.core import llm_client
+
+    backend = (req.backend or "ollama").strip().lower()
+    if backend == llm_client.BACKEND_OPENAI:
+        base = llm_client.normalize_base_url(req.base_url)
+        if not base:
+            raise HTTPException(status_code=400, detail="A server address is required")
+        cfg = {"backend": backend, "base_url": base,
+               "api_key": (req.api_key or "").strip(), "model": (req.model or "").strip()}
+        if not llm_client.is_available(cfg):
+            return {"ok": False, "backend": backend, "base_url": base,
+                    "error": "Nothing answered at that address. Is the server running?"}
+        try:
+            reply = llm_client._chat_openai(
+                cfg, [{"role": "user", "content": "Reply with the single word: ready"}],
+                json_mode=False, model=cfg["model"] or None, timeout=30.0,
+            )
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "backend": backend, "base_url": base, "error": str(e)}
+        return {"ok": True, "backend": backend, "base_url": base,
+                "model": cfg["model"] or "(server default)", "reply": (reply or "")[:200]}
+
+    # Built-in Ollama
+    from server.core import system_check as sc
+    info = sc.detect_ollama()
+    if not info.get("running"):
+        return {"ok": False, "backend": "ollama",
+                "error": "Ollama isn't running. Start it, then test again."}
+    model = (req.model or "").strip() or PREFERRED_OLLAMA_MODEL
+    try:
+        reply = llm_client._chat_ollama(
+            [{"role": "user", "content": "Reply with the single word: ready"}],
+            json_mode=False, model=model,
+        )
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "backend": "ollama", "model": model, "error": str(e)}
+    return {"ok": True, "backend": "ollama", "model": model, "reply": (reply or "")[:200]}
 
 
 @app.post("/api/setup/clear-cache")
