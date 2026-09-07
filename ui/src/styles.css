@@ -746,11 +746,26 @@ body {
   border-radius: 12px;
   width: 90%;
   max-width: 650px;
-  max-height: 80vh;
+  max-height: 90vh;
   display: flex;
   flex-direction: column;
   padding: 24px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  /* Cap to the viewport with a small gutter so a short window never pushes the
+     modal (or its footer) off-screen. */
+  overflow: hidden;
+}
+
+/* The body takes the remaining height and scrolls internally, so the header
+   stays pinned and the bottom controls (style + Save) are always reachable
+   no matter how short the window gets. min-height:0 is required for a flex
+   child to shrink below its content and enable scrolling. */
+.modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* room so the last control isn't flush against the scroll edge */
+  padding-right: 4px;
 }
 .dialog-modal-content {
   max-width: 440px;
@@ -1054,6 +1069,14 @@ body {
   gap: 12px;
   margin-top: 16px;
   flex-wrap: wrap;
+  /* Keep the Style picker + Save button pinned to the bottom of the scrolling
+     modal body so the primary action never scrolls out of reach. */
+  position: sticky;
+  bottom: 0;
+  background: var(--surface);
+  padding: 12px 0 2px;
+  border-top: 1px solid var(--border);
+  z-index: 1;
 }
 .caption-style-bar label {
   display: flex;
