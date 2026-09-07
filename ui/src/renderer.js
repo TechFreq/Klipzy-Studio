@@ -2399,6 +2399,47 @@ function updateClipsSummary() {
   summary.textContent = `✅ ${n} clip${n === 1 ? '' : 's'} ready to export · ${Math.round(totalSecs)}s total · drag to reorder the reel`;
 }
 
+// ------------------------------------------------------------------
+// Busy-state helpers for action buttons.
+//
+// These replace the old `const orig = btn.textContent` / restore pattern, which
+// could permanently strand a button on its busy label: if the label was read
+// while the button was ALREADY busy (a second invocation, or a run whose
+// restore never happened), the busy text became the "original" and got restored
+// forever — e.g. a card stuck reading "⏳ Re-rendering…". Stashing the idle
+// label in a data attribute and only ever capturing it once makes that
+// impossible, and setBtnIdle is safe to call any number of times.
+// ------------------------------------------------------------------
+function setBtnBusy(btn, busyLabel) {
+  if (!btn) return;
+  if (btn.dataset.idleLabel === undefined) btn.dataset.idleLabel = btn.textContent;
+  btn.disabled = true;
+  if (busyLabel) btn.textContent = busyLabel;
+}
+
+// The FIRST local-LLM call of a session pays a cold start: Ollama has to load
+// the model into memory before it can generate, which can take tens of seconds
+// on a big model. Later calls hit the resident model and feel instant. Say this
+// once so the first wait doesn't look like a hang.
+let aiColdStartNoted = false;
+function noteAiColdStart() {
+  if (aiColdStartNoted) return;
+  aiColdStartNoted = true;
+  showToast('⏳ First AI request loads the local model into memory — this one is slow, the rest are fast.', 'info');
+}
+
+function setBtnIdle(btn, fallbackLabel) {
+  if (!btn) return;
+  btn.disabled = false;
+  const idle = btn.dataset.idleLabel;
+  if (idle !== undefined) {
+    btn.textContent = idle;
+    delete btn.dataset.idleLabel;
+  } else if (fallbackLabel) {
+    btn.textContent = fallbackLabel;
+  }
+}
+
 function copyClipHook(idx) {
   const clip = generatedClips[idx];
   if (!clip) return;
@@ -2481,8 +2522,7 @@ document.getElementById('thumb-download')?.addEventListener('click', async () =>
   const folder = await chooseExportFolder();
   if (!folder) return;
   const btn = document.getElementById('thumb-download');
-  const orig = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Saving…'; }
+  setBtnBusy(btn, '⏳ Saving…');
   try {
     const res = await fetch(`${serverUrl}/export/thumbnail-save`, {
       method: 'POST',
@@ -2506,7 +2546,7 @@ document.getElementById('thumb-download')?.addEventListener('click', async () =>
   } catch (e) {
     showAlert(`Error: ${e.message}`);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = orig; }
+    setBtnIdle(btn);
   }
 });
 
@@ -3265,6 +3305,7 @@ async function showHookVariants() {
   const btn = document.getElementById('hook-variants-btn');
   if (!box) return;
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating…'; }
+  noteAiColdStart();
   let hooks = [];
   let usedAi = false;
   try {
@@ -3307,6 +3348,7 @@ document.getElementById('ai-rewrite-hook-btn')?.addEventListener('click', async 
   const titleInput = document.getElementById('edit-clip-title');
   const btn = document.getElementById('ai-rewrite-hook-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Rewriting…'; }
+  noteAiColdStart();
   try {
     // Full copywriter pass: regenerate the hook AND the title (and a description)
     // together, so clicking "AI rewrite" visibly refreshes both fields.
@@ -4644,8 +4686,10 @@ async function quickRerollHook(idx, btn) {
     newHook = clip._hookCandidates[clip._hookIdx];
   }
 
-  const orig = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Re-rendering…'; }
+  setBtnBusy(btn, '⏳ Re-rendering…');
+  // Re-rendering burns captions with ffmpeg, so it can run a while on long
+  // clips — say so, otherwise the button just looks hung.
+  showToast('⏳ Re-rendering this clip with the new hook…', 'info');
 
   const words = (clip.words && clip.words.length)
     ? clip.words
@@ -4701,7 +4745,7 @@ async function quickRerollHook(idx, btn) {
   } catch (e) {
     showAlert(`Error: ${e.message}`);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = orig; }
+    setBtnIdle(btn);
   }
 }
 
@@ -4714,8 +4758,8 @@ async function quickRemoveHook(idx, btn) {
     showToast('This clip has no intro hook to remove', 'info');
     return;
   }
-  const orig = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Re-rendering…'; }
+  setBtnBusy(btn, '⏳ Re-rendering…');
+  showToast('⏳ Re-rendering this clip without the hook…', 'info');
 
   const words = (clip.words && clip.words.length)
     ? clip.words
@@ -4766,7 +4810,7 @@ async function quickRemoveHook(idx, btn) {
   } catch (e) {
     showAlert(`Error: ${e.message}`);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = orig; }
+    setBtnIdle(btn);
   }
 }
 
@@ -4774,8 +4818,7 @@ async function quickRemoveHook(idx, btn) {
 async function quickRemoveFillers(idx, btn) {
   const clip = generatedClips[idx];
   if (!clip || !clip.output_file) { showAlert('No rendered clip yet.'); return; }
-  const orig = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Cutting…'; }
+  setBtnBusy(btn, '⏳ Cutting…');
   try {
     const aggressive = !!document.getElementById('filler-aggressive')?.checked;
     const res = await fetch(`${serverUrl}/tools/remove-fillers`, {
@@ -4805,7 +4848,7 @@ async function quickRemoveFillers(idx, btn) {
   } catch (e) {
     showAlert(`Error: ${e.message}`);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = orig; }
+    setBtnIdle(btn);
   }
 }
 
@@ -4836,8 +4879,7 @@ document.getElementById('translate-go')?.addEventListener('click', async () => {
   if (!lang) { showToast('Pick or type a language', 'info'); return; }
   const burn = !!document.getElementById('translate-burn')?.checked;
   const btn = document.getElementById('translate-go');
-  const orig = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = burn ? '⏳ Translating + rendering…' : '⏳ Translating…'; }
+  setBtnBusy(btn, burn ? '⏳ Translating + rendering…' : '⏳ Translating…');
   try {
     const body = { srt_path: translateClip.srt_path, target_lang: lang };
     if (burn) {
@@ -4869,7 +4911,7 @@ document.getElementById('translate-go')?.addEventListener('click', async () => {
   } catch (e) {
     showAlert(`Error: ${e.message}`);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = orig; }
+    setBtnIdle(btn);
   }
 });
 
@@ -4894,8 +4936,7 @@ async function detectSpeakers(idx, btn) {
     'Speaker-labeled captions',
   );
 
-  const orig = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Analyzing…'; }
+  setBtnBusy(btn, '⏳ Analyzing…');
   try {
     const captionOpts = collectCaptionOptions();
     const outputPath = clip.ass_path ? clip.ass_path.replace(/\.ass$/i, '.srt') : `${clip.output_file}.srt`;
@@ -4947,7 +4988,7 @@ async function detectSpeakers(idx, btn) {
   } catch (e) {
     showAlert(`Error: ${e.message}`);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = orig; }
+    setBtnIdle(btn);
   }
 }
 
@@ -5064,8 +5105,7 @@ async function runMultiAspectExport(ratios, btn) {
   if (!multiAspectClip || !ratios || !ratios.length) return;
   const exportFolder = await chooseExportFolder(multiAspectClip);
   if (!exportFolder) return;   // cancelled the folder picker
-  const orig = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Rendering…'; }
+  setBtnBusy(btn, '⏳ Rendering…');
   try {
     const res = await fetch(`${serverUrl}/export/multi-aspect`, {
       method: 'POST',
@@ -5097,7 +5137,7 @@ async function runMultiAspectExport(ratios, btn) {
     playErrorSound();
     showAlert(`Error: ${err.message}`);
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = orig; }
+    setBtnIdle(btn);
   }
 }
 
