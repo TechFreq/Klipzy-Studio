@@ -342,44 +342,23 @@ def build_filter_chain(
                 f"[0:v][cf]overlay={x}:{y}:eof_action=repeat[v]"
             )
             filters.append(base_chain)
-    elif aspect_ratio == "9:16":
+    elif aspect_ratio in CROP_RATIOS:
+        # One orientation-safe crop for every crop ratio. The x window follows
+        # the active speaker when a trajectory expression / offset is supplied
+        # (single-quoted so its commas aren't read as filtergraph separators).
+        num, den = CROP_RATIOS[aspect_ratio]
         if crop_x_expr:
-            # Dynamic active-speaker crop: x follows a time expression (single-
-            # quoted so its commas aren't read as filtergraph separators).
-            filters.append(f"[0:v]crop=ih*9/16:ih:'{crop_x_expr}':0[v]")
+            x_expr = crop_x_expr
         elif crop_x_offset is not None:
-            filters.append(f"[0:v]crop=ih*9/16:ih:{crop_x_offset}:0[v]")
+            x_expr = f"{crop_x_offset}"
         else:
-            filters.append("[0:v]crop=ih*9/16:ih:(iw-ow)/2:0[v]")
-    elif aspect_ratio == "1:1":
-        if crop_x_expr:
-            filters.append(f"[0:v]crop=min(iw\\,ih):min(iw\\,ih):'{crop_x_expr}':(ih-oh)/2[v]")
-        elif crop_x_offset is not None:
-            filters.append(f"[0:v]crop=min(iw\\,ih):min(iw\\,ih):{crop_x_offset}:(ih-oh)/2[v]")
-        else:
-            filters.append("[0:v]crop=min(iw\\,ih):min(iw\\,ih):(iw-ow)/2:(ih-oh)/2[v]")
-    elif aspect_ratio == "4:5":
-        if crop_x_expr:
-            filters.append(f"[0:v]crop=ih*4/5:ih:'{crop_x_expr}':0[v]")
-        elif crop_x_offset is not None:
-            filters.append(f"[0:v]crop=ih*4/5:ih:{crop_x_offset}:0[v]")
-        else:
-            filters.append("[0:v]crop=ih*4/5:ih:(iw-ow)/2:0[v]")
-    elif aspect_ratio == "16:9":
-        # Landscape for YouTube - fit the largest 16:9 window inside the frame.
-        if crop_x_offset is not None:
-            filters.append(
-                f"[0:v]scale=w=min(iw\\,ih*16/9):h=min(ih\\,iw*9/16):"
-                f"force_original_aspect_ratio=decrease,crop=trunc(iw/2)*2:trunc(ih/2)*2,"
-                f"setsar=1,pad=w=trunc(iw/2)*2:h=trunc(ih/2)*2:x={crop_x_offset}:y=0,"
-                f"scale=trunc(iw/2)*2:trunc(ih/2)*2[v]"
-            )
-        else:
-            filters.append(
-                "[0:v]scale=w=min(iw\\,ih*16/9):h=min(ih\\,iw*9/16):"
-                "force_original_aspect_ratio=decrease,crop=trunc(iw/2)*2:trunc(ih/2)*2,"
-                "setsar=1[v]"
-            )
+            x_expr = None
+        filters.append(f"[0:v]{build_crop_expr(num, den, x_expr)}[v]")
+    elif aspect_ratio in LETTERBOX_RATIOS:
+        # Landscape delivery: fit the WHOLE frame and pad the leftover space, so
+        # vertical footage keeps its subject instead of being cropped to a strip.
+        num, den = LETTERBOX_RATIOS[aspect_ratio]
+        filters.append(f"[0:v]{build_letterbox_chain(num, den)}[v]")
 
     return filters
 
@@ -897,13 +876,55 @@ def extract_candidate_thumbnails(
     return out
 
 
-# Target width/height ratios for the export/preview aspect options.
-ASPECT_RATIOS: Dict[str, float] = {
-    "9:16": 9 / 16,
-    "4:5": 4 / 5,
-    "1:1": 1.0,
-    "16:9": 16 / 9,
+# Ratios delivered by CROPPING into the frame, as (width, height) parts.
+# 16:9 is deliberately absent: cropping vertical footage to landscape would
+# slice the subject's head off, so it letterboxes instead (see LETTERBOX_RATIOS).
+CROP_RATIOS: Dict[str, Tuple[int, int]] = {
+    "9:16": (9, 16),
+    "4:5": (4, 5),
+    "1:1": (1, 1),
 }
+
+# Ratios delivered by FITTING the whole frame and padding the leftover space.
+LETTERBOX_RATIOS: Dict[str, Tuple[int, int]] = {
+    "16:9": (16, 9),
+}
+
+ASPECT_RATIOS: Dict[str, float] = {
+    k: n / d for k, (n, d) in {**CROP_RATIOS, **LETTERBOX_RATIOS}.items()
+}
+
+
+def build_letterbox_chain(num: int = 16, den: int = 9, max_long_side: int = 1920) -> str:
+    """ffmpeg filter that pads any source out to an exact ``num:den`` canvas.
+
+    Used for landscape delivery: a vertical clip keeps its full height and gains
+    side bars (rather than being cropped), so nobody gets decapitated. The pad
+    target is derived from whichever source dimension is short for the target
+    ratio, then the result is scaled so its long side is at most
+    ``max_long_side`` — otherwise padding 1080x1920 out to 16:9 would produce a
+    needlessly huge 3413x1920 frame.
+    """
+    pad_w = f"max(iw\\,ih*{num}/{den})"
+    pad_h = f"max(ih\\,iw*{den}/{num})"
+    return (
+        f"pad=w={pad_w}:h={pad_h}:x=(ow-iw)/2:y=(oh-ih)/2:color=black,"
+        f"scale=w=trunc(min(iw\\,{max_long_side})/2)*2:h=-2,setsar=1"
+    )
+
+
+def build_crop_expr(num: int, den: int, x_expr: Optional[str] = None) -> str:
+    """ffmpeg ``crop`` for the largest ``num:den`` rectangle inside ANY source.
+
+    Both dimensions are bounded by the source (``min(...)``), which is the whole
+    point: the old ``crop=ih*4/5:ih`` asked for a 1536px-wide window from 1080px
+    footage, and ffmpeg failed the encode outright. ``x_expr`` (active-speaker
+    framing) is clamped so the window can never run off-frame.
+    """
+    w = f"trunc(min(iw\\,ih*{num}/{den})/2)*2"
+    h = f"trunc(min(ih\\,iw*{den}/{num})/2)*2"
+    x = f"min(max({x_expr}\\,0)\\,iw-ow)" if x_expr is not None else "(iw-ow)/2"
+    return f"crop={w}:{h}:{x}:(ih-oh)/2"
 
 
 def compute_crop_rect(
@@ -923,9 +944,10 @@ def compute_crop_rect(
     stay in frame; vertical placement is centred. Returns None when the source
     dimensions are unusable or the ratio is unknown.
     """
-    ratio = ASPECT_RATIOS.get(aspect_ratio)
-    if not ratio or src_w <= 0 or src_h <= 0:
+    parts = CROP_RATIOS.get(aspect_ratio)
+    if not parts or src_w <= 0 or src_h <= 0:
         return None
+    ratio = parts[0] / parts[1]
 
     if src_w / src_h > ratio:
         # Source is wider than the target -> height-limited.
@@ -963,16 +985,21 @@ def render_cropped_frame(
     # Compute a concrete integer crop rectangle from the real frame size so the
     # preview always crops correctly (expression-based crop was fragile on some
     # sources: it could leave the frame uncropped or fail on odd dimensions).
-    dims = probe_video_dims(source)
     vf = None
-    if dims:
-        src_w, src_h, _ = dims
-        rect = compute_crop_rect(src_w, src_h, aspect_ratio, crop_x_offset)
-        if rect:
-            cw, ch, x, y = rect
-            # A no-op crop (already exactly this ratio) needs no filter at all.
-            if not (cw == src_w and ch == src_h):
-                vf = f"crop={cw}:{ch}:{x}:{y}"
+    if aspect_ratio in LETTERBOX_RATIOS:
+        # Match the export exactly: landscape delivery pads, it doesn't crop.
+        num, den = LETTERBOX_RATIOS[aspect_ratio]
+        vf = build_letterbox_chain(num, den)
+    else:
+        dims = probe_video_dims(source)
+        if dims:
+            src_w, src_h, _ = dims
+            rect = compute_crop_rect(src_w, src_h, aspect_ratio, crop_x_offset)
+            if rect:
+                cw, ch, x, y = rect
+                # A no-op crop (already exactly this ratio) needs no filter.
+                if not (cw == src_w and ch == src_h):
+                    vf = f"crop={cw}:{ch}:{x}:{y}"
 
     cmd = ["ffmpeg", "-y", "-ss", str(max(0.0, timestamp)), "-i", source, "-vframes", "1"]
     if vf:

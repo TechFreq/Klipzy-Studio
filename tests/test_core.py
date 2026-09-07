@@ -278,16 +278,43 @@ def test_build_filter_chain_full_passthrough_is_empty():
 def test_build_filter_chain_vertical_crop():
     from server.core.ffmpeg_tools import build_filter_chain
     chain = build_filter_chain(layout="", aspect_ratio="9:16", has_cam=False)
-    assert len(chain) == 1 and "[0:v]crop=ih*9/16:ih:" in chain[0]
+    assert len(chain) == 1 and chain[0].startswith("[0:v]crop=")
+    # Both dimensions must be bounded by the source. `crop=ih*9/16:ih` asked for
+    # a window wider than vertical footage and ffmpeg failed the encode.
+    assert "min(iw" in chain[0] and "min(ih" in chain[0]
 
 
-def test_build_filter_chain_16x9_fit():
+def test_build_filter_chain_crop_ratios_are_source_bounded():
+    """Regression: every crop ratio must clamp to the source in BOTH axes, or
+    exporting that ratio from already-vertical footage dies in the encoder."""
+    from server.core.ffmpeg_tools import CROP_RATIOS, build_filter_chain
+
+    for ratio in CROP_RATIOS:
+        chain = build_filter_chain(layout="", aspect_ratio=ratio, has_cam=False)
+        assert len(chain) == 1, ratio
+        assert "min(iw" in chain[0] and "min(ih" in chain[0], ratio
+
+
+def test_build_filter_chain_16x9_letterboxes_instead_of_cropping():
+    """16:9 must FIT the whole frame and pad the remainder. Cropping to 16:9
+    turned a vertical clip into a strip (and previously output 340x606 — not
+    even 16:9), so landscape delivery pads instead."""
     from server.core.ffmpeg_tools import build_filter_chain
     chain = build_filter_chain(layout="full", aspect_ratio="16:9", has_cam=False)
     assert len(chain) == 1
-    # 16:9 must FIT (scale) rather than crop the frame.
-    assert "scale=w=min(iw" in chain[0]
-    assert "force_original_aspect_ratio=decrease" in chain[0]
+    assert "pad=w=max(iw" in chain[0]
+    assert "setsar=1" in chain[0]
+    assert "crop=" not in chain[0]
+
+
+def test_crop_expr_clamps_speaker_offset_in_frame():
+    """An active-speaker x offset must never push the window off the frame."""
+    from server.core.ffmpeg_tools import build_crop_expr
+
+    expr = build_crop_expr(9, 16, "1500")
+    assert "max(1500" in expr and "iw-ow" in expr
+    # No offset -> centred.
+    assert "(iw-ow)/2" in build_crop_expr(9, 16, None)
 
 
 def test_build_filter_chain_game_reaction_needs_cam():
@@ -765,8 +792,10 @@ def test_compute_crop_rect_noop_and_offsets():
     from server.core.ffmpeg_tools import compute_crop_rect
 
     # Source already matches the target -> full frame (caller skips the filter).
-    assert compute_crop_rect(1920, 1080, "16:9") == (1920, 1080, 0, 0)
     assert compute_crop_rect(1080, 1920, "9:16") == (1080, 1920, 0, 0)
+    assert compute_crop_rect(1080, 1080, "1:1") == (1080, 1080, 0, 0)
+    # 16:9 is NOT a crop ratio (it letterboxes), so it has no crop rectangle.
+    assert compute_crop_rect(1920, 1080, "16:9") is None
 
     # Active-speaker offset is honoured, but clamped to stay inside the frame.
     w, _h, x, _y = compute_crop_rect(1920, 1080, "9:16", crop_x_offset=400)
