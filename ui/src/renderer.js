@@ -4413,6 +4413,10 @@ function playErrorSound() {
 async function exportForPlatform(idx, platform, ratio, btnEl) {
   const clip = generatedClips[idx];
   if (!clip) return;
+  // Let the user choose where this platform export lands (matches the per-clip
+  // Export and the other export buttons).
+  const exportFolder = await chooseExportFolder();
+  if (!exportFolder) return;
   const original = btnEl ? btnEl.textContent : '';
   if (btnEl) { btnEl.disabled = true; btnEl.textContent = '⏳'; }
   showToast(`⏳ Exporting for ${platform} (${ratio})…`, 'info');
@@ -4429,6 +4433,7 @@ async function exportForPlatform(idx, platform, ratio, btnEl) {
         burn_captions: true,
         subtitle_path: clip.ass_path || clip.srt_path,
         aspect_ratios: [ratio],
+        output_dir: exportFolder,
       }),
     });
     const data = await res.json().catch(() => ({}));
