@@ -897,6 +897,49 @@ def extract_candidate_thumbnails(
     return out
 
 
+def render_cropped_frame(
+    source: str,
+    out_path: str,
+    timestamp: float,
+    aspect_ratio: str = "9:16",
+    crop_x_offset: Optional[float] = None,
+) -> str:
+    """Render a SINGLE still frame cropped to a target aspect ratio, using the
+    same crop math as build_filter_chain. Used for the multi-aspect preview so
+    the user sees the REAL framing (incl. active-speaker offset) before export."""
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    if not out_path.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+        out_path = f"{out_path}.jpg"
+
+    x = f"{crop_x_offset}" if crop_x_offset is not None else "(iw-ow)/2"
+    if aspect_ratio == "9:16":
+        vf = f"crop=ih*9/16:ih:{x}:0"
+    elif aspect_ratio == "4:5":
+        vf = f"crop=ih*4/5:ih:{x}:0"
+    elif aspect_ratio == "1:1":
+        vf = f"crop=min(iw\\,ih):min(iw\\,ih):{x}:(ih-oh)/2"
+    elif aspect_ratio == "16:9":
+        # Landscape letterbox-fit (no horizontal speaker crop).
+        vf = ("scale=w=min(iw\\,ih*16/9):h=min(ih\\,iw*9/16):"
+              "force_original_aspect_ratio=decrease,crop=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1")
+    else:
+        vf = "crop=ih*9/16:ih:(iw-ow)/2:0"
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(max(0.0, timestamp)),
+        "-i", source,
+        "-vframes", "1",
+        "-vf", vf,
+        "-q:v", "3",
+        out_path,
+    ]
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if res.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+        raise RuntimeError(f"Cropped frame render failed: {res.stderr[-300:]}")
+    return out_path
+
+
 def concat_clips(
     clip_paths: List[str],
     out_path: str,

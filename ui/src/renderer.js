@@ -4883,6 +4883,10 @@ let multiAspectClip = null;
 
 // Opens a preview-before-export modal (OpenClipper-style): shows the clip framed
 // in each aspect ratio, lets the user pick which to render, then choose a folder.
+// Active-speaker crop offsets computed by the preview, reused on export so the
+// rendered file matches exactly what the preview showed.
+let maCropOffsets = {};
+
 function exportMultiAspectPack(idx) {
   const clip = generatedClips[idx];
   if (!clip || !clip.output_file) {
@@ -4890,9 +4894,10 @@ function exportMultiAspectPack(idx) {
     return;
   }
   multiAspectClip = clip;
+  maCropOffsets = {};
   const wrap = document.getElementById('multi-aspect-previews');
   if (wrap) {
-    const src = fileUrl(clip.output_file);
+    const fallbackSrc = fileUrl(clip.output_file);
     wrap.innerHTML = MULTI_ASPECT_RATIOS.map(({ ratio, label, tag }) => `
       <div class="ma-card">
         <label class="ma-card-head">
@@ -4900,7 +4905,9 @@ function exportMultiAspectPack(idx) {
           <span class="ma-label">${label}</span>
         </label>
         <div class="ma-frame" style="aspect-ratio:${ratio.replace(':', ' / ')}">
-          <video src="${escapeHtml(src)}" muted playsinline preload="metadata"></video>
+          <div class="ma-loading" data-ratio="${ratio}">⏳</div>
+          <img class="ma-img" data-ratio="${ratio}" alt="${label} preview" hidden />
+          <video class="ma-fallback" data-ratio="${ratio}" src="${escapeHtml(fallbackSrc)}" muted playsinline preload="metadata" hidden></video>
         </div>
         <span class="muted small">${tag}</span>
         <button class="btn btn-small btn-secondary ma-export-one" data-ratio="${ratio}">⬇️ Export ${ratio}</button>
@@ -4909,8 +4916,42 @@ function exportMultiAspectPack(idx) {
     wrap.querySelectorAll('.ma-export-one').forEach((b) => {
       b.addEventListener('click', () => runMultiAspectExport([b.dataset.ratio], b));
     });
+    // Lazily render a REAL cropped still per ratio (active-speaker framing).
+    MULTI_ASPECT_RATIOS.forEach(({ ratio }) => loadAspectPreview(clip, ratio));
   }
   document.getElementById('multi-aspect-modal')?.classList.remove('hidden');
+}
+
+// Fetch a real cropped preview frame for one ratio and swap it in. Stores the
+// computed crop offset so the export reuses the exact same framing. Falls back
+// to the plain CSS-cover video if the still can't be rendered.
+async function loadAspectPreview(clip, ratio) {
+  const wrap = document.getElementById('multi-aspect-previews');
+  if (!wrap) return;
+  const loadingEl = wrap.querySelector(`.ma-loading[data-ratio="${ratio}"]`);
+  const imgEl = wrap.querySelector(`.ma-img[data-ratio="${ratio}"]`);
+  const fbEl = wrap.querySelector(`.ma-fallback[data-ratio="${ratio}"]`);
+  try {
+    const res = await fetch(`${serverUrl}/export/aspect-preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clip_path: clip.output_file,
+        source_video: selectedVideo,
+        start_seconds: clip.start_time,
+        end_seconds: clip.end_time,
+        aspect_ratio: ratio,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.image_path) throw new Error(data.detail || 'preview failed');
+    maCropOffsets[ratio] = (data.crop_x_offset ?? null);
+    if (imgEl) { imgEl.src = fileUrl(data.image_path, true); imgEl.hidden = false; }
+  } catch (_) {
+    if (fbEl) fbEl.hidden = false;  // graceful fallback to the CSS-cover video
+  } finally {
+    if (loadingEl) loadingEl.remove();
+  }
 }
 
 document.getElementById('multi-aspect-close')?.addEventListener('click', () => {
@@ -4951,6 +4992,7 @@ async function runMultiAspectExport(ratios, btn) {
         subtitle_path: multiAspectClip.ass_path || multiAspectClip.srt_path,
         aspect_ratios: ratios,
         output_dir: exportFolder,
+        crop_offsets: maCropOffsets,
       })
     });
     const data = await res.json();

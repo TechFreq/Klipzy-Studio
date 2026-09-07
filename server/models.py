@@ -460,6 +460,26 @@ class MultiAspectExportRequest(BaseModel):
     end_seconds: Optional[float] = None
     burn_captions: bool = True
     subtitle_path: Optional[str] = None
+    # Optional {ratio: crop_x_offset} computed by the preview so the export
+    # reuses the exact same active-speaker framing (avoids recomputing).
+    crop_offsets: Optional[dict] = None
+
+
+class AspectPreviewRequest(BaseModel):
+    """Render one real cropped still for a ratio so the multi-aspect modal shows
+    the actual (smart-cropped) framing before export."""
+    clip_path: str
+    aspect_ratio: str = "9:16"
+    source_video: Optional[str] = None
+    start_seconds: Optional[float] = None
+    end_seconds: Optional[float] = None
+    output_dir: Optional[str] = None
+
+
+class AspectPreviewResponse(BaseModel):
+    image_path: str
+    aspect_ratio: str
+    crop_x_offset: Optional[float] = None
 
 
 class MultiAspectExportResponse(BaseModel):

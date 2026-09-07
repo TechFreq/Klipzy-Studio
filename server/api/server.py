@@ -27,6 +27,7 @@ from server.models import (
     ThumbnailRequest, ThumbnailResponse, SocialMetadataRequest, SocialMetadataResponse,
     ThumbnailCandidatesRequest, ThumbnailCandidatesResponse, ThumbnailSaveRequest, ThumbnailSaveResponse,
     MultiAspectExportRequest, MultiAspectExportResponse,
+    AspectPreviewRequest, AspectPreviewResponse,
     OverlayRequest, OverlayResponse, EmojiSuggestRequest, EmojiSuggestResponse,
 )
 from server.core.pipeline import VideoClipperEngine
@@ -36,6 +37,7 @@ from server.core.ffmpeg_tools import (
     check_ffmpeg, get_media_info, get_video_duration, detect_hw_encoder, render_clip,
     export_clip_as, concat_clips, export_standalone_audio,
     extract_best_thumbnail, extract_candidate_thumbnails, extract_audio,
+    render_cropped_frame,
 )
 from server.logging_setup import setup_logging
 from server.auth import (
@@ -1451,6 +1453,45 @@ def api_bleep_mute(req: BleepMuteRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def _compute_speaker_offset(source: str, start: float, end: float, aspect: str):
+    """Best-effort active-speaker crop x-offset for a ratio; None => centered.
+    16:9 is a letterbox fit (no horizontal crop), so it always stays centered.
+    Any detection/OpenCV/YOLO failure degrades quietly to a centered crop."""
+    if aspect == "16:9":
+        return None
+    try:
+        from server.core.face_tracker import FaceTracker
+        off = FaceTracker().get_speaker_center_x(source, start, end, aspect_ratio=aspect)
+        return float(off) if off is not None else None
+    except Exception:
+        return None
+
+
+@app.post("/export/aspect-preview", response_model=AspectPreviewResponse)
+def export_aspect_preview(req: AspectPreviewRequest):
+    """Render one real cropped still (with active-speaker framing) for a ratio so
+    the multi-aspect modal previews the ACTUAL export framing, not a CSS guess."""
+    src = req.source_video if (req.source_video and os.path.exists(req.source_video)) else req.clip_path
+    if not os.path.isfile(src):
+        raise HTTPException(status_code=400, detail=f"Source not found: {src}")
+    if req.source_video and req.start_seconds is not None and req.end_seconds is not None:
+        start, end = float(req.start_seconds), float(req.end_seconds)
+    else:
+        start, end = 0.0, get_video_duration(src)
+    mid = start + max(0.0, end - start) / 2.0
+    offset = _compute_speaker_offset(src, start, end, req.aspect_ratio)
+    stem = os.path.splitext(os.path.basename(req.clip_path))[0]
+    slug = req.aspect_ratio.replace(":", "x")
+    out_dir = req.output_dir or str(_ensure_output_root() / ".cache" / "aspect" / stem)
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    out_path = str(Path(out_dir) / f"preview_{slug}.jpg")
+    try:
+        img = render_cropped_frame(src, out_path, timestamp=mid, aspect_ratio=req.aspect_ratio, crop_x_offset=offset)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(e))
+    return AspectPreviewResponse(image_path=img, aspect_ratio=req.aspect_ratio, crop_x_offset=offset)
+
+
 @app.post("/export/multi-aspect", response_model=MultiAspectExportResponse)
 def export_multi_aspect(req: MultiAspectExportRequest):
     """
@@ -1477,6 +1518,16 @@ def export_multi_aspect(req: MultiAspectExportRequest):
     for aspect in requested_aspects:
         slug = aspect.replace(":", "x")
         out_file = str(out_dir / f"{stem} {slug}.mp4")
+        # Prefer a preview-computed offset; otherwise compute the active-speaker
+        # crop now so the export auto-frames the speaker instead of dead-centering.
+        offset = None
+        if req.crop_offsets and aspect in req.crop_offsets:
+            try:
+                offset = float(req.crop_offsets[aspect]) if req.crop_offsets[aspect] is not None else None
+            except (TypeError, ValueError):
+                offset = None
+        else:
+            offset = _compute_speaker_offset(source, start, end, aspect)
         try:
             render_clip(
                 input_video=source,
@@ -1484,6 +1535,7 @@ def export_multi_aspect(req: MultiAspectExportRequest):
                 start_time=start,
                 end_time=end,
                 aspect_ratio=aspect,
+                crop_x_offset=offset,
                 burn_captions=req.burn_captions,
                 subtitle_path=req.subtitle_path,
             )
