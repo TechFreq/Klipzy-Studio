@@ -897,6 +897,55 @@ def extract_candidate_thumbnails(
     return out
 
 
+# Target width/height ratios for the export/preview aspect options.
+ASPECT_RATIOS: Dict[str, float] = {
+    "9:16": 9 / 16,
+    "4:5": 4 / 5,
+    "1:1": 1.0,
+    "16:9": 16 / 9,
+}
+
+
+def compute_crop_rect(
+    src_w: int,
+    src_h: int,
+    aspect_ratio: str,
+    crop_x_offset: Optional[float] = None,
+) -> Optional[Tuple[int, int, int, int]]:
+    """Largest ``(w, h, x, y)`` rectangle of ``aspect_ratio`` that fits inside a
+    ``src_w`` x ``src_h`` frame. Pure + testable.
+
+    Works for any source orientation: whichever dimension is the binding
+    constraint is pinned and the other is derived from the target ratio, so the
+    result is ALWAYS the requested aspect (naively clamping just the width left
+    e.g. a 4:5 crop of vertical footage at the wrong shape). ``crop_x_offset``
+    shifts the window horizontally (active-speaker framing) and is clamped to
+    stay in frame; vertical placement is centred. Returns None when the source
+    dimensions are unusable or the ratio is unknown.
+    """
+    ratio = ASPECT_RATIOS.get(aspect_ratio)
+    if not ratio or src_w <= 0 or src_h <= 0:
+        return None
+
+    if src_w / src_h > ratio:
+        # Source is wider than the target -> height-limited.
+        ch, cw = src_h, src_h * ratio
+    else:
+        # Source is narrower/taller than the target -> width-limited.
+        cw, ch = src_w, src_w / ratio
+
+    # Even dimensions keep H.264/JPEG encoders happy, and never exceed the source.
+    cw = max(2, min(int(round(cw)), src_w))
+    ch = max(2, min(int(round(ch)), src_h))
+    cw -= cw % 2
+    ch -= ch % 2
+
+    x = int(round(float(crop_x_offset))) if crop_x_offset is not None else (src_w - cw) // 2
+    x = max(0, min(x, src_w - cw))
+    y = max(0, (src_h - ch) // 2)
+    return cw, ch, x, y
+
+
 def render_cropped_frame(
     source: str,
     out_path: str,
@@ -911,29 +960,25 @@ def render_cropped_frame(
     if not out_path.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
         out_path = f"{out_path}.jpg"
 
-    x = f"{crop_x_offset}" if crop_x_offset is not None else "(iw-ow)/2"
-    if aspect_ratio == "9:16":
-        vf = f"crop=ih*9/16:ih:{x}:0"
-    elif aspect_ratio == "4:5":
-        vf = f"crop=ih*4/5:ih:{x}:0"
-    elif aspect_ratio == "1:1":
-        vf = f"crop=min(iw\\,ih):min(iw\\,ih):{x}:(ih-oh)/2"
-    elif aspect_ratio == "16:9":
-        # Landscape letterbox-fit (no horizontal speaker crop).
-        vf = ("scale=w=min(iw\\,ih*16/9):h=min(ih\\,iw*9/16):"
-              "force_original_aspect_ratio=decrease,crop=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1")
-    else:
-        vf = "crop=ih*9/16:ih:(iw-ow)/2:0"
+    # Compute a concrete integer crop rectangle from the real frame size so the
+    # preview always crops correctly (expression-based crop was fragile on some
+    # sources: it could leave the frame uncropped or fail on odd dimensions).
+    dims = probe_video_dims(source)
+    vf = None
+    if dims:
+        src_w, src_h, _ = dims
+        rect = compute_crop_rect(src_w, src_h, aspect_ratio, crop_x_offset)
+        if rect:
+            cw, ch, x, y = rect
+            # A no-op crop (already exactly this ratio) needs no filter at all.
+            if not (cw == src_w and ch == src_h):
+                vf = f"crop={cw}:{ch}:{x}:{y}"
 
-    cmd = [
-        "ffmpeg", "-y",
-        "-ss", str(max(0.0, timestamp)),
-        "-i", source,
-        "-vframes", "1",
-        "-vf", vf,
-        "-q:v", "3",
-        out_path,
-    ]
+    cmd = ["ffmpeg", "-y", "-ss", str(max(0.0, timestamp)), "-i", source, "-vframes", "1"]
+    if vf:
+        cmd += ["-vf", vf]
+    # Sources we couldn't probe fall through as a full-frame grab.
+    cmd += ["-q:v", "3", out_path]
     res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if res.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
         raise RuntimeError(f"Cropped frame render failed: {res.stderr[-300:]}")

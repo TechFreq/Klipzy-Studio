@@ -1817,7 +1817,10 @@ body {
   align-items: center;
   justify-content: center;
 }
-.ma-frame video, .ma-frame img.ma-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ma-frame video { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* The still is ALREADY cropped to this ratio server-side, so contain it — cover
+   would crop it a second time and hide part of the real exported framing. */
+.ma-frame img.ma-img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .ma-frame .ma-loading {
   position: absolute; inset: 0; display: flex; align-items: center;
   justify-content: center; color: var(--text-muted); font-size: 22px;

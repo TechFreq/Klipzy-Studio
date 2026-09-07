@@ -4946,7 +4946,17 @@ async function loadAspectPreview(clip, ratio) {
     const data = await res.json();
     if (!res.ok || !data.image_path) throw new Error(data.detail || 'preview failed');
     maCropOffsets[ratio] = (data.crop_x_offset ?? null);
-    if (imgEl) { imgEl.src = fileUrl(data.image_path, true); imgEl.hidden = false; }
+    if (imgEl) {
+      // The still can come back as a valid path that the renderer still can't
+      // load (write race / file access), which showed as a broken-image icon.
+      // Swap to the video fallback on a load error instead of leaving it broken.
+      imgEl.addEventListener('error', () => {
+        imgEl.hidden = true;
+        if (fbEl) fbEl.hidden = false;
+      }, { once: true });
+      imgEl.addEventListener('load', () => { imgEl.hidden = false; }, { once: true });
+      imgEl.src = fileUrl(data.image_path, true);
+    }
   } catch (_) {
     if (fbEl) fbEl.hidden = false;  // graceful fallback to the CSS-cover video
   } finally {

@@ -721,3 +721,70 @@ def test_social_metadata_generation():
     assert "#shorts" in data["hashtags"]
     assert "#technology" in data["hashtags"] or "#tech" in data["hashtags"]
     assert "Disclaimer:" in data["formatted_post"] or len(data["disclaimer"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# Multi-aspect crop geometry (preview + export share this math)
+# ---------------------------------------------------------------------------
+
+def _ratio_of(rect):
+    w, h, _x, _y = rect
+    return w / h
+
+
+def test_compute_crop_rect_landscape_source():
+    """A wide source is height-limited: full height, narrowed width, centred."""
+    from server.core.ffmpeg_tools import compute_crop_rect
+
+    w, h, x, y = compute_crop_rect(1920, 1080, "9:16")
+    assert (h, y) == (1080, 0)
+    assert abs(w / h - 9 / 16) < 0.01
+    assert x == (1920 - w) // 2          # centred by default
+    assert w < 1920                       # actually cropped, not passed through
+
+    assert abs(_ratio_of(compute_crop_rect(1920, 1080, "4:5")) - 4 / 5) < 0.01
+    assert abs(_ratio_of(compute_crop_rect(1920, 1080, "1:1")) - 1.0) < 0.01
+
+
+def test_compute_crop_rect_vertical_source_keeps_target_ratio():
+    """Regression: a 4:5 crop of ALREADY-VERTICAL footage must stay 4:5.
+
+    The target width (1920*4/5) exceeds the 1080px source width, so the crop is
+    width-limited and the HEIGHT has to shrink. Naively clamping only the width
+    left the rect at the source's own 9:16 shape.
+    """
+    from server.core.ffmpeg_tools import compute_crop_rect
+
+    w, h, x, y = compute_crop_rect(1080, 1920, "4:5")
+    assert (w, h) == (1080, 1350)
+    assert abs(w / h - 4 / 5) < 0.01
+    assert x == 0 and y == (1920 - 1350) // 2   # centred vertically
+
+
+def test_compute_crop_rect_noop_and_offsets():
+    from server.core.ffmpeg_tools import compute_crop_rect
+
+    # Source already matches the target -> full frame (caller skips the filter).
+    assert compute_crop_rect(1920, 1080, "16:9") == (1920, 1080, 0, 0)
+    assert compute_crop_rect(1080, 1920, "9:16") == (1080, 1920, 0, 0)
+
+    # Active-speaker offset is honoured, but clamped to stay inside the frame.
+    w, _h, x, _y = compute_crop_rect(1920, 1080, "9:16", crop_x_offset=400)
+    assert x == 400
+    _w2, _h2, x2, _y2 = compute_crop_rect(1920, 1080, "9:16", crop_x_offset=99999)
+    assert x2 == 1920 - w                 # pinned to the right edge, never off-frame
+    _w3, _h3, x3, _y3 = compute_crop_rect(1920, 1080, "9:16", crop_x_offset=-500)
+    assert x3 == 0                        # and never negative
+
+
+def test_compute_crop_rect_even_dimensions_and_guards():
+    from server.core.ffmpeg_tools import compute_crop_rect
+
+    # Odd source dimensions still yield even crop sizes (encoder-safe).
+    w, h, _x, _y = compute_crop_rect(1921, 1081, "9:16")
+    assert w % 2 == 0 and h % 2 == 0
+
+    # Unknown ratio / unusable dimensions degrade to None (caller: no crop).
+    assert compute_crop_rect(1920, 1080, "3:7") is None
+    assert compute_crop_rect(0, 1080, "9:16") is None
+    assert compute_crop_rect(1920, 0, "9:16") is None
