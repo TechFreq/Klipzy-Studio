@@ -2094,32 +2094,14 @@ function showResults(clips) {
     btn.textContent = '🚀 Start Clipping & Transcribing';
   }
 
-  const grid = document.getElementById('clips-grid');
-  if (grid) {
-    grid.innerHTML = '';
-    // Iterate the normalized array, not the raw argument: a completed job with
-    // no `clips` field used to throw here (clips.forEach on undefined).
-    generatedClips.forEach((clip, idx) => {
-      grid.appendChild(buildClipCard(clip, idx));
-    });
-    if (!generatedClips.length) {
-      renderClipsEmptyState(grid);
-    }
-  }
+  // Paints the cards + the ready-to-render summary (iterates the normalized
+  // array, not the raw argument: a completed job with no `clips` field used to
+  // throw here on clips.forEach).
+  renderClipsGrid();
 
   // Un-hide the results wrapper (selectVideoFile/reset mark it hidden).
   const resultsEl = document.getElementById('results');
   if (resultsEl) resultsEl.classList.remove('hidden');
-
-  // Ready-to-render summary (OpenClipper-style progress readout).
-  const summary = document.getElementById('results-summary');
-  if (summary) {
-    const n = generatedClips.length;
-    const totalSecs = generatedClips.reduce((a, c) => a + (Number(c.duration) || 0), 0);
-    summary.textContent = n
-      ? `✅ ${n} clip${n === 1 ? '' : 's'} ready to export · ${Math.round(totalSecs)}s total · TikTok / Reels / Shorts`
-      : 'No clips yet.';
-  }
 
   setWizardStep(4);
 }
@@ -2169,6 +2151,13 @@ function buildClipCard(clip, idx) {
       </div>
     </div>
     <div class="clip-info">
+      <div class="clip-reorder-bar">
+        <span class="clip-order-badge" title="Position in the exported reel">#${idx + 1}</span>
+        <span class="clip-drag-handle" title="Drag to reorder this clip in the reel" aria-hidden="true">⠿</span>
+        <span class="reorder-spacer"></span>
+        <button class="btn btn-small clip-move-btn" data-action="move-earlier" title="Move earlier in the reel" aria-label="Move clip ${idx + 1} earlier in the reel">◀</button>
+        <button class="btn btn-small clip-move-btn" data-action="move-later" title="Move later in the reel" aria-label="Move clip ${idx + 1} later in the reel">▶</button>
+      </div>
       <div class="clip-headline">
         <div class="clip-title">${escapeHtml(title)}</div>
         <span class="virality-badge">🔥 Virality: ${score}/10</span>
@@ -2278,6 +2267,8 @@ function buildClipCard(clip, idx) {
       case 'edit-captions': openCaptionEditor(idx2); break;
       case 'reroll-hook': quickRerollHook(idx2, actionBtn); break;
       case 'remove-hook': quickRemoveHook(idx2, actionBtn); break;
+      case 'move-earlier': e.stopPropagation(); moveClip(idx2, idx2 - 1); break;
+      case 'move-later': e.stopPropagation(); moveClip(idx2, idx2 + 1); break;
       case 'multi-aspect': exportMultiAspectPack(idx2); break;
       case 'overlay': openOverlayModal(idx2); break;
       case 'snip-silence': quickCutSilence(idx2); break;
@@ -2309,7 +2300,103 @@ function buildClipCard(clip, idx) {
     deleteClip(parseInt(card.dataset.clipIdx, 10));
   });
 
+  wireClipDragReorder(card);
+
   return card;
+}
+
+// ------------------------------------------------------------------
+// Clip reordering (drag & drop + keyboard/click) — the order here IS the
+// order used by "Export All as Reel", which concatenates generatedClips.
+// ------------------------------------------------------------------
+let draggingClipIdx = null;
+
+// Drag is armed only from the grip handle so the scrub bar, buttons and
+// hover-preview keep working normally everywhere else on the card.
+function wireClipDragReorder(card) {
+  const handle = card.querySelector('.clip-drag-handle');
+  if (handle) {
+    handle.addEventListener('mousedown', () => { card.draggable = true; });
+    handle.addEventListener('mouseup', () => { card.draggable = false; });
+  }
+
+  card.addEventListener('dragstart', (e) => {
+    draggingClipIdx = parseInt(card.dataset.clipIdx, 10);
+    card.classList.add('dragging');
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      // Some platforms cancel the drag unless data is set.
+      try { e.dataTransfer.setData('text/plain', String(draggingClipIdx)); } catch (_) { /* non-fatal */ }
+    }
+  });
+
+  card.addEventListener('dragend', () => {
+    card.classList.remove('dragging');
+    card.draggable = false;
+    draggingClipIdx = null;
+    document.querySelectorAll('.clip-card.drop-target')
+      .forEach((c) => c.classList.remove('drop-target'));
+  });
+
+  card.addEventListener('dragover', (e) => {
+    if (draggingClipIdx === null) return;
+    e.preventDefault();                     // required to allow a drop
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    if (parseInt(card.dataset.clipIdx, 10) !== draggingClipIdx) {
+      card.classList.add('drop-target');
+    }
+  });
+
+  card.addEventListener('dragleave', () => card.classList.remove('drop-target'));
+
+  card.addEventListener('drop', (e) => {
+    e.preventDefault();
+    card.classList.remove('drop-target');
+    const to = parseInt(card.dataset.clipIdx, 10);
+    let from = draggingClipIdx;
+    if (from === null && e.dataTransfer) {
+      const raw = parseInt(e.dataTransfer.getData('text/plain'), 10);
+      if (Number.isInteger(raw)) from = raw;
+    }
+    if (Number.isInteger(from)) moveClip(from, to);
+  });
+}
+
+// Move a clip to a new position and re-render. Clamps silently so the ◀/▶
+// buttons on the first/last card are simply no-ops.
+function moveClip(from, to) {
+  if (!Number.isInteger(from) || !Number.isInteger(to)) return;
+  if (from === to || from < 0 || from >= generatedClips.length) return;
+  if (to < 0 || to >= generatedClips.length) return;
+
+  const [moved] = generatedClips.splice(from, 1);
+  generatedClips.splice(to, 0, moved);
+  saveCurrentProjectSilently();
+  renderClipsGrid();
+  showToast(`↕️ Moved "${(moved.title || 'clip').slice(0, 30)}" to position ${to + 1}`, 'success');
+}
+
+// Single source of truth for painting the grid + summary, so reorder, delete
+// and the initial render can't drift apart.
+function renderClipsGrid() {
+  const grid = document.getElementById('clips-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  if (!generatedClips.length) {
+    renderClipsEmptyState(grid);
+  } else {
+    generatedClips.forEach((clip, i) => grid.appendChild(buildClipCard(clip, i)));
+  }
+  updateClipsSummary();
+}
+
+function updateClipsSummary() {
+  const summary = document.getElementById('results-summary');
+  if (!summary) return;
+  const n = generatedClips.length;
+  if (!n) { summary.textContent = 'No clips yet.'; return; }
+  const totalSecs = generatedClips.reduce((a, c) => a + (Number(c.duration) || 0), 0);
+  summary.textContent = `✅ ${n} clip${n === 1 ? '' : 's'} ready to export · ${Math.round(totalSecs)}s total · drag to reorder the reel`;
 }
 
 function copyClipHook(idx) {
@@ -2486,17 +2573,8 @@ async function deleteClip(idx) {
       });
     } catch (_) { /* card + manifest removal still proceed */ }
   }
-  const grid = document.getElementById('clips-grid');
-  grid.innerHTML = '';
-  generatedClips.forEach((clip, i) => grid.appendChild(buildClipCard(clip, i)));
-  const summary = document.getElementById('results-summary');
-  if (!generatedClips.length) {
-    renderClipsEmptyState(grid);
-    if (summary) summary.textContent = 'No clips yet.';
-  } else if (summary) {
-    const totalSecs = generatedClips.reduce((a, c) => a + (Number(c.duration) || 0), 0);
-    summary.textContent = `✅ ${generatedClips.length} clip${generatedClips.length === 1 ? '' : 's'} ready to export · ${Math.round(totalSecs)}s total · TikTok / Reels / Shorts`;
-  }
+  // Re-index the remaining cards (order badges + move buttons depend on it).
+  renderClipsGrid();
 }
 
 function appendClipCard(clip, idx) {
