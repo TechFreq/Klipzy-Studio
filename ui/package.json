@@ -1,6 +1,6 @@
 {
   "name": "klipzy-studio",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Klipzy Studio - local-first Long Form to Shorts studio by TechFreq",
   "main": "electron/main.js",
   "scripts": {
