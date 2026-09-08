@@ -42,6 +42,25 @@ def detect_active_backend() -> dict:
     if have_openai:
         available.append("openai-whisper")
 
+    # A configured remote endpoint takes priority, mirroring _load_model(). It
+    # can't be probed with find_spec (it's an HTTP service), so report it as
+    # active whenever it's configured and note if it isn't answering.
+    try:
+        from server.core import asr_client
+        if asr_client.is_remote():
+            cfg = asr_client.load_config()
+            reachable = asr_client.is_available(cfg)
+            available.insert(0, "remote")
+            return {
+                "active": "remote",
+                "available": available,
+                "apple_silicon": apple_silicon,
+                "note": (f"Remote endpoint {cfg['base_url']}"
+                         + ("" if reachable else " (not answering — will fall back locally)")),
+            }
+    except Exception:
+        pass
+
     if apple_silicon and have_mlx:
         active, note = "mlx", "MLX native acceleration (Apple Silicon)"
     elif have_faster:
@@ -107,6 +126,20 @@ class Transcriber:
     def _load_model(self):
         if self._model is not None:
             return
+
+        # 0. A configured remote endpoint wins: nothing to load locally, we just
+        #    POST the audio. "remote" is skippable like any other backend, so a
+        #    failure at transcribe-time falls through to the local stack below.
+        if "remote" not in self._skip_backends:
+            try:
+                from server.core import asr_client
+                if asr_client.is_remote():
+                    print("Using the configured remote transcription endpoint...")
+                    self._model = "remote"
+                    self._backend = "remote"
+                    return
+            except Exception:
+                pass
 
         # 1. MLX-Whisper: preferred on Apple Silicon (M-series macOS)
         # Native MLX acceleration, supports word_timestamps=True
@@ -176,18 +209,20 @@ class Transcriber:
 
         self._load_model()
         try:
+            if self._backend == "remote":
+                return self._transcribe_remote(audio_path, language)
             if self._backend == "mlx":
                 return self._transcribe_mlx(audio_path, language)
             if self._backend == "faster":
                 return self._transcribe_faster(audio_path, language)
             return self._transcribe_openai(audio_path, language)
         except Exception as e:
-            # Any accelerated backend (MLX or faster-whisper) can fail at runtime
-            # — a model download error, or a CUDA runtime that isn't actually
-            # usable. Mark it skipped and fall back to the next backend instead of
-            # crashing the whole job. openai-whisper is the final, dependency-light
-            # backstop, so a failure there is genuinely fatal.
-            if self._backend in ("mlx", "faster"):
+            # Any non-final backend can fail at runtime — a remote server that's
+            # gone away, a model download error, or a CUDA runtime that isn't
+            # actually usable. Mark it skipped and fall back to the next backend
+            # instead of crashing the whole job. openai-whisper is the final,
+            # dependency-light backstop, so a failure there is genuinely fatal.
+            if self._backend in ("remote", "mlx", "faster"):
                 print(f"{self._backend}-whisper failed ({e}); falling back to the next backend...")
                 self._skip_backends.add(self._backend)
                 self._backend = None
@@ -195,6 +230,29 @@ class Transcriber:
                 self._load_model()
                 return self.transcribe(audio_path, language)
             raise
+
+    def _transcribe_remote(self, audio_path: str, language: Optional[str] = None):
+        """Transcribe via the configured OpenAI-compatible endpoint (whisper.cpp
+        whisper-server, faster-whisper-server, Speaches, OpenAI...)."""
+        from server.core.asr_client import transcribe_remote
+
+        raw_segments, real_words = transcribe_remote(audio_path, language=language)
+        if not real_words:
+            # Be explicit: the karaoke highlight will be evenly spaced rather
+            # than truly aligned, because the server didn't return word times.
+            print("Remote endpoint returned no word timestamps — caption timing "
+                  "will be approximated by spreading words across each segment.")
+        segments: List[TranscriptSegment] = []
+        for s in raw_segments:
+            words = [
+                WordTimestamp(word=w["word"], start=w["start"], end=w["end"])
+                for w in s.get("words", [])
+            ]
+            segments.append(TranscriptSegment(
+                id=s.get("id", 0), start=s.get("start", 0.0),
+                end=s.get("end", 0.0), text=s.get("text", ""), words=words,
+            ))
+        return segments
 
     def _transcribe_mlx(self, audio_path: str, language: Optional[str] = None):
         """MLX-Whisper transcription on Apple Silicon."""

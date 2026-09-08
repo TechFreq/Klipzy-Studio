@@ -1121,6 +1121,52 @@
             <p class="muted small">Everything stays local unless you deliberately point this at a cloud address. Ollama remains the default, and every AI feature falls back to offline heuristics if no engine is reachable.</p>
           </div>
 
+          <!-- Transcription engine: local Whisper, or a remote OpenAI-compatible ASR server -->
+          <div class="card-head-row" style="margin-top:18px;">
+            <h3>🎙️ Subtitle engine</h3>
+            <span class="muted small">Transcribe on this machine, or send audio to your own speech-to-text server</span>
+          </div>
+          <div class="llm-backend-block">
+            <div class="llm-backend-choices">
+              <label class="toggle" title="Klipzy transcribes on this machine with Whisper (MLX / faster-whisper / openai-whisper, picked automatically). Nothing to configure.">
+                <input type="radio" name="asr-backend" id="asr-backend-local" value="local" checked />
+                <span>🏠 Built-in (Whisper)</span>
+              </label>
+              <label class="toggle" title="Any server speaking the OpenAI audio-transcription API: whisper.cpp whisper-server, faster-whisper-server, Speaches, or OpenAI. Klipzy uploads each clip's audio and gets timed text back.">
+                <input type="radio" name="asr-backend" id="asr-backend-openai" value="openai" />
+                <span>🌐 Custom (whisper.cpp / OpenAI-compatible)</span>
+              </label>
+            </div>
+
+            <div id="asr-custom-fields" class="llm-custom-fields hidden">
+              <label class="option">
+                <span>Server address
+                  <span class="help-hint" title="The base URL of your speech-to-text server. Examples:&#10;• whisper.cpp whisper-server → http://localhost:8080/v1&#10;• faster-whisper-server / Speaches → http://localhost:8000/v1&#10;Paste it with or without the /v1 — Klipzy sorts it out.">ⓘ</span>
+                </span>
+                <input type="text" id="asr-base-url" placeholder="http://localhost:8080/v1" spellcheck="false" />
+              </label>
+              <label class="option">
+                <span>Model name
+                  <span class="help-hint" title="Whatever your server calls the model. whisper.cpp servers often accept anything here; most OpenAI-compatible servers expect whisper-1. Leave blank to use whisper-1.">ⓘ</span>
+                </span>
+                <input type="text" id="asr-model-name" placeholder="whisper-1" spellcheck="false" />
+              </label>
+              <label class="option">
+                <span>API key <span class="muted small">(optional)</span>
+                  <span class="help-hint" title="Only needed for servers that require auth. Local servers usually need nothing. Stored locally and never displayed again.">ⓘ</span>
+                </span>
+                <input type="password" id="asr-api-key" placeholder="Leave blank for local servers" spellcheck="false" />
+              </label>
+            </div>
+
+            <div class="llm-backend-actions">
+              <button class="btn btn-secondary btn-small" id="asr-test-btn">🔍 Test connection</button>
+              <button class="btn btn-primary btn-small" id="asr-save-btn">💾 Save subtitle engine</button>
+              <span class="muted small" id="asr-backend-status">Checking…</span>
+            </div>
+            <p class="muted small">Karaoke captions need word-level timings. Servers that don't return them still work, but the highlight is spread evenly across each line instead of matching each spoken word — the connection test tells you which you're getting. If the server can't be reached during a run, Klipzy falls back to local Whisper automatically.</p>
+          </div>
+
           <div class="model-catalog-head card-head-row" style="margin-top:18px;">
             <h3>🧠 Local AI model catalog</h3>
             <span class="muted small">Download bigger models for sharper hooks — pick to match your hardware</span>

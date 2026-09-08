@@ -193,6 +193,24 @@ handled too.
 > address. Every AI feature also degrades to offline heuristics when no engine is reachable, so
 > the app never hard-fails because a model is down.
 
+### Subtitle engine (speech-to-text)
+
+Same idea, separate setting. Transcription runs locally by default (MLX / faster-whisper /
+openai-whisper, auto-selected), and **Setup → Subtitle engine** can point it at any server that
+speaks the OpenAI audio-transcription API instead:
+
+| Server | Typical address |
+|---|---|
+| **whisper.cpp** (`whisper-server`) | `http://localhost:8080/v1` |
+| **faster-whisper-server** / Speaches | `http://localhost:8000/v1` |
+| OpenAI | `https://api.openai.com/v1` + an API key |
+
+Karaoke captions need **word-level** timings. Servers that return them get exact per-word
+highlighting; servers that only return segments still work, but the highlight is spread evenly
+across each line. **Test connection** tells you which one you're getting before you commit. If
+the server stops responding mid-run, Klipzy falls back to local Whisper automatically rather
+than failing the job.
+
 ---
 
 ## 🧪 Tests

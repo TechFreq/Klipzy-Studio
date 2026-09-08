@@ -2338,6 +2338,101 @@ def test_llm_endpoint(req: LlmEndpointRequest):
     return {"ok": True, "backend": "ollama", "model": model, "reply": (reply or "")[:200]}
 
 
+class AsrEndpointRequest(BaseModel):
+    backend: str = "local"           # "local" | "openai"
+    base_url: str = ""               # e.g. http://localhost:8080/v1
+    api_key: str = ""
+    model: str = ""                  # e.g. whisper-1 / ggml-base.en
+
+
+@app.get("/api/setup/asr-endpoint")
+def get_asr_endpoint():
+    """Active speech-to-text backend settings (never returns the API key)."""
+    from server.core import asr_client
+    return asr_client.describe()
+
+
+@app.post("/api/setup/asr-endpoint")
+def set_asr_endpoint(req: AsrEndpointRequest):
+    """Transcribe locally (default) or via any server that speaks the OpenAI
+    audio-transcription API — whisper.cpp's whisper-server,
+    faster-whisper-server, Speaches, or OpenAI itself."""
+    from server.core import asr_client
+    try:
+        asr_client.save_config(
+            backend=req.backend, base_url=req.base_url,
+            api_key=req.api_key, model=req.model,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Could not save transcription settings: {e}")
+    return asr_client.describe()
+
+
+@app.post("/api/setup/asr-test")
+def test_asr_endpoint(req: AsrEndpointRequest):
+    """Probe a transcription endpoint WITHOUT saving it, so the user can verify
+    the address before committing. Sends a short generated tone rather than a
+    real clip, so the check is fast."""
+    from server.core import asr_client
+
+    backend = (req.backend or "local").strip().lower()
+    if backend != asr_client.BACKEND_OPENAI:
+        from server.core.transcriber import detect_active_backend
+        info = detect_active_backend()
+        return {"ok": bool(info.get("active")), "backend": "local",
+                "active": info.get("active"), "note": info.get("note")}
+
+    base = asr_client.normalize_base_url(req.base_url)
+    if not base:
+        raise HTTPException(status_code=400, detail="A server address is required")
+    cfg = {"backend": backend, "base_url": base,
+           "api_key": (req.api_key or "").strip(), "model": (req.model or "").strip()}
+    if not asr_client.is_available(cfg):
+        return {"ok": False, "backend": backend, "base_url": base,
+                "error": "Nothing answered at that address. Is the server running?"}
+
+    # Reachable. Try a real 1-second transcription so auth/model problems show
+    # up here rather than midway through a clipping run.
+    tmp_dir = _ensure_output_root() / ".cache"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    probe = str(tmp_dir / "asr_probe.wav")
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+             "-ar", "16000", "-ac", "1", probe],
+            capture_output=True, text=True, timeout=60,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+    except Exception:
+        return {"ok": True, "backend": backend, "base_url": base,
+                "note": "Server is reachable (could not build a local probe clip to test further)."}
+
+    saved = asr_client.load_config()
+    try:
+        asr_client.save_config(**cfg)          # transcribe_remote reads the config
+        segments, real_words = asr_client.transcribe_remote(probe, timeout=90.0)
+        return {"ok": True, "backend": backend, "base_url": base,
+                "model": cfg["model"] or asr_client.DEFAULT_MODEL,
+                "word_timestamps": real_words,
+                "note": ("Word-level timings supported." if real_words else
+                         "Server returned no word timings — caption timing will be "
+                         "approximated by spreading words across each segment.")}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "backend": backend, "base_url": base, "error": str(e)}
+    finally:
+        # Always restore whatever was configured before the test.
+        try:
+            asr_client.save_config(**saved)
+        except Exception:
+            pass
+        try:
+            os.remove(probe)
+        except OSError:
+            pass
+
+
 @app.post("/api/setup/clear-cache")
 def clear_cache():
     """Delete the transcript cache (output/.cache/*.json). Safe: it only makes

@@ -2512,6 +2512,120 @@ async function loadLlmEndpoint() {
 })();
 
 // ------------------------------------------------------------------
+// Subtitle engine (speech-to-text): built-in Whisper, or a remote server
+// speaking the OpenAI audio-transcription API (whisper.cpp whisper-server,
+// faster-whisper-server, Speaches...). Same shape as the AI engine card above.
+// ------------------------------------------------------------------
+function asrSelectedBackend() {
+  return document.getElementById('asr-backend-openai')?.checked ? 'openai' : 'local';
+}
+
+function syncAsrFieldsVisibility() {
+  document.getElementById('asr-custom-fields')
+    ?.classList.toggle('hidden', asrSelectedBackend() !== 'openai');
+}
+
+function asrFormValues() {
+  return {
+    backend: asrSelectedBackend(),
+    base_url: document.getElementById('asr-base-url')?.value?.trim() || '',
+    model: document.getElementById('asr-model-name')?.value?.trim() || '',
+    api_key: document.getElementById('asr-api-key')?.value || '',
+  };
+}
+
+function setAsrStatus(text, kind) {
+  const el = document.getElementById('asr-backend-status');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.remove('status-ok', 'status-bad');
+  if (kind) el.classList.add(kind === 'ok' ? 'status-ok' : 'status-bad');
+}
+
+async function loadAsrEndpoint() {
+  try {
+    const res = await fetch(`${serverUrl}/api/setup/asr-endpoint`);
+    if (!res.ok) throw new Error('unavailable');
+    const d = await res.json();
+    const isRemote = d.backend === 'openai';
+    const radio = document.getElementById(isRemote ? 'asr-backend-openai' : 'asr-backend-local');
+    if (radio) radio.checked = true;
+    const url = document.getElementById('asr-base-url');
+    if (url) url.value = d.base_url || '';
+    const model = document.getElementById('asr-model-name');
+    if (model) model.value = d.model || '';
+    const key = document.getElementById('asr-api-key');
+    if (key) key.placeholder = d.api_key_set ? '•••••••• (saved)' : 'Leave blank for local servers';
+    syncAsrFieldsVisibility();
+    if (!isRemote) {
+      setAsrStatus('✅ Transcribing on this machine', 'ok');
+    } else {
+      setAsrStatus(d.available ? `✅ Reachable — ${d.base_url}` : `⚠️ Not reachable — ${d.base_url}`,
+        d.available ? 'ok' : 'bad');
+    }
+  } catch (_) {
+    setAsrStatus('Could not read subtitle engine settings', 'bad');
+  }
+}
+
+(function wireAsrBackendControls() {
+  ['asr-backend-local', 'asr-backend-openai'].forEach((id) => {
+    document.getElementById(id)?.addEventListener('change', syncAsrFieldsVisibility);
+  });
+
+  document.getElementById('asr-test-btn')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    setBtnBusy(btn, '⏳ Testing…');
+    setAsrStatus('Testing…');
+    try {
+      const res = await fetch(`${serverUrl}/api/setup/asr-test`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(asrFormValues()),
+      });
+      const d = await res.json();
+      if (d.ok) {
+        // Be explicit about word-level timing, since karaoke captions depend on it.
+        const timing = d.word_timestamps === false
+          ? ' (no word timings — highlight will be approximated)'
+          : (d.word_timestamps === true ? ' (word timings supported)' : '');
+        setAsrStatus(`✅ Works${timing}`, 'ok');
+        showToast(`✅ Subtitle engine reachable${timing}`, 'success');
+      } else {
+        setAsrStatus(`❌ ${d.error || d.detail || 'Test failed'}`, 'bad');
+        showToast(`❌ ${d.error || d.detail || 'Test failed'}`, 'error');
+      }
+    } catch (err) {
+      setAsrStatus(`❌ ${err.message}`, 'bad');
+    } finally {
+      setBtnIdle(btn);
+    }
+  });
+
+  document.getElementById('asr-save-btn')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    setBtnBusy(btn, '⏳ Saving…');
+    try {
+      const res = await fetch(`${serverUrl}/api/setup/asr-endpoint`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(asrFormValues()),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.detail || 'Could not save');
+      playSuccessSound();
+      showToast('💾 Subtitle engine saved — used on the next clipping run', 'success');
+      const keyInput = document.getElementById('asr-api-key');
+      if (keyInput) keyInput.value = '';
+      loadAsrEndpoint();
+      loadServerHealth?.();          // header shows the active engine
+    } catch (err) {
+      showAlert(`Could not save subtitle engine: ${err.message}`);
+    } finally {
+      setBtnIdle(btn);
+    }
+  });
+})();
+
+// ------------------------------------------------------------------
 // Busy-state helpers for action buttons.
 //
 // These replace the old `const orig = btn.textContent` / restore pattern, which

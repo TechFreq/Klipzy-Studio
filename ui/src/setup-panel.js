@@ -25,6 +25,7 @@ async function loadSetupPanel() {
     bindClearCache();
     loadAiModels(data);
     loadLlmEndpoint();
+    loadAsrEndpoint();
     renderModelCatalog();
     loadOptionalAddons();
   } catch (e) {
