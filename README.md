@@ -64,10 +64,12 @@ A **local-first Long Form to Shorts studio by TechFreq Developments** for Window
 | ✂️ **Silence / Dead-Air Cutter** | FFmpeg `silencedetect` jump-cuts to keep energy high |
 | 🔇 **Profanity Filter** | Word-level bleep / mute / caption masking |
 | 🎮 **Gaming / Reaction Layout** | Full gameplay + scalable webcam PiP in any corner |
-| 🤖 **Optional LLM Discovery** | Uses local Ollama (Gemma) to pick viral moments from the transcript |
+| 🤖 **Optional LLM Discovery** | Uses a local LLM to pick viral moments from the transcript — built-in Ollama, or your own OpenAI-compatible server |
+| 🔌 **Pluggable AI engines** | Swap the text model *and* the speech-to-text model for any OpenAI-compatible endpoint (llama.cpp, LM Studio, whisper.cpp…) |
+| 🔀 **Rearrange & Reel Export** | Drag clips into order, then export the whole set as one highlights reel |
 | 🗣️ **Speaker-Aware Face Tracking** | Tracks the active speaker so 9:16 crops stay centered |
 | 💬 **AI Edit Chat** | Chat with local AI for hook ideas, captions, hashtags, and edits |
-| 📦 **100% Local & Private** | Whisper, YOLO, Ollama, FFmpeg all run on your machine — no cloud |
+| 📦 **Local & Private by default** | Whisper, YOLO, Ollama, FFmpeg all run on your machine — nothing leaves it unless you deliberately configure a cloud endpoint |
 
 ---
 
@@ -162,7 +164,7 @@ launch installers and touch the filesystem).
 |-----------|------|---------|---------|
 | Transcription | OpenAI **Whisper** | MIT | Speech → text with word timestamps |
 | Face tracking | **YOLOv8** (ultralytics) | AGPL-3.0 | Speaker-aware 9:16 crop |
-| Local LLM | **Ollama** + Gemma | MIT | AI edit chat + highlight discovery |
+| Local LLM | **Ollama** (default) — or any OpenAI-compatible server | MIT | AI edit chat + highlight discovery + clip copywriting |
 | Video processing | **FFmpeg** | LGPL/GPL | Extract, cut, crop, burn captions |
 
 > **Note on YOLO/ultralytics:** Ultralytics is AGPL-3.0. Using it as a dependency is fine; if you distribute a modified version of *their* library you must share it. For permissive licensing, swap in OpenCV's `cv2.CascadeClassifier` or MediaPipe (Apache-2.0).
@@ -297,14 +299,33 @@ self-contained build (via PyInstaller) is planned.
   (you choose and install it — nothing is downloaded behind your back)
 - [x] **Live backend readout** — the header shows the active transcription engine;
   click the status to jump into Setup & diagnostics
+- [x] **One-click model install from the Setup card** — the ⭐ recommended pick (and
+  anything else in the catalog) downloads in place with a live progress bar and a
+  Cancel button; a cancelled pull cleans up its partial download
+- [x] **Multilingual subtitles** — translate a clip's captions into any of the
+  supported languages locally, with the option to burn the translated karaoke
+  captions into a new render
+- [x] **Bring-your-own AI engine** — Ollama is built in, or point Klipzy at any
+  OpenAI-compatible server (llama.cpp `llama-server`, LM Studio, vLLM, cloud) with
+  one address; includes a Test-connection check
+- [x] **Bring-your-own subtitle engine** — transcribe locally, or via any server
+  speaking the OpenAI audio-transcription API (whisper.cpp `whisper-server`,
+  faster-whisper-server, Speaches); falls back to local Whisper if it stops responding
+- [x] **Rearrange clips** — drag (or nudge) clips into the order you want; that order
+  is what "Export All as Reel" and the NLE timeline exports use, and it's saved with
+  the project
+- [x] **Pick Frame** — scored candidate cover frames to choose from, settable as the
+  clip poster or downloadable as PNG/JPG/WebP
+- [x] **Multi-aspect preview** — see the real per-ratio smart crop before exporting,
+  not an approximation
 
 **Coming soon**
 - [ ] URL / stream import — YouTube, Twitch, Kick (`yt-dlp`)
-- [ ] One-click install of the recommended model straight from the Setup card
 - [ ] MLX beyond transcription (highlight/LLM stages on Apple Silicon)
 - [ ] Multi-speaker split-screen
-- [ ] Multilingual subtitles / dubbing
+- [ ] Dubbing — translated *audio*, not just subtitles
 - [ ] Auto-posting to TikTok / YouTube / Reels
+- [ ] Self-contained desktop build (bundle the Python runtime via PyInstaller)
 
 ---
 
