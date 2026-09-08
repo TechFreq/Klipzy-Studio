@@ -132,7 +132,9 @@ def test_karaoke_caption_generation(tmp_path):
     assert ass_out.exists()
     content = ass_out.read_text(encoding="utf-8")
     assert "[Script Info]" in content
-    assert "\\k" in content
+    # Active-word highlight: each word event colors the current word (\c...) and
+    # resets the rest to the style default (\r).
+    assert "\\c" in content and "\\r" in content
 
 
 def test_karaoke_captions_custom_font_size(tmp_path):
@@ -184,7 +186,8 @@ def test_caption_presets_library(tmp_path):
         generate_karaoke_captions([seg], str(out), style_preset=p)
         assert out.exists()
         content = out.read_text(encoding="utf-8")
-        assert "\\k" in content
+        # Per-word active highlight: the current word is recolored inline.
+        assert "\\c" in content
         assert "Default" in content
 
 
@@ -225,6 +228,43 @@ def test_profanity_filter_detection():
     assert swear_ts[0]["start"] == 0.8
 
 
+def test_bleep_filter_word_timestamps_precision():
+    """The quick-bleep path sends every clip word; the server must keep ONLY
+    profanity, and must not over-match innocent words that merely contain a
+    swear substring (peacock/Dickens/class)."""
+    from server.core.word_filter import filter_word_timestamps
+    words = [
+        {"word": "This", "start": 0.0, "end": 0.3},
+        {"word": "peacock", "start": 0.3, "end": 0.8},   # contains 'cock' -> NOT profane
+        {"word": "Dickens", "start": 0.8, "end": 1.2},   # contains 'dick' -> NOT profane
+        {"word": "class", "start": 1.2, "end": 1.6},     # contains 'ass' -> NOT profane
+        {"word": "fucking", "start": 1.6, "end": 2.0},   # profane
+        {"word": "bullshit", "start": 2.0, "end": 2.4},  # profane via 'shit' stem
+    ]
+    hits = filter_word_timestamps(words)
+    assert {h["word"] for h in hits} == {"fucking", "bullshit"}
+    assert all("start" in h and "end" in h and "duration" in h for h in hits)
+
+
+def test_bleep_custom_words():
+    from server.core.word_filter import filter_word_timestamps
+    words = [{"word": "banana", "start": 0.0, "end": 0.5}]
+    assert filter_word_timestamps(words) == []
+    hits = filter_word_timestamps(words, custom_words=["banana"])
+    assert len(hits) == 1 and hits[0]["word"] == "banana"
+
+
+def test_filler_elongation_matching():
+    from server.core.filler_cutter import _collapse_elongation, DEFAULT_FILLERS
+    assert _collapse_elongation("uhhh") == "uh"
+    assert _collapse_elongation("ummm") == "um"
+    assert _collapse_elongation("errr") == "er"
+    collapsed = {_collapse_elongation(f) for f in DEFAULT_FILLERS}
+    # Elongated variants normalize to a known filler.
+    assert _collapse_elongation("uhhhh") in collapsed
+    assert _collapse_elongation("ahhh") in collapsed
+
+
 # ---------------------------------------------------------------------------
 # ffmpeg_tools refactor tests
 # ---------------------------------------------------------------------------
@@ -238,16 +278,43 @@ def test_build_filter_chain_full_passthrough_is_empty():
 def test_build_filter_chain_vertical_crop():
     from server.core.ffmpeg_tools import build_filter_chain
     chain = build_filter_chain(layout="", aspect_ratio="9:16", has_cam=False)
-    assert len(chain) == 1 and "[0:v]crop=ih*9/16:ih:" in chain[0]
+    assert len(chain) == 1 and chain[0].startswith("[0:v]crop=")
+    # Both dimensions must be bounded by the source. `crop=ih*9/16:ih` asked for
+    # a window wider than vertical footage and ffmpeg failed the encode.
+    assert "min(iw" in chain[0] and "min(ih" in chain[0]
 
 
-def test_build_filter_chain_16x9_fit():
+def test_build_filter_chain_crop_ratios_are_source_bounded():
+    """Regression: every crop ratio must clamp to the source in BOTH axes, or
+    exporting that ratio from already-vertical footage dies in the encoder."""
+    from server.core.ffmpeg_tools import CROP_RATIOS, build_filter_chain
+
+    for ratio in CROP_RATIOS:
+        chain = build_filter_chain(layout="", aspect_ratio=ratio, has_cam=False)
+        assert len(chain) == 1, ratio
+        assert "min(iw" in chain[0] and "min(ih" in chain[0], ratio
+
+
+def test_build_filter_chain_16x9_letterboxes_instead_of_cropping():
+    """16:9 must FIT the whole frame and pad the remainder. Cropping to 16:9
+    turned a vertical clip into a strip (and previously output 340x606 — not
+    even 16:9), so landscape delivery pads instead."""
     from server.core.ffmpeg_tools import build_filter_chain
     chain = build_filter_chain(layout="full", aspect_ratio="16:9", has_cam=False)
     assert len(chain) == 1
-    # 16:9 must FIT (scale) rather than crop the frame.
-    assert "scale=w=min(iw" in chain[0]
-    assert "force_original_aspect_ratio=decrease" in chain[0]
+    assert "pad=w=max(iw" in chain[0]
+    assert "setsar=1" in chain[0]
+    assert "crop=" not in chain[0]
+
+
+def test_crop_expr_clamps_speaker_offset_in_frame():
+    """An active-speaker x offset must never push the window off the frame."""
+    from server.core.ffmpeg_tools import build_crop_expr
+
+    expr = build_crop_expr(9, 16, "1500")
+    assert "max(1500" in expr and "iw-ow" in expr
+    # No offset -> centred.
+    assert "(iw-ow)/2" in build_crop_expr(9, 16, None)
 
 
 def test_build_filter_chain_game_reaction_needs_cam():
@@ -681,3 +748,128 @@ def test_social_metadata_generation():
     assert "#shorts" in data["hashtags"]
     assert "#technology" in data["hashtags"] or "#tech" in data["hashtags"]
     assert "Disclaimer:" in data["formatted_post"] or len(data["disclaimer"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# Multi-aspect crop geometry (preview + export share this math)
+# ---------------------------------------------------------------------------
+
+def _ratio_of(rect):
+    w, h, _x, _y = rect
+    return w / h
+
+
+def test_compute_crop_rect_landscape_source():
+    """A wide source is height-limited: full height, narrowed width, centred."""
+    from server.core.ffmpeg_tools import compute_crop_rect
+
+    w, h, x, y = compute_crop_rect(1920, 1080, "9:16")
+    assert (h, y) == (1080, 0)
+    assert abs(w / h - 9 / 16) < 0.01
+    assert x == (1920 - w) // 2          # centred by default
+    assert w < 1920                       # actually cropped, not passed through
+
+    assert abs(_ratio_of(compute_crop_rect(1920, 1080, "4:5")) - 4 / 5) < 0.01
+    assert abs(_ratio_of(compute_crop_rect(1920, 1080, "1:1")) - 1.0) < 0.01
+
+
+def test_compute_crop_rect_vertical_source_keeps_target_ratio():
+    """Regression: a 4:5 crop of ALREADY-VERTICAL footage must stay 4:5.
+
+    The target width (1920*4/5) exceeds the 1080px source width, so the crop is
+    width-limited and the HEIGHT has to shrink. Naively clamping only the width
+    left the rect at the source's own 9:16 shape.
+    """
+    from server.core.ffmpeg_tools import compute_crop_rect
+
+    w, h, x, y = compute_crop_rect(1080, 1920, "4:5")
+    assert (w, h) == (1080, 1350)
+    assert abs(w / h - 4 / 5) < 0.01
+    assert x == 0 and y == (1920 - 1350) // 2   # centred vertically
+
+
+def test_compute_crop_rect_noop_and_offsets():
+    from server.core.ffmpeg_tools import compute_crop_rect
+
+    # Source already matches the target -> full frame (caller skips the filter).
+    assert compute_crop_rect(1080, 1920, "9:16") == (1080, 1920, 0, 0)
+    assert compute_crop_rect(1080, 1080, "1:1") == (1080, 1080, 0, 0)
+    # 16:9 is NOT a crop ratio (it letterboxes), so it has no crop rectangle.
+    assert compute_crop_rect(1920, 1080, "16:9") is None
+
+    # Active-speaker offset is honoured, but clamped to stay inside the frame.
+    w, _h, x, _y = compute_crop_rect(1920, 1080, "9:16", crop_x_offset=400)
+    assert x == 400
+    _w2, _h2, x2, _y2 = compute_crop_rect(1920, 1080, "9:16", crop_x_offset=99999)
+    assert x2 == 1920 - w                 # pinned to the right edge, never off-frame
+    _w3, _h3, x3, _y3 = compute_crop_rect(1920, 1080, "9:16", crop_x_offset=-500)
+    assert x3 == 0                        # and never negative
+
+
+def test_compute_crop_rect_even_dimensions_and_guards():
+    from server.core.ffmpeg_tools import compute_crop_rect
+
+    # Odd source dimensions still yield even crop sizes (encoder-safe).
+    w, h, _x, _y = compute_crop_rect(1921, 1081, "9:16")
+    assert w % 2 == 0 and h % 2 == 0
+
+    # Unknown ratio / unusable dimensions degrade to None (caller: no crop).
+    assert compute_crop_rect(1920, 1080, "3:7") is None
+    assert compute_crop_rect(0, 1080, "9:16") is None
+    assert compute_crop_rect(1920, 0, "9:16") is None
+
+
+# ---------------------------------------------------------------------------
+# Virality breakdown honesty: never report a score nothing measured
+# ---------------------------------------------------------------------------
+
+def test_virality_breakdown_has_no_flattering_defaults():
+    """Regression: these defaulted to 8.5/8.0/9.0/'High', so any detector that
+    computed no breakdown still rendered confident numbers. Unknown must be
+    None so the card can show '-' instead of inventing analysis."""
+    from server.models import ViralityBreakdown
+
+    empty = ViralityBreakdown()
+    assert empty.hook_score is None
+    assert empty.flow_score is None
+    assert empty.engagement_score is None
+    assert empty.trend_potential is None
+
+
+def test_audio_energy_clips_report_only_measured_signals():
+    """The energy detector measures loudness + duration, not hook wording."""
+    from server.core.audio_energy import _flow_from_duration, _trend_from_score
+
+    # Flow peaks near the ~35s sweet spot and degrades away from it.
+    assert _flow_from_duration(35.0) == 10.0
+    assert _flow_from_duration(5.0) < _flow_from_duration(30.0)
+    # Bounded to the documented 6-10 range whatever the length.
+    for d in (0.5, 12.0, 35.0, 90.0, 600.0):
+        assert 6.0 <= _flow_from_duration(d) <= 10.0
+
+    assert _trend_from_score(9.0) == "Very High"
+    assert _trend_from_score(7.5) == "High"
+    assert _trend_from_score(5.0) == "Good"
+
+
+def test_heuristic_detector_still_fills_a_full_breakdown():
+    """The keyword detector DOES analyse hook wording, so it must keep
+    reporting hook_score (this is the one detector that legitimately can)."""
+    from server.core.highlight_detector import HighlightDetector
+    from server.models import TranscriptSegment, WordTimestamp
+
+    words = [WordTimestamp(word=w, start=float(i), end=float(i) + 0.5)
+             for i, w in enumerate(
+                 ("here is the secret nobody tells you about why this "
+                  "always works and the truth is insane").split())]
+    seg = TranscriptSegment(id=0, start=0.0, end=25.0,
+                            text=" ".join(w.word for w in words), words=words)
+
+    det = HighlightDetector(min_duration=5.0, max_duration=60.0)
+    clips = det.detect_highlights_heuristic([seg])
+    assert clips, "expected the keyword detector to find a candidate"
+    v = clips[0].virality
+    assert v is not None
+    assert v.hook_score is not None      # genuinely measured from keywords
+    assert v.trend_potential in ("Good", "High", "Very High")
+    assert v.hook_keywords                # the words it actually matched

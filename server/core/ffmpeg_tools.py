@@ -10,7 +10,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # libx264 fallback args reused across render / silence-cut / bleep / export paths.
 X264_FALLBACK_ARGS = ["-preset", "fast", "-crf", "22"]
@@ -342,44 +342,23 @@ def build_filter_chain(
                 f"[0:v][cf]overlay={x}:{y}:eof_action=repeat[v]"
             )
             filters.append(base_chain)
-    elif aspect_ratio == "9:16":
+    elif aspect_ratio in CROP_RATIOS:
+        # One orientation-safe crop for every crop ratio. The x window follows
+        # the active speaker when a trajectory expression / offset is supplied
+        # (single-quoted so its commas aren't read as filtergraph separators).
+        num, den = CROP_RATIOS[aspect_ratio]
         if crop_x_expr:
-            # Dynamic active-speaker crop: x follows a time expression (single-
-            # quoted so its commas aren't read as filtergraph separators).
-            filters.append(f"[0:v]crop=ih*9/16:ih:'{crop_x_expr}':0[v]")
+            x_expr = crop_x_expr
         elif crop_x_offset is not None:
-            filters.append(f"[0:v]crop=ih*9/16:ih:{crop_x_offset}:0[v]")
+            x_expr = f"{crop_x_offset}"
         else:
-            filters.append("[0:v]crop=ih*9/16:ih:(iw-ow)/2:0[v]")
-    elif aspect_ratio == "1:1":
-        if crop_x_expr:
-            filters.append(f"[0:v]crop=min(iw\\,ih):min(iw\\,ih):'{crop_x_expr}':(ih-oh)/2[v]")
-        elif crop_x_offset is not None:
-            filters.append(f"[0:v]crop=min(iw\\,ih):min(iw\\,ih):{crop_x_offset}:(ih-oh)/2[v]")
-        else:
-            filters.append("[0:v]crop=min(iw\\,ih):min(iw\\,ih):(iw-ow)/2:(ih-oh)/2[v]")
-    elif aspect_ratio == "4:5":
-        if crop_x_expr:
-            filters.append(f"[0:v]crop=ih*4/5:ih:'{crop_x_expr}':0[v]")
-        elif crop_x_offset is not None:
-            filters.append(f"[0:v]crop=ih*4/5:ih:{crop_x_offset}:0[v]")
-        else:
-            filters.append("[0:v]crop=ih*4/5:ih:(iw-ow)/2:0[v]")
-    elif aspect_ratio == "16:9":
-        # Landscape for YouTube - fit the largest 16:9 window inside the frame.
-        if crop_x_offset is not None:
-            filters.append(
-                f"[0:v]scale=w=min(iw\\,ih*16/9):h=min(ih\\,iw*9/16):"
-                f"force_original_aspect_ratio=decrease,crop=trunc(iw/2)*2:trunc(ih/2)*2,"
-                f"setsar=1,pad=w=trunc(iw/2)*2:h=trunc(ih/2)*2:x={crop_x_offset}:y=0,"
-                f"scale=trunc(iw/2)*2:trunc(ih/2)*2[v]"
-            )
-        else:
-            filters.append(
-                "[0:v]scale=w=min(iw\\,ih*16/9):h=min(ih\\,iw*9/16):"
-                "force_original_aspect_ratio=decrease,crop=trunc(iw/2)*2:trunc(ih/2)*2,"
-                "setsar=1[v]"
-            )
+            x_expr = None
+        filters.append(f"[0:v]{build_crop_expr(num, den, x_expr)}[v]")
+    elif aspect_ratio in LETTERBOX_RATIOS:
+        # Landscape delivery: fit the WHOLE frame and pad the leftover space, so
+        # vertical footage keeps its subject instead of being cropped to a strip.
+        num, den = LETTERBOX_RATIOS[aspect_ratio]
+        filters.append(f"[0:v]{build_letterbox_chain(num, den)}[v]")
 
     return filters
 
@@ -770,7 +749,7 @@ def extract_best_thumbnail(
     for use as the video cover / poster image.
     """
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    if not out_path.lower().endswith((".jpg", ".jpeg", ".png")):
+    if not out_path.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".bmp")):
         out_path = f"{out_path}.jpg"
 
     cmd = [
@@ -797,6 +776,240 @@ def extract_best_thumbnail(
         raise RuntimeError(f"Thumbnail extraction failed for {video_path}")
     return out_path
 
+
+def _score_frame(frame) -> float:
+    """Score a BGR frame for thumbnail suitability: sharper + well-exposed is
+    better. Uses the Laplacian variance (focus measure) scaled down when the
+    frame is very dark or blown-out. Requires OpenCV; caller guards import."""
+    import cv2
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    brightness = float(gray.mean())
+    # Penalize near-black / blown-out frames (bad covers) but don't zero them.
+    exposure = 1.0 if 30.0 <= brightness <= 225.0 else 0.35
+    return sharpness * exposure
+
+
+def extract_candidate_thumbnails(
+    video_path: str,
+    out_dir: str,
+    count: int = 3,
+    img_format: str = "jpg",
+    sample: int = 15,
+) -> List[Dict[str, Any]]:
+    """Pick up to ``count`` strong candidate cover frames from a clip.
+
+    Samples frames across the clip, scores them by sharpness/exposure (OpenCV),
+    and returns the top spaced-out picks as saved images:
+    ``[{"path", "timestamp", "score"}, ...]`` in chronological order. Falls back
+    to evenly-spaced ffmpeg extractions (no scoring) when OpenCV can't decode.
+    """
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    count = max(1, int(count))
+    fmt = (img_format or "jpg").lower().lstrip(".")
+    if fmt not in ("jpg", "jpeg", "png", "webp", "bmp"):
+        fmt = "jpg"
+    dur = get_video_duration(video_path) or 0.0
+
+    # Preferred path: OpenCV sampling + scoring (opencv ships with the YOLO dep).
+    try:
+        import cv2
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise RuntimeError("OpenCV could not open the clip")
+        # Sample across the middle of the clip to skip black intro/outro frames.
+        lo, hi = (dur * 0.05, dur * 0.95) if dur > 1.0 else (0.0, max(0.0, dur))
+        n = max(count, min(int(sample), 30))
+        times = [lo + (hi - lo) * i / (n - 1) for i in range(n)] if n > 1 else [max(0.0, dur / 2)]
+        scored = []
+        for t in times:
+            cap.set(cv2.CAP_PROP_POS_MSEC, t * 1000.0)
+            ok, frame = cap.read()
+            if ok and frame is not None:
+                scored.append((t, _score_frame(frame), frame))
+        if not scored:
+            cap.release()
+            raise RuntimeError("No frames decoded")
+        # Best score first, then greedily keep picks spaced apart in time so the
+        # candidates look meaningfully different (not 3 near-identical frames).
+        scored.sort(key=lambda x: x[1], reverse=True)
+        min_gap = max(0.5, dur / (count * 2)) if dur > 0 else 0.5
+        picked, picked_times = [], []
+        for t, sc, frame in scored:
+            if all(abs(t - pt) >= min_gap for pt in picked_times):
+                picked.append((t, sc, frame)); picked_times.append(t)
+            if len(picked) >= count:
+                break
+        if len(picked) < count:  # top up ignoring the spacing constraint
+            for t, sc, frame in scored:
+                if t in picked_times:
+                    continue
+                picked.append((t, sc, frame)); picked_times.append(t)
+                if len(picked) >= count:
+                    break
+        picked.sort(key=lambda x: x[0])  # chronological order for display
+        out: List[Dict[str, Any]] = []
+        for i, (t, sc, frame) in enumerate(picked, 1):
+            p = str(Path(out_dir) / f"thumb_{i}.{fmt}")
+            try:
+                if cv2.imwrite(p, frame) and os.path.exists(p) and os.path.getsize(p) > 0:
+                    out.append({"path": p, "timestamp": round(float(t), 3), "score": round(float(sc), 2)})
+            except Exception:
+                continue
+        cap.release()
+        if out:
+            return out
+    except Exception:
+        pass
+
+    # Fallback: evenly-spaced stills via ffmpeg, no scoring.
+    save_fmt = fmt if fmt in ("jpg", "jpeg", "png") else "jpg"
+    times = [dur * (i + 1) / (count + 1) for i in range(count)] if dur > 0 else [0.5]
+    out = []
+    for i, t in enumerate(times, 1):
+        p = str(Path(out_dir) / f"thumb_{i}.{save_fmt}")
+        try:
+            extract_best_thumbnail(video_path, p, timestamp=t)
+            out.append({"path": p, "timestamp": round(float(t), 3), "score": 0.0})
+        except Exception:
+            continue
+    return out
+
+
+# Ratios delivered by CROPPING into the frame, as (width, height) parts.
+# 16:9 is deliberately absent: cropping vertical footage to landscape would
+# slice the subject's head off, so it letterboxes instead (see LETTERBOX_RATIOS).
+CROP_RATIOS: Dict[str, Tuple[int, int]] = {
+    "9:16": (9, 16),
+    "4:5": (4, 5),
+    "1:1": (1, 1),
+}
+
+# Ratios delivered by FITTING the whole frame and padding the leftover space.
+LETTERBOX_RATIOS: Dict[str, Tuple[int, int]] = {
+    "16:9": (16, 9),
+}
+
+ASPECT_RATIOS: Dict[str, float] = {
+    k: n / d for k, (n, d) in {**CROP_RATIOS, **LETTERBOX_RATIOS}.items()
+}
+
+
+def build_letterbox_chain(num: int = 16, den: int = 9, max_long_side: int = 1920) -> str:
+    """ffmpeg filter that pads any source out to an exact ``num:den`` canvas.
+
+    Used for landscape delivery: a vertical clip keeps its full height and gains
+    side bars (rather than being cropped), so nobody gets decapitated. The pad
+    target is derived from whichever source dimension is short for the target
+    ratio, then the result is scaled so its long side is at most
+    ``max_long_side`` — otherwise padding 1080x1920 out to 16:9 would produce a
+    needlessly huge 3413x1920 frame.
+    """
+    pad_w = f"max(iw\\,ih*{num}/{den})"
+    pad_h = f"max(ih\\,iw*{den}/{num})"
+    return (
+        f"pad=w={pad_w}:h={pad_h}:x=(ow-iw)/2:y=(oh-ih)/2:color=black,"
+        f"scale=w=trunc(min(iw\\,{max_long_side})/2)*2:h=-2,setsar=1"
+    )
+
+
+def build_crop_expr(num: int, den: int, x_expr: Optional[str] = None) -> str:
+    """ffmpeg ``crop`` for the largest ``num:den`` rectangle inside ANY source.
+
+    Both dimensions are bounded by the source (``min(...)``), which is the whole
+    point: the old ``crop=ih*4/5:ih`` asked for a 1536px-wide window from 1080px
+    footage, and ffmpeg failed the encode outright. ``x_expr`` (active-speaker
+    framing) is clamped so the window can never run off-frame.
+    """
+    w = f"trunc(min(iw\\,ih*{num}/{den})/2)*2"
+    h = f"trunc(min(ih\\,iw*{den}/{num})/2)*2"
+    x = f"min(max({x_expr}\\,0)\\,iw-ow)" if x_expr is not None else "(iw-ow)/2"
+    return f"crop={w}:{h}:{x}:(ih-oh)/2"
+
+
+def compute_crop_rect(
+    src_w: int,
+    src_h: int,
+    aspect_ratio: str,
+    crop_x_offset: Optional[float] = None,
+) -> Optional[Tuple[int, int, int, int]]:
+    """Largest ``(w, h, x, y)`` rectangle of ``aspect_ratio`` that fits inside a
+    ``src_w`` x ``src_h`` frame. Pure + testable.
+
+    Works for any source orientation: whichever dimension is the binding
+    constraint is pinned and the other is derived from the target ratio, so the
+    result is ALWAYS the requested aspect (naively clamping just the width left
+    e.g. a 4:5 crop of vertical footage at the wrong shape). ``crop_x_offset``
+    shifts the window horizontally (active-speaker framing) and is clamped to
+    stay in frame; vertical placement is centred. Returns None when the source
+    dimensions are unusable or the ratio is unknown.
+    """
+    parts = CROP_RATIOS.get(aspect_ratio)
+    if not parts or src_w <= 0 or src_h <= 0:
+        return None
+    ratio = parts[0] / parts[1]
+
+    if src_w / src_h > ratio:
+        # Source is wider than the target -> height-limited.
+        ch, cw = src_h, src_h * ratio
+    else:
+        # Source is narrower/taller than the target -> width-limited.
+        cw, ch = src_w, src_w / ratio
+
+    # Even dimensions keep H.264/JPEG encoders happy, and never exceed the source.
+    cw = max(2, min(int(round(cw)), src_w))
+    ch = max(2, min(int(round(ch)), src_h))
+    cw -= cw % 2
+    ch -= ch % 2
+
+    x = int(round(float(crop_x_offset))) if crop_x_offset is not None else (src_w - cw) // 2
+    x = max(0, min(x, src_w - cw))
+    y = max(0, (src_h - ch) // 2)
+    return cw, ch, x, y
+
+
+def render_cropped_frame(
+    source: str,
+    out_path: str,
+    timestamp: float,
+    aspect_ratio: str = "9:16",
+    crop_x_offset: Optional[float] = None,
+) -> str:
+    """Render a SINGLE still frame cropped to a target aspect ratio, using the
+    same crop math as build_filter_chain. Used for the multi-aspect preview so
+    the user sees the REAL framing (incl. active-speaker offset) before export."""
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    if not out_path.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+        out_path = f"{out_path}.jpg"
+
+    # Compute a concrete integer crop rectangle from the real frame size so the
+    # preview always crops correctly (expression-based crop was fragile on some
+    # sources: it could leave the frame uncropped or fail on odd dimensions).
+    vf = None
+    if aspect_ratio in LETTERBOX_RATIOS:
+        # Match the export exactly: landscape delivery pads, it doesn't crop.
+        num, den = LETTERBOX_RATIOS[aspect_ratio]
+        vf = build_letterbox_chain(num, den)
+    else:
+        dims = probe_video_dims(source)
+        if dims:
+            src_w, src_h, _ = dims
+            rect = compute_crop_rect(src_w, src_h, aspect_ratio, crop_x_offset)
+            if rect:
+                cw, ch, x, y = rect
+                # A no-op crop (already exactly this ratio) needs no filter.
+                if not (cw == src_w and ch == src_h):
+                    vf = f"crop={cw}:{ch}:{x}:{y}"
+
+    cmd = ["ffmpeg", "-y", "-ss", str(max(0.0, timestamp)), "-i", source, "-vframes", "1"]
+    if vf:
+        cmd += ["-vf", vf]
+    # Sources we couldn't probe fall through as a full-frame grab.
+    cmd += ["-q:v", "3", out_path]
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if res.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+        raise RuntimeError(f"Cropped frame render failed: {res.stderr[-300:]}")
+    return out_path
 
 
 def concat_clips(

@@ -101,11 +101,25 @@ GPU, network, or Ollama running).
 
 ## Branch & PR flow
 
-- Branch off `develop` (or the default branch) — e.g. `feat/url-import`, `fix/intro-hook-timing`.
+**One app, one release line.** There is no separate "OpenAI edition": the LLM backend is a
+runtime setting (`server/core/llm_client.py` + Setup → AI engine), so Ollama and any
+OpenAI-compatible server are the same build.
+
+- `main` — released code.
+- `develop` — active development; stabilized here before merging to `main`.
+- `feature/*` — in-progress work branched off `develop`.
+
+**Adding an AI backend?** Don't add a call site. `llm_client.chat()` is the single seam every
+AI feature goes through (`llm_detector`, `hook_writer`, `edit_chat`, `translator`); extend that
+rather than importing a provider SDK somewhere new, and keep the graceful fallback so features
+still work when no engine is reachable.
+
+Then:
+
 - Keep commits focused; write a clear message describing the *why*, not just the *what*.
 - Make sure `pytest`, `node --check`, and `py_compile` all pass locally.
-- Open a PR describing the change, how you tested it, and any platform caveats (Windows/macOS/Linux,
-  GPU vs CPU).
+- Open a PR describing the change, how you tested it, and any platform caveats
+  (Windows/macOS/Linux, GPU vs CPU, vertical vs landscape footage).
 - Don't commit generated artifacts or secrets (see below).
 
 ---

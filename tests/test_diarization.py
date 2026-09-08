@@ -136,7 +136,12 @@ def test_caption_styler_label_only_on_first_chunk(tmp_path):
     out = str(tmp_path / "cap.ass")
     generate_karaoke_captions([seg], out, chunk_size=4)
     content = open(out, encoding="utf-8").read()
-    assert content.count("SPEAKER 2:") == 1
+    # Per-word events mean the label rides each word line of the FIRST chunk
+    # (w0-w3) only, never the second chunk (w4-w7). Verify it's confined there.
+    labeled = [l for l in content.splitlines()
+               if l.startswith("Dialogue") and "SPEAKER 2:" in l]
+    assert labeled, "expected the speaker label on the first chunk"
+    assert all("w4" not in l and "w7" not in l for l in labeled)
 
 
 # ---------------------------------------------------------------------------

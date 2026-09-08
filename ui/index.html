@@ -340,11 +340,22 @@
                 </label>
                 <label class="toggle">
                   <input type="checkbox" id="censor-profanity" />
-                  <span>🔇 Bleep / Mute profanity</span>
+                  <span>🔇 Censor profanity</span>
+                </label>
+                <label class="toggle censor-mode-row">
+                  <span class="muted small">Mode</span>
+                  <select id="censor-mode" title="Bleep replaces the word with a 1kHz tone; Mute silences it instead.">
+                    <option value="bleep" selected>Bleep (1kHz tone)</option>
+                    <option value="mute">Mute (silence)</option>
+                  </select>
                 </label>
                 <label class="toggle">
                   <input type="checkbox" id="filler-aggressive" />
-                  <span>🧹 Aggressive filler cut (also remove "you know", "I mean"…)</span>
+                  <span>🧹 Aggressive filler cut — applies to the per-clip 🧹 Fillers button
+                    <span class="tooltip-toggle" tabindex="0" role="tooltip" aria-label="More info about aggressive filler cutting" title="">
+                      ❓<span class="tooltip-text">This does NOT run during clipping. It sets how the 🧹 Fillers button on each finished clip behaves.<br><br>Off: cuts only clear disfluencies ("um", "uh", "err").<br>On: also cuts filler phrases like "you know" and "I mean".</span>
+                    </span>
+                  </span>
                 </label>
               </div>
             </div>
@@ -458,7 +469,7 @@
 
                     <label class="caption-field caption-font-size">
                       <span>Font Size (<output id="generated-caption-font-size-label" for="generated-caption-font-size">40</output>px)</span>
-                      <input type="range" id="generated-caption-font-size" min="12" max="80" step="1" value="40" />
+                      <input type="range" id="generated-caption-font-size" min="35" max="200" step="1" value="40" />
                     </label>
 
                     <label class="caption-field">
@@ -603,32 +614,58 @@
               <p class="muted" id="results-summary">AI-scored and cropped ready for TikTok, Reels & YouTube Shorts</p>
             </div>
             <div class="export-actions">
-              <button class="btn btn-secondary" id="step4-restart-btn">➕ New Clipping Project</button>
-              <span class="export-sep">|</span>
-              <button class="btn btn-secondary" id="export-premiere">🎬 Premiere Pro (XML)</button>
-              <button class="btn btn-secondary" id="export-davinci">🎞️ DaVinci (EDL)</button>
-              <button class="btn btn-secondary" id="export-capcut">✂️ CapCut</button>
-              <span class="export-sep">|</span>
-              <select id="standalone-asset" class="export-format-select" title="Standalone asset export" aria-label="Standalone asset export format">
-                <option value="audio_mp3">🎵 Audio Only (MP3 320k)</option>
-                <option value="audio_wav">🎵 Audio Only (WAV 44.1k)</option>
-                <option value="audio_flac">🎵 Audio Only (FLAC Lossless)</option>
-                <option value="audio_aac">🎵 Audio Only (AAC 256k)</option>
-                <option value="audio_m4a">🎵 Audio Only (M4A)</option>
-                <option value="sub_srt">📝 Subtitles (SRT)</option>
-                <option value="sub_vtt">📝 Subtitles (VTT)</option>
-              </select>
-              <button class="btn btn-secondary btn-small" id="export-standalone-btn">💾 Export Asset</button>
-              <span class="export-sep">|</span>
-              <select id="compile-format" class="export-format-select" title="Reel output format" aria-label="Reel output format">
-                <option value="mp4">Export All as MP4 Reel</option>
-                <option value="webm">Export All as WebM Reel</option>
-                <option value="av1">Export All as AV1 Reel</option>
-                <option value="mov">Export All as MOV Reel</option>
-                <option value="mkv">Export All as MKV Reel</option>
-                <option value="gif">Export All as GIF Reel</option>
-              </select>
-              <button class="btn btn-primary btn-small" id="export-compile">🎬 Export All as Reel</button>
+              <div class="export-group export-group-new">
+                <button class="btn btn-secondary" id="step4-restart-btn">➕ New Clipping Project</button>
+              </div>
+
+              <div class="export-group">
+                <span class="export-group-label">🎬 Editor timeline</span>
+                <div class="export-group-controls">
+                  <button class="btn btn-secondary btn-small" id="export-premiere">Premiere Pro (XML)</button>
+                  <button class="btn btn-secondary btn-small" id="export-davinci">DaVinci (EDL)</button>
+                  <button class="btn btn-secondary btn-small" id="export-capcut">✂️ CapCut</button>
+                </div>
+              </div>
+
+              <div class="export-group">
+                <span class="export-group-label">🎵 Audio</span>
+                <div class="export-group-controls">
+                  <select id="standalone-audio" class="export-format-select" title="Audio export format" aria-label="Audio export format">
+                    <option value="audio_mp3">MP3 (320k)</option>
+                    <option value="audio_wav">WAV (44.1k)</option>
+                    <option value="audio_flac">FLAC (Lossless)</option>
+                    <option value="audio_aac">AAC (256k)</option>
+                    <option value="audio_m4a">M4A</option>
+                  </select>
+                  <button class="btn btn-secondary btn-small" id="export-audio-btn" data-select="standalone-audio">💾 Export audio</button>
+                </div>
+              </div>
+
+              <div class="export-group">
+                <span class="export-group-label">📝 Captions / Subtitles</span>
+                <div class="export-group-controls">
+                  <select id="standalone-subs" class="export-format-select" title="Subtitle export format" aria-label="Subtitle export format">
+                    <option value="sub_srt">SRT</option>
+                    <option value="sub_vtt">VTT</option>
+                  </select>
+                  <button class="btn btn-secondary btn-small" id="export-subs-btn" data-select="standalone-subs">💾 Export captions</button>
+                </div>
+              </div>
+
+              <div class="export-group">
+                <span class="export-group-label">🎞️ Highlights reel</span>
+                <div class="export-group-controls">
+                  <select id="compile-format" class="export-format-select" title="Reel output format" aria-label="Reel output format">
+                    <option value="mp4">MP4 Reel</option>
+                    <option value="webm">WebM Reel</option>
+                    <option value="av1">AV1 Reel</option>
+                    <option value="mov">MOV Reel</option>
+                    <option value="mkv">MKV Reel</option>
+                    <option value="gif">GIF Reel</option>
+                  </select>
+                  <button class="btn btn-primary btn-small" id="export-compile">🎬 Export All as Reel</button>
+                </div>
+              </div>
             </div>
           </div>
           <div id="clips-grid" class="clips-grid"></div>
@@ -650,7 +687,7 @@
               <div id="caption-preview" class="caption-preview">Preview will appear here when you pick a style.</div>
             </div>
             <label class="caption-preview-size">Preview font size
-              <input type="range" id="caption-preview-font-size" min="12" max="80" step="1" value="40" />
+              <input type="range" id="caption-preview-font-size" min="35" max="200" step="1" value="40" />
               <output id="caption-preview-font-size-label" for="caption-preview-font-size">40</output>
             </label>
             <div id="word-chips" class="word-chips-container"></div>
@@ -666,6 +703,7 @@
                   <button type="button" class="btn btn-small btn-secondary" id="suggest-hook-btn" title="Rotate hooks drawn from this clip's transcript (offline)">🔄 Suggest another</button>
                   <button type="button" class="btn btn-small btn-secondary" id="ai-rewrite-hook-btn" title="Rewrite the hook with your local AI model (Ollama). Falls back to offline suggestions if Ollama isn't running.">✨ AI rewrite</button>
                   <button type="button" class="btn btn-small btn-secondary" id="hook-variants-btn" title="Show several hook options at once to compare and pick">⚖️ Variants</button>
+                  <button type="button" class="btn btn-small btn-danger" id="remove-hook-btn" title="Remove the intro hook from this clip (no hook will be burned on export)">🚫 Remove hook</button>
                 </div>
                 <div id="hook-variants" class="hook-variants hidden"></div>
                 <span class="muted small">Leave blank for no intro hook. “Suggest another” is offline; “AI rewrite” uses your local Ollama model when it's running.</span>
@@ -870,11 +908,36 @@
             <button class="modal-close" id="multi-aspect-close" aria-label="Close dialog">&times;</button>
           </div>
           <div class="modal-body">
-            <p class="muted">Preview how this clip frames in each aspect ratio, tick the ones you want, then choose where to save. The preview is an approximate center-crop; the export uses the app's smart framing.</p>
+            <p class="muted">Each preview is the real active-speaker crop that will be exported. Tick the ratios you want, then choose where to save.</p>
             <div id="multi-aspect-previews" class="multi-aspect-previews"></div>
             <div class="multi-aspect-actions">
               <button class="btn btn-secondary" id="multi-aspect-cancel">Cancel</button>
               <button class="btn btn-primary" id="multi-aspect-export">📂 Choose folder &amp; Export</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pick Frame (Thumbnail Chooser) Modal -->
+      <div id="thumb-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="thumb-title">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3 id="thumb-title">🖼️ Pick a Thumbnail Frame</h3>
+            <button class="modal-close" id="thumb-close" aria-label="Close dialog">&times;</button>
+          </div>
+          <div class="modal-body">
+            <p class="muted">Best frames picked from the clip. Choose one, then set it as the cover or download it as an image.</p>
+            <div id="thumb-candidates" class="thumb-candidates"></div>
+            <div class="thumb-actions">
+              <label>Format:
+                <select id="thumb-format" class="export-format-select" title="Image format for download">
+                  <option value="png">PNG</option>
+                  <option value="jpg">JPG</option>
+                  <option value="webp">WebP</option>
+                </select>
+              </label>
+              <button class="btn btn-secondary" id="thumb-set-poster">🖼️ Set as poster</button>
+              <button class="btn btn-primary" id="thumb-download">⬇️ Download image</button>
             </div>
           </div>
         </div>
@@ -1012,6 +1075,98 @@
           </div>
           <p class="muted small" id="ai-models-note">Whisper size applies to the next clipping run. The LLM model is used by AI Edit Chat, LLM highlight discovery, and the optional AI hook rewrite.</p>
 
+          <!-- AI backend: built-in Ollama, or any OpenAI-compatible server -->
+          <div class="card-head-row" style="margin-top:18px;">
+            <h3>🔌 AI engine</h3>
+            <span class="muted small">Use the built-in Ollama, or point Klipzy at your own AI server</span>
+          </div>
+          <div class="llm-backend-block">
+            <div class="llm-backend-choices">
+              <label class="toggle" title="Klipzy talks to Ollama running on this machine. Simplest option — nothing to configure.">
+                <input type="radio" name="llm-backend" id="llm-backend-ollama" value="ollama" checked />
+                <span>🏠 Built-in (Ollama)</span>
+              </label>
+              <label class="toggle" title="Any server that speaks the OpenAI API: llama.cpp llama-server, LM Studio, vLLM, or a cloud endpoint. They all share the same /v1/chat/completions format, so one address is all Klipzy needs.">
+                <input type="radio" name="llm-backend" id="llm-backend-openai" value="openai" />
+                <span>🌐 Custom (OpenAI-compatible)</span>
+              </label>
+            </div>
+
+            <div id="llm-custom-fields" class="llm-custom-fields hidden">
+              <label class="option">
+                <span>Server address
+                  <span class="help-hint" title="The base URL of your AI server. Examples:&#10;• LM Studio → http://localhost:1234/v1&#10;• llama.cpp llama-server → http://localhost:8080/v1&#10;• Ollama's OpenAI route → http://localhost:11434/v1&#10;You can paste it with or without the /v1 — Klipzy sorts it out.">ⓘ</span>
+                </span>
+                <input type="text" id="llm-base-url" placeholder="http://localhost:1234/v1" spellcheck="false" />
+              </label>
+              <label class="option">
+                <span>Model name
+                  <span class="help-hint" title="Whatever your server calls the model. LM Studio and llama-server show this in their UI; leave blank to use the server's default.">ⓘ</span>
+                </span>
+                <input type="text" id="llm-model-name" placeholder="e.g. qwen2.5-7b-instruct" spellcheck="false" />
+              </label>
+              <label class="option">
+                <span>API key <span class="muted small">(optional)</span>
+                  <span class="help-hint" title="Only needed for servers that require auth, such as a cloud endpoint. Local servers usually need nothing. Stored locally and never displayed again.">ⓘ</span>
+                </span>
+                <input type="password" id="llm-api-key" placeholder="Leave blank for local servers" spellcheck="false" />
+              </label>
+            </div>
+
+            <div class="llm-backend-actions">
+              <button class="btn btn-secondary btn-small" id="llm-test-btn">🔍 Test connection</button>
+              <button class="btn btn-primary btn-small" id="llm-save-btn">💾 Save AI engine</button>
+              <span class="muted small" id="llm-backend-status">Checking…</span>
+            </div>
+            <p class="muted small">Everything stays local unless you deliberately point this at a cloud address. Ollama remains the default, and every AI feature falls back to offline heuristics if no engine is reachable.</p>
+          </div>
+
+          <!-- Transcription engine: local Whisper, or a remote OpenAI-compatible ASR server -->
+          <div class="card-head-row" style="margin-top:18px;">
+            <h3>🎙️ Subtitle engine</h3>
+            <span class="muted small">Transcribe on this machine, or send audio to your own speech-to-text server</span>
+          </div>
+          <div class="llm-backend-block">
+            <div class="llm-backend-choices">
+              <label class="toggle" title="Klipzy transcribes on this machine with Whisper (MLX / faster-whisper / openai-whisper, picked automatically). Nothing to configure.">
+                <input type="radio" name="asr-backend" id="asr-backend-local" value="local" checked />
+                <span>🏠 Built-in (Whisper)</span>
+              </label>
+              <label class="toggle" title="Any server speaking the OpenAI audio-transcription API: whisper.cpp whisper-server, faster-whisper-server, Speaches, or OpenAI. Klipzy uploads each clip's audio and gets timed text back.">
+                <input type="radio" name="asr-backend" id="asr-backend-openai" value="openai" />
+                <span>🌐 Custom (whisper.cpp / OpenAI-compatible)</span>
+              </label>
+            </div>
+
+            <div id="asr-custom-fields" class="llm-custom-fields hidden">
+              <label class="option">
+                <span>Server address
+                  <span class="help-hint" title="The base URL of your speech-to-text server. Examples:&#10;• whisper.cpp whisper-server → http://localhost:8080/v1&#10;• faster-whisper-server / Speaches → http://localhost:8000/v1&#10;Paste it with or without the /v1 — Klipzy sorts it out.">ⓘ</span>
+                </span>
+                <input type="text" id="asr-base-url" placeholder="http://localhost:8080/v1" spellcheck="false" />
+              </label>
+              <label class="option">
+                <span>Model name
+                  <span class="help-hint" title="Whatever your server calls the model. whisper.cpp servers often accept anything here; most OpenAI-compatible servers expect whisper-1. Leave blank to use whisper-1.">ⓘ</span>
+                </span>
+                <input type="text" id="asr-model-name" placeholder="whisper-1" spellcheck="false" />
+              </label>
+              <label class="option">
+                <span>API key <span class="muted small">(optional)</span>
+                  <span class="help-hint" title="Only needed for servers that require auth. Local servers usually need nothing. Stored locally and never displayed again.">ⓘ</span>
+                </span>
+                <input type="password" id="asr-api-key" placeholder="Leave blank for local servers" spellcheck="false" />
+              </label>
+            </div>
+
+            <div class="llm-backend-actions">
+              <button class="btn btn-secondary btn-small" id="asr-test-btn">🔍 Test connection</button>
+              <button class="btn btn-primary btn-small" id="asr-save-btn">💾 Save subtitle engine</button>
+              <span class="muted small" id="asr-backend-status">Checking…</span>
+            </div>
+            <p class="muted small">Karaoke captions need word-level timings. Servers that don't return them still work, but the highlight is spread evenly across each line instead of matching each spoken word — the connection test tells you which you're getting. If the server can't be reached during a run, Klipzy falls back to local Whisper automatically.</p>
+          </div>
+
           <div class="model-catalog-head card-head-row" style="margin-top:18px;">
             <h3>🧠 Local AI model catalog</h3>
             <span class="muted small">Download bigger models for sharper hooks — pick to match your hardware</span>
@@ -1070,6 +1225,12 @@
     </main>
   </div>
 
+  <!-- Classic scripts sharing one global scope. renderer.js holds the core
+       state + helpers and MUST load first; the feature files below only
+       register listeners at load time, so they can follow in any order. -->
   <script src="src/renderer.js"></script>
+  <script src="src/caption-editor.js"></script>
+  <script src="src/exports.js"></script>
+  <script src="src/setup-panel.js"></script>
 </body>
 </html>

@@ -118,9 +118,10 @@ class VideoClipperEngine:
         # Unload the Ollama model from VRAM immediately (keep_alive=0) rather than
         # letting it linger for its ~5-minute idle timeout.
         if unload_llm_model:
+            # No-op for a remote endpoint, which manages its own memory.
             try:
-                import ollama
-                ollama.generate(model=unload_llm_model, prompt="", keep_alive=0)
+                from server.core import llm_client
+                llm_client.unload(unload_llm_model)
             except Exception:
                 pass
         try:

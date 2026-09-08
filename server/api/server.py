@@ -25,7 +25,9 @@ from server.models import (
     DetectSilenceRequest, DetectSilenceResponse, RemoveSilenceRequest, RemoveSilenceResponse,
     BleepMuteRequest, BleepMuteResponse, CaptionPresetInfo,
     ThumbnailRequest, ThumbnailResponse, SocialMetadataRequest, SocialMetadataResponse,
+    ThumbnailCandidatesRequest, ThumbnailCandidatesResponse, ThumbnailSaveRequest, ThumbnailSaveResponse,
     MultiAspectExportRequest, MultiAspectExportResponse,
+    AspectPreviewRequest, AspectPreviewResponse,
     OverlayRequest, OverlayResponse, EmojiSuggestRequest, EmojiSuggestResponse,
 )
 from server.core.pipeline import VideoClipperEngine
@@ -34,7 +36,8 @@ from server.core.export_tools import export_fcpxml, export_edl, export_capcut_dr
 from server.core.ffmpeg_tools import (
     check_ffmpeg, get_media_info, get_video_duration, detect_hw_encoder, render_clip,
     export_clip_as, concat_clips, export_standalone_audio,
-    extract_best_thumbnail, extract_audio,
+    extract_best_thumbnail, extract_candidate_thumbnails, extract_audio,
+    render_cropped_frame,
 )
 from server.logging_setup import setup_logging
 from server.auth import (
@@ -194,6 +197,33 @@ def _resolve_startup_ollama_model() -> str:
 
 
 PREFERRED_OLLAMA_MODEL = _resolve_startup_ollama_model()
+
+
+def _active_llm_model() -> str:
+    """The model name to report/use for the CURRENT backend.
+
+    A custom OpenAI-compatible server names its models its own way, so the
+    configured value wins there; the built-in Ollama backend keeps using the
+    model picked in Setup.
+    """
+    try:
+        from server.core import llm_client
+        cfg = llm_client.load_config()
+        if cfg["backend"] == llm_client.BACKEND_OPENAI:
+            return cfg.get("model") or "local-model"
+    except Exception:
+        pass
+    return PREFERRED_OLLAMA_MODEL
+
+
+def _llm_available() -> bool:
+    """Is the configured LLM backend reachable? Backend-aware, so a remote
+    endpoint isn't judged by whether localhost:11434 happens to be up."""
+    try:
+        from server.core import llm_client
+        return llm_client.is_available()
+    except Exception:
+        return False
 
 
 def _ensure_output_root():
@@ -484,7 +514,7 @@ def list_jobs():
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
-    CHAT.model = PREFERRED_OLLAMA_MODEL  # honor the model chosen in Setup
+    CHAT.model = _active_llm_model()  # honor the backend + model chosen in Setup
     return CHAT.chat(
         message=req.message,
         conversation_history=req.conversation_history,
@@ -510,16 +540,22 @@ def export_project(req: ExportProjectRequest):
     video_dir = os.path.dirname(os.path.abspath(req.video_path))
     stem = os.path.splitext(os.path.basename(req.video_path))[0]
 
+    # Write the timeline into the user-picked folder when provided.
+    base_dir = video_dir
+    if req.output_dir:
+        base_dir = str(Path(req.output_dir).expanduser().resolve())
+        os.makedirs(base_dir, exist_ok=True)
+
     if req.format.lower() == "fcpxml":
-        out_path = os.path.join(video_dir, f"{stem}_shorts.xml")
+        out_path = os.path.join(base_dir, f"{stem}_shorts.xml")
         export_fcpxml(req.video_path, req.clips, out_path, fps=req.fps)
         msg = "Exported Premiere Pro / DaVinci Resolve XML successfully"
     elif req.format.lower() == "edl":
-        out_path = os.path.join(video_dir, f"{stem}_shorts.edl")
+        out_path = os.path.join(base_dir, f"{stem}_shorts.edl")
         export_edl(req.video_path, req.clips, out_path, fps=req.fps)
         msg = "Exported EDL timeline successfully"
     elif req.format.lower() == "capcut":
-        out_path = os.path.join(video_dir, f"{stem}_capcut_draft.json")
+        out_path = os.path.join(base_dir, f"{stem}_capcut_draft.json")
         export_capcut_draft(req.video_path, req.clips, out_path)
         msg = "Exported CapCut Draft project structure successfully"
     else:
@@ -613,6 +649,50 @@ def export_thumbnail_endpoint(req: ThumbnailRequest):
     return ThumbnailResponse(thumbnail_path=thumb, message="Thumbnail extracted successfully")
 
 
+@app.post("/export/thumbnail-candidates", response_model=ThumbnailCandidatesResponse)
+def export_thumbnail_candidates(req: ThumbnailCandidatesRequest):
+    """Generate several scored candidate cover frames so the user can pick the
+    best one. Candidates are written to a cache folder under the output root."""
+    if not os.path.isfile(req.video_path):
+        raise HTTPException(status_code=400, detail=f"Clip file not found: {req.video_path}")
+    stem = os.path.splitext(os.path.basename(req.video_path))[0]
+    out_dir = req.output_dir or str(_ensure_output_root() / ".cache" / "thumbs" / stem)
+    try:
+        candidates = extract_candidate_thumbnails(
+            req.video_path, out_dir, count=max(1, min(int(req.count or 3), 6)),
+            img_format=req.image_format,
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(e))
+    if not candidates:
+        raise HTTPException(status_code=500, detail="Could not extract any candidate frames")
+    return ThumbnailCandidatesResponse(
+        candidates=candidates,
+        message=f"Generated {len(candidates)} candidate frame(s)",
+    )
+
+
+@app.post("/export/thumbnail-save", response_model=ThumbnailSaveResponse)
+def export_thumbnail_save(req: ThumbnailSaveRequest):
+    """Save the frame at a chosen timestamp into a folder, in any image format
+    (png / jpg / webp / bmp)."""
+    if not os.path.isfile(req.video_path):
+        raise HTTPException(status_code=400, detail=f"Clip file not found: {req.video_path}")
+    fmt = (req.image_format or "png").lower().lstrip(".")
+    if fmt not in ("png", "jpg", "jpeg", "webp", "bmp"):
+        raise HTTPException(status_code=400, detail=f"Unsupported image format: {fmt}")
+    base_dir = Path(req.output_dir).expanduser().resolve()
+    base_dir.mkdir(parents=True, exist_ok=True)
+    safe = "".join(c for c in (req.title or Path(req.video_path).stem) if c.isalnum() or c in " _-").strip()
+    safe = " ".join(safe.split())[:70] or "thumbnail"
+    out_path = str(base_dir / f"{safe}.{fmt}")
+    try:
+        saved = extract_best_thumbnail(req.video_path, out_path, timestamp=req.timestamp)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(e))
+    return ThumbnailSaveResponse(path=saved, message=f"Saved thumbnail to {saved}")
+
+
 @app.post("/social/metadata", response_model=SocialMetadataResponse)
 def generate_social_metadata(req: SocialMetadataRequest):
     """
@@ -677,10 +757,14 @@ def export_compile(req: ExportCompileRequest):
         raise HTTPException(status_code=400, detail=f"Unsupported export format: {fmt}")
 
     stem = "".join(c for c in req.title if c.isalnum() or c in "-_" ).strip() or "highlights_reel"
-    out_path = req.output_path or os.path.join(
-        os.path.dirname(os.path.abspath(req.clip_paths[0])),
-        f"{stem}_reel.{fmt}",
-    )
+    # Prefer an explicit output_path; else a user-picked output_dir; else beside
+    # the first clip.
+    if req.output_dir:
+        base_dir = str(Path(req.output_dir).expanduser().resolve())
+        os.makedirs(base_dir, exist_ok=True)
+    else:
+        base_dir = os.path.dirname(os.path.abspath(req.clip_paths[0]))
+    out_path = req.output_path or os.path.join(base_dir, f"{stem}_reel.{fmt}")
 
     try:
         compiled_path, msg, total_dur = concat_clips(req.clip_paths, out_path, fmt)
@@ -710,9 +794,16 @@ def export_standalone(req: ExportStandaloneRequest):
     stem = os.path.splitext(os.path.basename(req.video_path))[0]
     asset = req.asset_type.lower()
 
+    # When the user picks a destination folder, write the asset there (with the
+    # default filename); otherwise fall back to beside the source video.
+    base_dir = video_dir
+    if req.output_dir:
+        base_dir = str(Path(req.output_dir).expanduser().resolve())
+        os.makedirs(base_dir, exist_ok=True)
+
     if asset.startswith("audio_"):
         fmt = asset.split("_", 1)[1]
-        out_path = req.output_path or os.path.join(video_dir, f"{stem}_audio.{fmt}")
+        out_path = req.output_path or os.path.join(base_dir, f"{stem}_audio.{fmt}")
         try:
             saved = export_standalone_audio(req.video_path, out_path, fmt)
             return ExportStandaloneResponse(
@@ -732,7 +823,7 @@ def export_standalone(req: ExportStandaloneRequest):
             "transcript_json": ".json",
         }
         target_ext = ext_map[asset]
-        out_path = req.output_path or os.path.join(video_dir, f"{stem}_standalone{target_ext}")
+        out_path = req.output_path or os.path.join(base_dir, f"{stem}_standalone{target_ext}")
 
         # Check if already generated in folder
         existing_candidate = os.path.join(video_dir, f"captions{target_ext}")
@@ -1067,12 +1158,17 @@ def api_translate_captions(req: TranslateCaptionsRequest):
     from server.core import system_check as sc
     if not os.path.isfile(req.srt_path):
         raise HTTPException(status_code=400, detail=f"Subtitle file not found: {req.srt_path}")
-    if not sc.detect_ollama().get("running"):
-        raise HTTPException(status_code=400, detail="Ollama isn't running — start it to translate captions.")
+    if not _llm_available():
+        raise HTTPException(
+            status_code=400,
+            detail="No AI model is reachable — start Ollama, or configure an "
+                   "OpenAI-compatible endpoint in Setup, to translate captions.",
+        )
     from server.core.translator import translate_srt_file
+    model = _active_llm_model()
     try:
-        result = translate_srt_file(req.srt_path, req.target_lang, PREFERRED_OLLAMA_MODEL, req.output_dir)
-        result["model"] = PREFERRED_OLLAMA_MODEL
+        result = translate_srt_file(req.srt_path, req.target_lang, model, req.output_dir)
+        result["model"] = model
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -1360,14 +1456,18 @@ def install_optional(req: OptionalInstallRequest):
 @app.post("/tools/bleep-mute", response_model=BleepMuteResponse)
 def api_bleep_mute(req: BleepMuteRequest):
     """Censor audio profanity or custom words with 1000Hz bleep or mute."""
-    from server.core.word_filter import apply_bleep_or_mute
+    from server.core.word_filter import apply_bleep_or_mute, filter_word_timestamps
     try:
         out_path = req.output_path
         if not out_path:
             p = Path(req.video_path)
             out_path = str(p.parent / f"{p.stem}_censored{p.suffix}")
-        
+
         ts = req.timestamps or []
+        # Narrow a full word list down to just profanity/custom words so the
+        # bleep hits the right moments instead of the entire clip.
+        if req.profanity_only:
+            ts = filter_word_timestamps(ts, req.custom_words)
         result = apply_bleep_or_mute(
             input_video=req.video_path,
             output_video=out_path,
@@ -1383,6 +1483,45 @@ def api_bleep_mute(req: BleepMuteRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+def _compute_speaker_offset(source: str, start: float, end: float, aspect: str):
+    """Best-effort active-speaker crop x-offset for a ratio; None => centered.
+    16:9 is a letterbox fit (no horizontal crop), so it always stays centered.
+    Any detection/OpenCV/YOLO failure degrades quietly to a centered crop."""
+    if aspect == "16:9":
+        return None
+    try:
+        from server.core.face_tracker import FaceTracker
+        off = FaceTracker().get_speaker_center_x(source, start, end, aspect_ratio=aspect)
+        return float(off) if off is not None else None
+    except Exception:
+        return None
+
+
+@app.post("/export/aspect-preview", response_model=AspectPreviewResponse)
+def export_aspect_preview(req: AspectPreviewRequest):
+    """Render one real cropped still (with active-speaker framing) for a ratio so
+    the multi-aspect modal previews the ACTUAL export framing, not a CSS guess."""
+    src = req.source_video if (req.source_video and os.path.exists(req.source_video)) else req.clip_path
+    if not os.path.isfile(src):
+        raise HTTPException(status_code=400, detail=f"Source not found: {src}")
+    if req.source_video and req.start_seconds is not None and req.end_seconds is not None:
+        start, end = float(req.start_seconds), float(req.end_seconds)
+    else:
+        start, end = 0.0, get_video_duration(src)
+    mid = start + max(0.0, end - start) / 2.0
+    offset = _compute_speaker_offset(src, start, end, req.aspect_ratio)
+    stem = os.path.splitext(os.path.basename(req.clip_path))[0]
+    slug = req.aspect_ratio.replace(":", "x")
+    out_dir = req.output_dir or str(_ensure_output_root() / ".cache" / "aspect" / stem)
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    out_path = str(Path(out_dir) / f"preview_{slug}.jpg")
+    try:
+        img = render_cropped_frame(src, out_path, timestamp=mid, aspect_ratio=req.aspect_ratio, crop_x_offset=offset)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(e))
+    return AspectPreviewResponse(image_path=img, aspect_ratio=req.aspect_ratio, crop_x_offset=offset)
 
 
 @app.post("/export/multi-aspect", response_model=MultiAspectExportResponse)
@@ -1411,6 +1550,16 @@ def export_multi_aspect(req: MultiAspectExportRequest):
     for aspect in requested_aspects:
         slug = aspect.replace(":", "x")
         out_file = str(out_dir / f"{stem} {slug}.mp4")
+        # Prefer a preview-computed offset; otherwise compute the active-speaker
+        # crop now so the export auto-frames the speaker instead of dead-centering.
+        offset = None
+        if req.crop_offsets and aspect in req.crop_offsets:
+            try:
+                offset = float(req.crop_offsets[aspect]) if req.crop_offsets[aspect] is not None else None
+            except (TypeError, ValueError):
+                offset = None
+        else:
+            offset = _compute_speaker_offset(source, start, end, aspect)
         try:
             render_clip(
                 input_video=source,
@@ -1418,6 +1567,7 @@ def export_multi_aspect(req: MultiAspectExportRequest):
                 start_time=start,
                 end_time=end,
                 aspect_ratio=aspect,
+                crop_x_offset=offset,
                 burn_captions=req.burn_captions,
                 subtitle_path=req.subtitle_path,
             )
@@ -1507,16 +1657,18 @@ def rewrite_hook(req: RewriteHookRequest):
     count = max(1, min(int(req.count or 6), 10))
     heuristic = rank_hook_candidates(text, count)
 
-    running = bool(sc.detect_ollama().get("running"))
-    if not running:
+    model = _active_llm_model()
+    if not _llm_available():
+        # `ollama_running` is kept for UI back-compat; it now means "the active
+        # AI backend is reachable", whichever backend that is.
         return {"used_ai": False, "ollama_running": False, "model": None, "hooks": heuristic}
 
     from server.core.hook_writer import generate_hooks_llm
-    ai_hooks = generate_hooks_llm(text, req.current_hook, count, PREFERRED_OLLAMA_MODEL, req.preset)
+    ai_hooks = generate_hooks_llm(text, req.current_hook, count, model, req.preset)
     if ai_hooks:
-        return {"used_ai": True, "ollama_running": True, "model": PREFERRED_OLLAMA_MODEL, "hooks": ai_hooks}
-    # Ollama is up but returned nothing usable — fall back rather than error.
-    return {"used_ai": False, "ollama_running": True, "model": PREFERRED_OLLAMA_MODEL, "hooks": heuristic}
+        return {"used_ai": True, "ollama_running": True, "model": model, "hooks": ai_hooks}
+    # Backend is up but returned nothing usable — fall back rather than error.
+    return {"used_ai": False, "ollama_running": True, "model": model, "hooks": heuristic}
 
 
 class RewriteCopyRequest(BaseModel):
@@ -1549,23 +1701,23 @@ def rewrite_copy(req: RewriteCopyRequest):
         "description": "",
     }
 
-    running = bool(sc.detect_ollama().get("running"))
-    if not running:
+    model = _active_llm_model()
+    if not _llm_available():
         return {"used_ai": False, "ollama_running": False, "model": None, **fallback}
 
     from server.core.hook_writer import generate_clip_copy_llm
-    copy = generate_clip_copy_llm(text, current_hook=req.current_hook, model=PREFERRED_OLLAMA_MODEL)
+    copy = generate_clip_copy_llm(text, current_hook=req.current_hook, model=model)
     if copy:
         return {
             "used_ai": True,
             "ollama_running": True,
-            "model": PREFERRED_OLLAMA_MODEL,
+            "model": model,
             "hook": copy.get("hook") or fallback["hook"],
             "title": copy.get("title") or fallback["title"],
             "description": copy.get("description") or "",
         }
-    # Ollama up but returned nothing usable — fall back rather than error.
-    return {"used_ai": False, "ollama_running": True, "model": PREFERRED_OLLAMA_MODEL, **fallback}
+    # Backend up but returned nothing usable — fall back rather than error.
+    return {"used_ai": False, "ollama_running": True, "model": model, **fallback}
 
 
 @app.post("/tools/suggest-emojis", response_model=EmojiSuggestResponse)
@@ -2106,6 +2258,179 @@ def set_ai_model(req: AIModelRequest):
         _save_preferred_model(model)  # remember it across restarts
         return {"ok": True, "ollama": PREFERRED_OLLAMA_MODEL}
     raise HTTPException(status_code=400, detail=f"Unknown model kind: {req.kind}")
+
+
+class LlmEndpointRequest(BaseModel):
+    backend: str = "ollama"          # "ollama" | "openai"
+    base_url: str = ""               # e.g. http://localhost:1234/v1
+    api_key: str = ""                # optional; only for endpoints that need it
+    model: str = ""                  # model name as the endpoint calls it
+
+
+@app.get("/api/setup/llm-endpoint")
+def get_llm_endpoint():
+    """Active AI backend settings. Never returns the API key, only whether it's set."""
+    from server.core import llm_client
+    return llm_client.describe()
+
+
+@app.post("/api/setup/llm-endpoint")
+def set_llm_endpoint(req: LlmEndpointRequest):
+    """Point the app's AI features at the built-in Ollama or ANY OpenAI-compatible
+    server (llama.cpp llama-server, LM Studio, vLLM, a cloud endpoint...).
+
+    One setting covers all of them because they share the /v1/chat/completions
+    contract — which is why this is a config option rather than a separate build.
+    """
+    from server.core import llm_client
+    try:
+        llm_client.save_config(
+            backend=req.backend, base_url=req.base_url,
+            api_key=req.api_key, model=req.model,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Could not save AI backend settings: {e}")
+    return llm_client.describe()
+
+
+@app.post("/api/setup/llm-test")
+def test_llm_endpoint(req: LlmEndpointRequest):
+    """Try the supplied settings WITHOUT saving them, so the user can verify a
+    server before committing to it. Returns the model's own reply on success."""
+    from server.core import llm_client
+
+    backend = (req.backend or "ollama").strip().lower()
+    if backend == llm_client.BACKEND_OPENAI:
+        base = llm_client.normalize_base_url(req.base_url)
+        if not base:
+            raise HTTPException(status_code=400, detail="A server address is required")
+        cfg = {"backend": backend, "base_url": base,
+               "api_key": (req.api_key or "").strip(), "model": (req.model or "").strip()}
+        if not llm_client.is_available(cfg):
+            return {"ok": False, "backend": backend, "base_url": base,
+                    "error": "Nothing answered at that address. Is the server running?"}
+        try:
+            reply = llm_client._chat_openai(
+                cfg, [{"role": "user", "content": "Reply with the single word: ready"}],
+                json_mode=False, model=cfg["model"] or None, timeout=30.0,
+            )
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "backend": backend, "base_url": base, "error": str(e)}
+        return {"ok": True, "backend": backend, "base_url": base,
+                "model": cfg["model"] or "(server default)", "reply": (reply or "")[:200]}
+
+    # Built-in Ollama
+    from server.core import system_check as sc
+    info = sc.detect_ollama()
+    if not info.get("running"):
+        return {"ok": False, "backend": "ollama",
+                "error": "Ollama isn't running. Start it, then test again."}
+    model = (req.model or "").strip() or PREFERRED_OLLAMA_MODEL
+    try:
+        reply = llm_client._chat_ollama(
+            [{"role": "user", "content": "Reply with the single word: ready"}],
+            json_mode=False, model=model,
+        )
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "backend": "ollama", "model": model, "error": str(e)}
+    return {"ok": True, "backend": "ollama", "model": model, "reply": (reply or "")[:200]}
+
+
+class AsrEndpointRequest(BaseModel):
+    backend: str = "local"           # "local" | "openai"
+    base_url: str = ""               # e.g. http://localhost:8080/v1
+    api_key: str = ""
+    model: str = ""                  # e.g. whisper-1 / ggml-base.en
+
+
+@app.get("/api/setup/asr-endpoint")
+def get_asr_endpoint():
+    """Active speech-to-text backend settings (never returns the API key)."""
+    from server.core import asr_client
+    return asr_client.describe()
+
+
+@app.post("/api/setup/asr-endpoint")
+def set_asr_endpoint(req: AsrEndpointRequest):
+    """Transcribe locally (default) or via any server that speaks the OpenAI
+    audio-transcription API — whisper.cpp's whisper-server,
+    faster-whisper-server, Speaches, or OpenAI itself."""
+    from server.core import asr_client
+    try:
+        asr_client.save_config(
+            backend=req.backend, base_url=req.base_url,
+            api_key=req.api_key, model=req.model,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Could not save transcription settings: {e}")
+    return asr_client.describe()
+
+
+@app.post("/api/setup/asr-test")
+def test_asr_endpoint(req: AsrEndpointRequest):
+    """Probe a transcription endpoint WITHOUT saving it, so the user can verify
+    the address before committing. Sends a short generated tone rather than a
+    real clip, so the check is fast."""
+    from server.core import asr_client
+
+    backend = (req.backend or "local").strip().lower()
+    if backend != asr_client.BACKEND_OPENAI:
+        from server.core.transcriber import detect_active_backend
+        info = detect_active_backend()
+        return {"ok": bool(info.get("active")), "backend": "local",
+                "active": info.get("active"), "note": info.get("note")}
+
+    base = asr_client.normalize_base_url(req.base_url)
+    if not base:
+        raise HTTPException(status_code=400, detail="A server address is required")
+    cfg = {"backend": backend, "base_url": base,
+           "api_key": (req.api_key or "").strip(), "model": (req.model or "").strip()}
+    if not asr_client.is_available(cfg):
+        return {"ok": False, "backend": backend, "base_url": base,
+                "error": "Nothing answered at that address. Is the server running?"}
+
+    # Reachable. Try a real 1-second transcription so auth/model problems show
+    # up here rather than midway through a clipping run.
+    tmp_dir = _ensure_output_root() / ".cache"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    probe = str(tmp_dir / "asr_probe.wav")
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+             "-ar", "16000", "-ac", "1", probe],
+            capture_output=True, text=True, timeout=60,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+    except Exception:
+        return {"ok": True, "backend": backend, "base_url": base,
+                "note": "Server is reachable (could not build a local probe clip to test further)."}
+
+    saved = asr_client.load_config()
+    try:
+        asr_client.save_config(**cfg)          # transcribe_remote reads the config
+        segments, real_words = asr_client.transcribe_remote(probe, timeout=90.0)
+        return {"ok": True, "backend": backend, "base_url": base,
+                "model": cfg["model"] or asr_client.DEFAULT_MODEL,
+                "word_timestamps": real_words,
+                "note": ("Word-level timings supported." if real_words else
+                         "Server returned no word timings — caption timing will be "
+                         "approximated by spreading words across each segment.")}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "backend": backend, "base_url": base, "error": str(e)}
+    finally:
+        # Always restore whatever was configured before the test.
+        try:
+            asr_client.save_config(**saved)
+        except Exception:
+            pass
+        try:
+            os.remove(probe)
+        except OSError:
+            pass
 
 
 @app.post("/api/setup/clear-cache")

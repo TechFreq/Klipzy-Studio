@@ -90,7 +90,7 @@ def remove_silence(
     output_video: str,
     noise_threshold_db: float = -30.0,
     min_silence_duration: float = 0.6,
-    pad_seconds: float = 0.08,
+    pad_seconds: float = 0.10,
 ) -> Dict[str, Any]:
     """
     Detects and cuts out dead air silence from a video clip.

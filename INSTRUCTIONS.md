@@ -17,10 +17,15 @@ Welcome to **Klipzy Studio**, a 100% local-first, privacy-focused AI video clipp
    - [Word-Level Profanity Filter & Bleeper](#word-level-profanity-filter--bleeper)
    - [Interactive Caption Editor](#interactive-caption-editor)
    - [Standalone Asset & NLE Project Exports](#standalone-asset--nle-project-exports)
-5. [Using the REST API & Headless Mode](#5-using-the-rest-api--headless-mode)
-6. [Running Tests & Quality Checks](#6-running-tests--quality-checks)
-7. [Building Desktop Installers](#7-building-desktop-installers)
-8. [Troubleshooting & FAQs](#8-troubleshooting--faqs)
+5. [Choosing Models & AI Engines](#5-choosing-models--ai-engines)
+   - [Which Whisper model?](#which-whisper-model)
+   - [Which local LLM?](#which-local-llm)
+   - [AI engine: use your own server](#ai-engine-use-your-own-server)
+   - [Subtitle engine: use your own server](#subtitle-engine-use-your-own-server)
+6. [Using the REST API & Headless Mode](#6-using-the-rest-api--headless-mode)
+7. [Running Tests & Quality Checks](#7-running-tests--quality-checks)
+8. [Building Desktop Installers](#8-building-desktop-installers)
+9. [Troubleshooting & FAQs](#9-troubleshooting--faqs)
 
 ---
 
@@ -175,7 +180,104 @@ In the Clip Detail / Export panel, you can generate:
 
 ---
 
-## 5. Using the REST API & Headless Mode
+## 5. Choosing Models & AI Engines
+
+**Short version: you don't have to choose.** Open **Setup**, and Klipzy inspects your CPU, RAM
+and GPU and marks the best fit with a ⭐. Nothing downloads without you clicking.
+
+The rest of this section is for when you want to decide yourself, or your footage needs
+something different from the default.
+
+### Which Whisper model?
+
+Whisper turns speech into the words your captions are built from, so this is the single setting
+with the biggest effect on output quality. Set it in **Setup → Whisper size** (applies to the
+next clipping run).
+
+| Model | Good for | Needs | Speed |
+|---|---|---|---|
+| `tiny` | Quick tests, very weak machines | <16GB RAM | Fastest |
+| `base` | Clean studio/podcast audio, one speaker | 16GB RAM (CPU) | ~1-3x realtime |
+| `small` | **Most people's sweet spot** | 4GB+ VRAM | ~3-6x realtime |
+| `medium` | Noisy audio, crosstalk, accents | 8GB+ VRAM | ~4-8x realtime |
+| `large-v3` | Long or difficult media, max accuracy | Strong GPU (or patience) | Slowest |
+
+**Pick by your audio, not just your hardware.** This matters more than people expect:
+
+- **Quiet room, one person, good mic** → `base` is genuinely fine.
+- **Street interviews, events, crowds, background music, several people talking over each
+  other** → go to `small` or `medium`. Tested on real outdoor interview footage, `base` produced
+  garbled repeated words ("I'm playing Play, play Play, play"). The bigger model fixes that.
+  Since your captions *are* the product, the extra minutes are worth it.
+- On **Apple Silicon**, install `mlx-whisper` for native acceleration — Klipzy picks it
+  automatically when present.
+- On **NVIDIA**, if Setup says **"CPU (GPU idle)"**, your PyTorch is CPU-only. Install the CUDA
+  build from Setup → GPU Acceleration to unlock real speed.
+
+### Which local LLM?
+
+This one is **optional**. It writes hooks, titles and descriptions, powers AI Edit Chat, and can
+pick highlights. With it off, Klipzy uses built-in keyword/audio heuristics and still works.
+
+Browse **Setup → Local AI model catalog**; the ⭐ is the pick for your machine.
+
+| Tier | Models | Comfortable with |
+|---|---|---|
+| **Light** | `gemma2:2b`, `llama3.2:3b`, `qwen2.5:3b`, `phi3:mini` | 8GB RAM |
+| **Quality** | `gemma2:9b`, `llama3.1:8b`, `qwen2.5:7b`, `mistral:7b` | 16GB RAM |
+| **Flagship** | `phi4`, `qwen3:14b`, `deepseek-r1:14b` | 16GB RAM + 12GB VRAM |
+| **Flagship XL** | `gpt-oss:20b` | 24GB RAM + 16GB VRAM |
+
+Rules of thumb:
+
+- **8GB RAM / no real GPU** → `gemma2:2b`. Fast and perfectly good for short hooks.
+- **16GB RAM** → `qwen2.5:7b` or `llama3.1:8b` for noticeably sharper copy.
+- **12GB VRAM (e.g. RTX 3060)** → `phi4` is the sweet spot: near-flagship quality that still
+  fits on the card.
+- **Reasoning models** like `deepseek-r1:14b` work but are overkill for a 10-word hook; they
+  spend effort "thinking" you won't see.
+
+> **First AI request of a session is slow.** The model has to load into memory. Later requests
+> hit the warm model and feel instant — this is normal, not a hang.
+
+### AI engine: use your own server
+
+Prefer your own setup over the built-in Ollama? **Setup → AI engine → Custom
+(OpenAI-compatible)**. One address covers all of these, because they share the same API:
+
+| Server | Typical address |
+|---|---|
+| LM Studio | `http://localhost:1234/v1` |
+| llama.cpp (`llama-server`) | `http://localhost:8080/v1` |
+| vLLM | `http://localhost:8000/v1` |
+| Ollama's OpenAI route | `http://localhost:11434/v1` |
+| Cloud provider | their base URL + an API key |
+
+Paste the address (with or without `/v1`), add the model name your server uses, then click
+**Test connection** before saving. API keys are stored locally and never displayed again.
+
+### Subtitle engine: use your own server
+
+Same idea for speech-to-text. **Setup → Subtitle engine → Custom**:
+
+| Server | Typical address |
+|---|---|
+| whisper.cpp (`whisper-server`) | `http://localhost:8080/v1` |
+| faster-whisper-server / Speaches | `http://localhost:8000/v1` |
+| OpenAI | `https://api.openai.com/v1` + API key |
+
+One caveat worth understanding: karaoke captions need to know when **each word** is spoken. Some
+servers return that, others only return whole lines. When word timings are missing, Klipzy
+spreads the words evenly across each line — it still animates, but it won't match speech exactly.
+**Test connection** tells you which you're getting. If the server stops responding mid-run,
+Klipzy falls back to local Whisper automatically instead of failing the job.
+
+> **Local-first stays true.** Both engines default to your own machine. Nothing leaves it unless
+> you deliberately enter a cloud address.
+
+---
+
+## 6. Using the REST API & Headless Mode
 
 Klipzy Studio runs as an open REST API powered by FastAPI. You can integrate Klipzy Studio into automated scripts, external tools, or custom pipelines.
 
@@ -196,7 +298,7 @@ Klipzy Studio runs as an open REST API powered by FastAPI. You can integrate Kli
 
 ---
 
-## 6. Running Tests & Quality Checks
+## 7. Running Tests & Quality Checks
 
 Klipzy Studio includes a comprehensive unit test suite covering highlight detection, subtitle generation, NLE exports, aspect ratio reframing, silence detection, and profanity filtering.
 
@@ -222,7 +324,7 @@ node --check ui/electron/main.js
 
 ---
 
-## 7. Building Desktop Installers
+## 8. Building Desktop Installers
 
 To package Klipzy Studio into a standalone desktop application executable:
 
@@ -243,25 +345,56 @@ The compiled binaries will be output to the `ui/dist/` directory.
 
 ---
 
-## 8. Troubleshooting & FAQs
+## 9. Troubleshooting & FAQs
 
 ### Q: Why is FFmpeg not found?
 **A:** Ensure `ffmpeg` and `ffprobe` are in your operating system's PATH. You can verify this by opening a terminal and running `ffmpeg -version`.
 
 ### Q: Why is AI transcription taking a long time?
-**A:** By default, OpenAI Whisper runs on CPU if CUDA is not detected. If you have an NVIDIA GPU, make sure you have installed PyTorch with CUDA support:
-```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-```
+**A:** Two common causes.
+
+1. **Your GPU isn't actually being used.** Check Setup — if it says **"CPU (GPU idle)"**, you
+   have an NVIDIA card but CPU-only PyTorch. Install the CUDA build (Setup → GPU Acceleration,
+   or manually):
+   ```bash
+   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+   ```
+2. **The Whisper model is bigger than your hardware wants.** `large-v3` on CPU is genuinely
+   slow. See [§5](#which-whisper-model) for picking a size.
+
+### Q: My captions have wrong or repeated words. Why?
+**A:** That's transcription accuracy, not a caption bug — the captions faithfully show whatever
+Whisper heard. Noisy audio (street interviews, crowds, music, people talking over each other)
+overwhelms the smaller models. Move up to `small` or `medium` in Setup and re-run. See
+[§5](#which-whisper-model).
+
+### Q: Why is the first AI hook/title slow, then fast after?
+**A:** The first request loads the model into memory; later ones reuse it. Expected behaviour.
 
 ### Q: Why does the AI Edit Chat say Ollama is unavailable?
-**A:** Klipzy Studio will automatically use a rules-based fallback if Ollama is not installed or running. To enable local LLM chat:
+**A:** Klipzy falls back to rules-based advice whenever no AI engine is reachable, so nothing
+breaks. To enable the local LLM:
 1. Install Ollama from [ollama.com](https://ollama.com/).
-2. Run `ollama run gemma:2b` or `ollama run mistral`.
-3. Restart Klipzy Studio.
+2. Pull a model — `ollama pull gemma2:2b` (or use Setup → Local AI model catalog).
+3. Reopen Setup; the status should turn green.
+
+Already running something else (LM Studio, `llama-server`, a cloud endpoint)? You don't need
+Ollama at all — point Klipzy at it via **Setup → AI engine**. See [§5](#ai-engine-use-your-own-server).
+
+### Q: Do I have to use Ollama / can I use whisper.cpp?
+**A:** No, and yes. Both AI features are pluggable: **Setup → AI engine** for text generation and
+**Setup → Subtitle engine** for speech-to-text. Anything speaking the OpenAI API works, including
+whisper.cpp's `whisper-server`. See [§5](#5-choosing-models--ai-engines).
+
+### Q: Some clips show "–" instead of Hook / Flow / Trend scores. Is that broken?
+**A:** No — that's deliberate honesty. Only the keyword detector analyses hook wording, so clips
+found by audio-energy or gameplay-action detection genuinely have no hook score to report. A dash
+means "not measured" rather than showing you a number the app never calculated.
 
 ### Q: Where are processed clips saved?
-**A:** Output clips, subtitle tracks, and audio stems are saved in your system temporary folder or the custom output directory selected in the UI under **Output Folder**.
+**A:** In the app's `output/` folder by default, or whichever folder you pick under **Output
+Folder**. Individual exports always ask where to save. Rendered clips, subtitles (SRT/VTT/ASS),
+thumbnails and audio stems land together.
 
 ---
 

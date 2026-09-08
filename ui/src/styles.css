@@ -425,6 +425,41 @@ body {
 .clip-card:hover video::-webkit-media-controls { opacity: 1; }
 .clip-mute-btn { position: absolute; right: 8px; bottom: 34px; z-index: 3; border: 0; border-radius: 50%; width: 32px; height: 32px; cursor: pointer; background: rgba(0,0,0,.7); color: #fff; }
 
+/* Clip reordering (drag handle + position badge + move buttons) */
+.clip-reorder-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.reorder-spacer { flex: 1 1 auto; }
+.clip-order-badge {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-variant-numeric: tabular-nums;
+}
+.clip-drag-handle {
+  cursor: grab;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  user-select: none;
+}
+.clip-drag-handle:hover { color: var(--text); background: var(--surface-2); }
+.clip-drag-handle:active { cursor: grabbing; }
+.clip-move-btn { padding: 2px 8px; font-size: 12px; line-height: 1.4; }
+
+/* Drag feedback: the card being moved dims, the drop target is outlined. */
+.clip-card.dragging { opacity: 0.5; }
+.clip-card.drop-target { outline: 2px dashed var(--accent); outline-offset: 2px; }
+
 /* Clip preview scrub bar */
 .clip-seek-row {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
@@ -648,9 +683,37 @@ body {
 
 .export-actions {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
+  align-items: stretch;
+}
+
+/* Each export purpose (editor timeline, audio, captions, reel) is its own
+   labeled box so it's obvious what each control exports. */
+.export-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.export-group-new {
+  justify-content: center;
+}
+.export-group-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
+}
+.export-group-controls {
+  display: flex;
   align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .export-sep {
@@ -746,11 +809,26 @@ body {
   border-radius: 12px;
   width: 90%;
   max-width: 650px;
-  max-height: 80vh;
+  max-height: 90vh;
   display: flex;
   flex-direction: column;
   padding: 24px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  /* Cap to the viewport with a small gutter so a short window never pushes the
+     modal (or its footer) off-screen. */
+  overflow: hidden;
+}
+
+/* The body takes the remaining height and scrolls internally, so the header
+   stays pinned and the bottom controls (style + Save) are always reachable
+   no matter how short the window gets. min-height:0 is required for a flex
+   child to shrink below its content and enable scrolling. */
+.modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* room so the last control isn't flush against the scroll edge */
+  padding-right: 4px;
 }
 .dialog-modal-content {
   max-width: 440px;
@@ -1054,6 +1132,14 @@ body {
   gap: 12px;
   margin-top: 16px;
   flex-wrap: wrap;
+  /* Keep the Style picker + Save button pinned to the bottom of the scrolling
+     modal body so the primary action never scrolls out of reach. */
+  position: sticky;
+  bottom: 0;
+  background: var(--surface);
+  padding: 12px 0 2px;
+  border-top: 1px solid var(--border);
+  z-index: 1;
 }
 .caption-style-bar label {
   display: flex;
@@ -1100,15 +1186,81 @@ body {
 
 .caption-preview-stage {
   margin: 12px 0 4px;
-  padding: 14px;
+  /* Extra top padding leaves room for the absolutely-positioned hook overlay
+     so it never collides with the caption text sitting at the bottom. */
+  padding: 44px 14px 16px;
   background: #000;
   border: 1px solid var(--border);
   border-radius: 8px;
-  min-height: 90px;
+  min-height: 132px;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
+  overflow: hidden;
 }
+
+/* AI engine (LLM backend) picker */
+.llm-backend-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  margin-top: 8px;
+}
+.llm-backend-choices { display: flex; gap: 14px; flex-wrap: wrap; }
+.llm-custom-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.llm-custom-fields.hidden { display: none; }
+.llm-backend-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+#llm-backend-status.status-ok { color: #22c55e; }
+#llm-backend-status.status-bad { color: #f59e0b; }
+/* Small ⓘ affordance whose tooltip carries the setup guidance. */
+.help-hint {
+  display: inline-block;
+  margin-left: 4px;
+  width: 15px; height: 15px; line-height: 15px;
+  text-align: center;
+  font-size: 11px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  cursor: help;
+}
+.help-hint:hover { color: var(--text); }
+
+/* Pick Frame (thumbnail chooser) */
+.thumb-candidates {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin: 10px 0 14px;
+}
+.thumb-candidate {
+  position: relative;
+  padding: 0;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  background: #000;
+  cursor: pointer;
+  overflow: hidden;
+  aspect-ratio: 9 / 16;
+}
+.thumb-candidate img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.thumb-candidate.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.thumb-candidate .thumb-ts {
+  position: absolute; bottom: 4px; right: 6px;
+  font-size: 11px; color: #fff; background: rgba(0,0,0,.7);
+  padding: 1px 6px; border-radius: 6px;
+}
+.thumb-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.thumb-actions label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted); }
 
 .caption-preview-size { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 8px 0 12px; color: var(--text-muted); font-size: 12px; }
 .caption-preview-size input[type="range"] { width: min(280px, 60%); }
@@ -1726,6 +1878,7 @@ body {
 .ma-check { accent-color: var(--accent); }
 .ma-label { font-size: 13px; font-weight: 600; }
 .ma-frame {
+  position: relative;
   width: 100%;
   max-height: 260px;
   background: #000;
@@ -1735,7 +1888,14 @@ body {
   align-items: center;
   justify-content: center;
 }
-.ma-frame video { width: 100%; height: 100%; object-fit: cover; }
+.ma-frame video { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* The still is ALREADY cropped to this ratio server-side, so contain it — cover
+   would crop it a second time and hide part of the real exported framing. */
+.ma-frame img.ma-img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.ma-frame .ma-loading {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; color: var(--text-muted); font-size: 22px;
+}
 .multi-aspect-actions { display: flex; justify-content: flex-end; gap: 10px; }
 
 /* Model download progress (catalog cards) */
@@ -1753,6 +1913,10 @@ body {
   left: 50%;
   transform: translateX(-50%);
   max-width: 92%;
+  /* Keep the hook to a couple of lines at the top so it can't overlap the
+     caption that sits at the bottom of the stage. */
+  max-height: 2.4em;
+  overflow: hidden;
   text-align: center;
   line-height: 1.1;
   font-weight: 800;

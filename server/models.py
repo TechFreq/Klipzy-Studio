@@ -26,10 +26,17 @@ class TranscriptSegment(BaseModel):
 
 
 class ViralityBreakdown(BaseModel):
-    hook_score: float = 8.5
-    flow_score: float = 8.0
-    engagement_score: float = 9.0
-    trend_potential: str = "High"
+    """Per-clip score breakdown shown on the clip card.
+
+    Every field is Optional and defaults to None ON PURPOSE. These used to
+    default to 8.5 / 8.0 / 9.0 / "High", which meant any detector that didn't
+    compute a breakdown still rendered confident-looking numbers the app had
+    never measured. A missing signal must read as unknown, not as a good score.
+    """
+    hook_score: Optional[float] = None
+    flow_score: Optional[float] = None
+    engagement_score: Optional[float] = None
+    trend_potential: Optional[str] = None
     hook_keywords: List[str] = Field(default_factory=list)
 
 
@@ -141,6 +148,9 @@ class ExportProjectRequest(BaseModel):
     clips: List[dict] = Field(default_factory=list)
     format: str = "fcpxml"  # "fcpxml" | "edl" | "capcut"
     fps: float = 30.0
+    # Optional destination folder chosen by the user; when set, the timeline
+    # file is written here instead of beside the source video.
+    output_dir: Optional[str] = None
 
 
 class ExportProjectResponse(BaseModel):
@@ -299,6 +309,9 @@ class ExportCompileRequest(BaseModel):
     clip_paths: List[str] = Field(default_factory=list)
     format: str = "mp4"   # "mp4" | "mov" | "mkv" | "webm" | "av1" | "gif"
     output_path: Optional[str] = None
+    # Optional destination folder; when set (and output_path is not) the reel is
+    # written into this folder with the default filename.
+    output_dir: Optional[str] = None
     title: str = "highlights_reel"
 
 
@@ -316,6 +329,9 @@ class ExportStandaloneRequest(BaseModel):
     clip_index: Optional[int] = None
     asset_type: str = "audio_mp3" # "audio_mp3", "audio_wav", "audio_flac", "audio_aac", "audio_m4a", "sub_srt", "sub_vtt", "transcript_txt", "transcript_json"
     output_path: Optional[str] = None
+    # Optional destination folder; when set (and output_path is not) the asset is
+    # written into this folder with the default filename.
+    output_dir: Optional[str] = None
 
 
 class ExportStandaloneResponse(BaseModel):
@@ -346,6 +362,33 @@ class ThumbnailResponse(BaseModel):
     message: str
 
 
+class ThumbnailCandidatesRequest(BaseModel):
+    """Generate several scored candidate cover frames to choose from."""
+    video_path: str
+    count: int = 3
+    image_format: str = "jpg"
+    output_dir: Optional[str] = None
+
+
+class ThumbnailCandidatesResponse(BaseModel):
+    candidates: List[dict] = Field(default_factory=list)  # [{path, timestamp, score}]
+    message: str
+
+
+class ThumbnailSaveRequest(BaseModel):
+    """Save a chosen frame (by timestamp) to a folder in any image format."""
+    video_path: str
+    timestamp: float = 0.5
+    output_dir: str
+    image_format: str = "png"
+    title: Optional[str] = None
+
+
+class ThumbnailSaveResponse(BaseModel):
+    path: str
+    message: str
+
+
 class ClipBundleResponse(BaseModel):
     export_dir: str
     video_path: str
@@ -372,7 +415,7 @@ class RemoveSilenceRequest(BaseModel):
     output_path: Optional[str] = None
     noise_threshold_db: float = -30.0
     min_silence_duration: float = 0.6
-    pad_seconds: float = 0.08
+    pad_seconds: float = 0.10
 
 
 class RemoveSilenceResponse(BaseModel):
@@ -391,6 +434,10 @@ class BleepMuteRequest(BaseModel):
     timestamps: Optional[List[dict]] = None
     custom_words: Optional[List[str]] = None
     beep_freq: int = 1000
+    # When true, the supplied `timestamps` are treated as the clip's full word
+    # list and filtered down to profanity/custom words server-side (so callers
+    # can just send every word without bleeping the whole clip).
+    profanity_only: bool = True
 
 
 class BleepMuteResponse(BaseModel):
@@ -420,6 +467,26 @@ class MultiAspectExportRequest(BaseModel):
     end_seconds: Optional[float] = None
     burn_captions: bool = True
     subtitle_path: Optional[str] = None
+    # Optional {ratio: crop_x_offset} computed by the preview so the export
+    # reuses the exact same active-speaker framing (avoids recomputing).
+    crop_offsets: Optional[dict] = None
+
+
+class AspectPreviewRequest(BaseModel):
+    """Render one real cropped still for a ratio so the multi-aspect modal shows
+    the actual (smart-cropped) framing before export."""
+    clip_path: str
+    aspect_ratio: str = "9:16"
+    source_video: Optional[str] = None
+    start_seconds: Optional[float] = None
+    end_seconds: Optional[float] = None
+    output_dir: Optional[str] = None
+
+
+class AspectPreviewResponse(BaseModel):
+    image_path: str
+    aspect_ratio: str
+    crop_x_offset: Optional[float] = None
 
 
 class MultiAspectExportResponse(BaseModel):

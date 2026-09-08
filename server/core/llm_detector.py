@@ -143,10 +143,6 @@ def rank_candidates_llm(
     """
     if not candidates:
         return candidates
-    try:
-        import ollama
-    except Exception:
-        return candidates
 
     listing = []
     for i, c in enumerate(candidates):
@@ -175,12 +171,10 @@ def rank_candidates_llm(
     )
 
     try:
-        resp = ollama.chat(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            format="json",
+        from server.core import llm_client
+        content = llm_client.chat(
+            [{"role": "user", "content": prompt}], json_mode=True, model=model,
         )
-        content = (resp.get("message", {}) or {}).get("content", "") or ""
         data = _coerce_rankings(json.loads(content))
         return _apply_llm_rankings(candidates, data)
     except Exception:
@@ -193,7 +187,7 @@ def detect_highlights_llm(segments: List[TranscriptSegment], model: str = "gemma
     Returns [] if Ollama is unavailable.
     """
     try:
-        import ollama
+        from server.core import llm_client
 
         compact = "\n".join(
             f"[{seg.start:.1f}-{seg.end:.1f}] {seg.text}" for seg in segments[:200]
@@ -214,12 +208,9 @@ Return ONLY a JSON array of objects with keys: start, end, title, reason
 Transcript:
 {compact}"""
 
-        response = ollama.chat(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            format="json",
+        content = llm_client.chat(
+            [{"role": "user", "content": prompt}], json_mode=True, model=model,
         )
-        content = response["message"]["content"]
 
         data = json.loads(content)
         candidates = []

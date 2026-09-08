@@ -838,6 +838,20 @@ function bindEvents() {
     });
   }
 
+  // Remove hook: clear the intro-hook field and any rotating candidates so no
+  // hook is burned on the next Save & Apply (the save flow keys intro_enabled
+  // off whether this field has text). Also hides the live overlay immediately.
+  document.getElementById('remove-hook-btn')?.addEventListener('click', () => {
+    const hookInput = document.getElementById('edit-intro-hook');
+    if (hookInput) hookInput.value = '';
+    hookCandidates = [];
+    hookCandidateIdx = -1;
+    const vbox = document.getElementById('hook-variants');
+    if (vbox) { vbox.classList.add('hidden'); vbox.innerHTML = ''; }
+    updateHookPreview();
+    showToast('Intro hook removed — Save & Apply to re-render without it', 'info');
+  });
+
   // Wizard Stepper & Nav Actions
   for (let i = 1; i <= 4; i++) {
     const stepBtn = document.getElementById(`wizard-step-btn-${i}`);
@@ -2080,32 +2094,14 @@ function showResults(clips) {
     btn.textContent = '🚀 Start Clipping & Transcribing';
   }
 
-  const grid = document.getElementById('clips-grid');
-  if (grid) {
-    grid.innerHTML = '';
-    // Iterate the normalized array, not the raw argument: a completed job with
-    // no `clips` field used to throw here (clips.forEach on undefined).
-    generatedClips.forEach((clip, idx) => {
-      grid.appendChild(buildClipCard(clip, idx));
-    });
-    if (!generatedClips.length) {
-      renderClipsEmptyState(grid);
-    }
-  }
+  // Paints the cards + the ready-to-render summary (iterates the normalized
+  // array, not the raw argument: a completed job with no `clips` field used to
+  // throw here on clips.forEach).
+  renderClipsGrid();
 
   // Un-hide the results wrapper (selectVideoFile/reset mark it hidden).
   const resultsEl = document.getElementById('results');
   if (resultsEl) resultsEl.classList.remove('hidden');
-
-  // Ready-to-render summary (OpenClipper-style progress readout).
-  const summary = document.getElementById('results-summary');
-  if (summary) {
-    const n = generatedClips.length;
-    const totalSecs = generatedClips.reduce((a, c) => a + (Number(c.duration) || 0), 0);
-    summary.textContent = n
-      ? `✅ ${n} clip${n === 1 ? '' : 's'} ready to export · ${Math.round(totalSecs)}s total · TikTok / Reels / Shorts`
-      : 'No clips yet.';
-  }
 
   setWizardStep(4);
 }
@@ -2132,7 +2128,12 @@ function buildClipCard(clip, idx) {
   card.className = 'clip-card';
   card.dataset.clipIdx = String(idx);
 
-  const v = clip.virality || { hook_score: 8.5, flow_score: 8.0, engagement_score: 9.0, trend_potential: 'High' };
+  // Show "–" for anything the detectors didn't actually measure. This used to
+  // fall back to a hardcoded { hook_score: 8.5, flow_score: 8.0, ... }, so
+  // energy/action/LLM clips (which compute no breakdown) displayed invented
+  // scores as if they were real analysis.
+  const v = clip.virality || {};
+  const metric = (val) => (val === null || val === undefined || val === '' ? '–' : val);
   const title = clip.title || (clip.hook_text ? clip.hook_text.slice(0, 48) : 'Highlight');
   // Prefer the AI-written social description (populated when the Ollama toggle
   // is on); fall back to the hook line / reason for the heuristic path.
@@ -2155,15 +2156,22 @@ function buildClipCard(clip, idx) {
       </div>
     </div>
     <div class="clip-info">
+      <div class="clip-reorder-bar">
+        <span class="clip-order-badge" title="Position in the exported reel">#${idx + 1}</span>
+        <span class="clip-drag-handle" title="Drag to reorder this clip in the reel" aria-hidden="true">⠿</span>
+        <span class="reorder-spacer"></span>
+        <button class="btn btn-small clip-move-btn" data-action="move-earlier" title="Move earlier in the reel" aria-label="Move clip ${idx + 1} earlier in the reel">◀</button>
+        <button class="btn btn-small clip-move-btn" data-action="move-later" title="Move later in the reel" aria-label="Move clip ${idx + 1} later in the reel">▶</button>
+      </div>
       <div class="clip-headline">
         <div class="clip-title">${escapeHtml(title)}</div>
         <span class="virality-badge">🔥 Virality: ${score}/10</span>
         <span class="ready-badge" title="Rendered and ready to export/share">✅ Ready</span>
       </div>
       <div class="virality-metrics">
-        <span class="metric-pill">Hook: <strong>${escapeHtml(String(v.hook_score))}</strong></span>
-        <span class="metric-pill">Flow: <strong>${escapeHtml(String(v.flow_score))}</strong></span>
-        <span class="metric-pill">Trend: <strong>${escapeHtml(String(v.trend_potential))}</strong></span>
+        <span class="metric-pill" title="Hook wording strength — only scored by the keyword detector">Hook: <strong>${escapeHtml(String(metric(v.hook_score)))}</strong></span>
+        <span class="metric-pill" title="Pacing, from clip length">Flow: <strong>${escapeHtml(String(metric(v.flow_score)))}</strong></span>
+        <span class="metric-pill" title="Overall trend potential, bucketed from the clip's score">Trend: <strong>${escapeHtml(String(metric(v.trend_potential)))}</strong></span>
       </div>
       <div class="clip-meta">${escapeHtml(String(clip.duration))}s duration</div>
       <div class="clip-desc">${escapeHtml(desc)}</div>
@@ -2182,6 +2190,7 @@ function buildClipCard(clip, idx) {
       <button class="btn btn-small" data-action="pick-thumb" title="Generate AI Thumbnail poster from current video frame">🖼️ Pick Frame</button>
       <button class="btn btn-small" data-action="edit-captions">✏️ Edit Captions</button>
       <button class="btn btn-small" data-action="reroll-hook" title="Swap in a fresh hook for this clip and re-render it">🎣 New Hook</button>
+      <button class="btn btn-small" data-action="remove-hook" title="Remove the burned-in intro hook and re-render this clip without it">🚫 Remove Hook</button>
       <button class="btn btn-small" data-action="multi-aspect" title="Render 9:16 + 1:1 + 4:5 + 16:9 in one pass">📐 Multi-Aspect</button>
       <button class="btn btn-small" data-action="overlay" title="Add B-roll video cutaway or reaction image">🎭 B-Roll</button>
       <button class="btn btn-small" data-action="snip-silence" title="Auto-cut dead air pauses">✂️ Snip Silence</button>
@@ -2262,6 +2271,9 @@ function buildClipCard(clip, idx) {
       case 'pick-thumb': pickClipThumbnail(idx2, video); break;
       case 'edit-captions': openCaptionEditor(idx2); break;
       case 'reroll-hook': quickRerollHook(idx2, actionBtn); break;
+      case 'remove-hook': quickRemoveHook(idx2, actionBtn); break;
+      case 'move-earlier': e.stopPropagation(); moveClip(idx2, idx2 - 1); break;
+      case 'move-later': e.stopPropagation(); moveClip(idx2, idx2 + 1); break;
       case 'multi-aspect': exportMultiAspectPack(idx2); break;
       case 'overlay': openOverlayModal(idx2); break;
       case 'snip-silence': quickCutSilence(idx2); break;
@@ -2293,7 +2305,365 @@ function buildClipCard(clip, idx) {
     deleteClip(parseInt(card.dataset.clipIdx, 10));
   });
 
+  wireClipDragReorder(card);
+
   return card;
+}
+
+// ------------------------------------------------------------------
+// Clip reordering (drag & drop + keyboard/click) — the order here IS the
+// order used by "Export All as Reel", which concatenates generatedClips.
+// ------------------------------------------------------------------
+let draggingClipIdx = null;
+
+// Drag is armed only from the grip handle so the scrub bar, buttons and
+// hover-preview keep working normally everywhere else on the card.
+function wireClipDragReorder(card) {
+  const handle = card.querySelector('.clip-drag-handle');
+  if (handle) {
+    handle.addEventListener('mousedown', () => { card.draggable = true; });
+    handle.addEventListener('mouseup', () => { card.draggable = false; });
+  }
+
+  card.addEventListener('dragstart', (e) => {
+    draggingClipIdx = parseInt(card.dataset.clipIdx, 10);
+    card.classList.add('dragging');
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      // Some platforms cancel the drag unless data is set.
+      try { e.dataTransfer.setData('text/plain', String(draggingClipIdx)); } catch (_) { /* non-fatal */ }
+    }
+  });
+
+  card.addEventListener('dragend', () => {
+    card.classList.remove('dragging');
+    card.draggable = false;
+    draggingClipIdx = null;
+    document.querySelectorAll('.clip-card.drop-target')
+      .forEach((c) => c.classList.remove('drop-target'));
+  });
+
+  card.addEventListener('dragover', (e) => {
+    if (draggingClipIdx === null) return;
+    e.preventDefault();                     // required to allow a drop
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    if (parseInt(card.dataset.clipIdx, 10) !== draggingClipIdx) {
+      card.classList.add('drop-target');
+    }
+  });
+
+  card.addEventListener('dragleave', () => card.classList.remove('drop-target'));
+
+  card.addEventListener('drop', (e) => {
+    e.preventDefault();
+    card.classList.remove('drop-target');
+    const to = parseInt(card.dataset.clipIdx, 10);
+    let from = draggingClipIdx;
+    if (from === null && e.dataTransfer) {
+      const raw = parseInt(e.dataTransfer.getData('text/plain'), 10);
+      if (Number.isInteger(raw)) from = raw;
+    }
+    if (Number.isInteger(from)) moveClip(from, to);
+  });
+}
+
+// Move a clip to a new position and re-render. Clamps silently so the ◀/▶
+// buttons on the first/last card are simply no-ops.
+function moveClip(from, to) {
+  if (!Number.isInteger(from) || !Number.isInteger(to)) return;
+  if (from === to || from < 0 || from >= generatedClips.length) return;
+  if (to < 0 || to >= generatedClips.length) return;
+
+  const [moved] = generatedClips.splice(from, 1);
+  generatedClips.splice(to, 0, moved);
+  saveCurrentProjectSilently();
+  renderClipsGrid();
+  showToast(`↕️ Moved "${(moved.title || 'clip').slice(0, 30)}" to position ${to + 1}`, 'success');
+}
+
+// Single source of truth for painting the grid + summary, so reorder, delete
+// and the initial render can't drift apart.
+function renderClipsGrid() {
+  const grid = document.getElementById('clips-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  if (!generatedClips.length) {
+    renderClipsEmptyState(grid);
+  } else {
+    generatedClips.forEach((clip, i) => grid.appendChild(buildClipCard(clip, i)));
+  }
+  updateClipsSummary();
+}
+
+function updateClipsSummary() {
+  const summary = document.getElementById('results-summary');
+  if (!summary) return;
+  const n = generatedClips.length;
+  if (!n) { summary.textContent = 'No clips yet.'; return; }
+  const totalSecs = generatedClips.reduce((a, c) => a + (Number(c.duration) || 0), 0);
+  summary.textContent = `✅ ${n} clip${n === 1 ? '' : 's'} ready to export · ${Math.round(totalSecs)}s total · drag to reorder the reel`;
+}
+
+// ------------------------------------------------------------------
+// AI engine (LLM backend): built-in Ollama, or any OpenAI-compatible server.
+// One endpoint covers llama.cpp/LM Studio/vLLM/cloud because they share the
+// /v1/chat/completions contract — hence a setting, not a separate build.
+// ------------------------------------------------------------------
+function llmSelectedBackend() {
+  return document.getElementById('llm-backend-openai')?.checked ? 'openai' : 'ollama';
+}
+
+function syncLlmFieldsVisibility() {
+  const custom = llmSelectedBackend() === 'openai';
+  document.getElementById('llm-custom-fields')?.classList.toggle('hidden', !custom);
+}
+
+function llmFormValues() {
+  return {
+    backend: llmSelectedBackend(),
+    base_url: document.getElementById('llm-base-url')?.value?.trim() || '',
+    model: document.getElementById('llm-model-name')?.value?.trim() || '',
+    api_key: document.getElementById('llm-api-key')?.value || '',
+  };
+}
+
+function setLlmStatus(text, kind) {
+  const el = document.getElementById('llm-backend-status');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.remove('status-ok', 'status-bad');
+  if (kind) el.classList.add(kind === 'ok' ? 'status-ok' : 'status-bad');
+}
+
+async function loadLlmEndpoint() {
+  try {
+    const res = await fetch(`${serverUrl}/api/setup/llm-endpoint`);
+    if (!res.ok) throw new Error('unavailable');
+    const d = await res.json();
+    const isCustom = d.backend === 'openai';
+    const radio = document.getElementById(isCustom ? 'llm-backend-openai' : 'llm-backend-ollama');
+    if (radio) radio.checked = true;
+    const url = document.getElementById('llm-base-url');
+    if (url) url.value = d.base_url || '';
+    const model = document.getElementById('llm-model-name');
+    if (model) model.value = d.model || '';
+    const key = document.getElementById('llm-api-key');
+    // The key is never returned; show a placeholder when one is stored.
+    if (key) key.placeholder = d.api_key_set ? '•••••••• (saved)' : 'Leave blank for local servers';
+    syncLlmFieldsVisibility();
+    const name = isCustom ? (d.base_url || 'custom endpoint') : 'Ollama (built-in)';
+    setLlmStatus(d.available ? `✅ Reachable — ${name}` : `⚠️ Not reachable — ${name}`,
+      d.available ? 'ok' : 'bad');
+  } catch (_) {
+    setLlmStatus('Could not read AI engine settings', 'bad');
+  }
+}
+
+(function wireLlmBackendControls() {
+  ['llm-backend-ollama', 'llm-backend-openai'].forEach((id) => {
+    document.getElementById(id)?.addEventListener('change', syncLlmFieldsVisibility);
+  });
+
+  document.getElementById('llm-test-btn')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    setBtnBusy(btn, '⏳ Testing…');
+    setLlmStatus('Testing…');
+    try {
+      const res = await fetch(`${serverUrl}/api/setup/llm-test`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(llmFormValues()),
+      });
+      const d = await res.json();
+      if (d.ok) {
+        setLlmStatus(`✅ Works — replied "${(d.reply || '').slice(0, 40)}"`, 'ok');
+        showToast('✅ AI engine reachable', 'success');
+      } else {
+        setLlmStatus(`❌ ${d.error || d.detail || 'Test failed'}`, 'bad');
+        showToast(`❌ ${d.error || d.detail || 'Test failed'}`, 'error');
+      }
+    } catch (err) {
+      setLlmStatus(`❌ ${err.message}`, 'bad');
+    } finally {
+      setBtnIdle(btn);
+    }
+  });
+
+  document.getElementById('llm-save-btn')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    setBtnBusy(btn, '⏳ Saving…');
+    try {
+      const res = await fetch(`${serverUrl}/api/setup/llm-endpoint`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(llmFormValues()),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.detail || 'Could not save');
+      playSuccessSound();
+      showToast('💾 AI engine saved — all AI features now use it', 'success');
+      const keyInput = document.getElementById('llm-api-key');
+      if (keyInput) keyInput.value = '';   // don't keep the secret in the DOM
+      loadLlmEndpoint();
+    } catch (err) {
+      showAlert(`Could not save AI engine: ${err.message}`);
+    } finally {
+      setBtnIdle(btn);
+    }
+  });
+})();
+
+// ------------------------------------------------------------------
+// Subtitle engine (speech-to-text): built-in Whisper, or a remote server
+// speaking the OpenAI audio-transcription API (whisper.cpp whisper-server,
+// faster-whisper-server, Speaches...). Same shape as the AI engine card above.
+// ------------------------------------------------------------------
+function asrSelectedBackend() {
+  return document.getElementById('asr-backend-openai')?.checked ? 'openai' : 'local';
+}
+
+function syncAsrFieldsVisibility() {
+  document.getElementById('asr-custom-fields')
+    ?.classList.toggle('hidden', asrSelectedBackend() !== 'openai');
+}
+
+function asrFormValues() {
+  return {
+    backend: asrSelectedBackend(),
+    base_url: document.getElementById('asr-base-url')?.value?.trim() || '',
+    model: document.getElementById('asr-model-name')?.value?.trim() || '',
+    api_key: document.getElementById('asr-api-key')?.value || '',
+  };
+}
+
+function setAsrStatus(text, kind) {
+  const el = document.getElementById('asr-backend-status');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.remove('status-ok', 'status-bad');
+  if (kind) el.classList.add(kind === 'ok' ? 'status-ok' : 'status-bad');
+}
+
+async function loadAsrEndpoint() {
+  try {
+    const res = await fetch(`${serverUrl}/api/setup/asr-endpoint`);
+    if (!res.ok) throw new Error('unavailable');
+    const d = await res.json();
+    const isRemote = d.backend === 'openai';
+    const radio = document.getElementById(isRemote ? 'asr-backend-openai' : 'asr-backend-local');
+    if (radio) radio.checked = true;
+    const url = document.getElementById('asr-base-url');
+    if (url) url.value = d.base_url || '';
+    const model = document.getElementById('asr-model-name');
+    if (model) model.value = d.model || '';
+    const key = document.getElementById('asr-api-key');
+    if (key) key.placeholder = d.api_key_set ? '•••••••• (saved)' : 'Leave blank for local servers';
+    syncAsrFieldsVisibility();
+    if (!isRemote) {
+      setAsrStatus('✅ Transcribing on this machine', 'ok');
+    } else {
+      setAsrStatus(d.available ? `✅ Reachable — ${d.base_url}` : `⚠️ Not reachable — ${d.base_url}`,
+        d.available ? 'ok' : 'bad');
+    }
+  } catch (_) {
+    setAsrStatus('Could not read subtitle engine settings', 'bad');
+  }
+}
+
+(function wireAsrBackendControls() {
+  ['asr-backend-local', 'asr-backend-openai'].forEach((id) => {
+    document.getElementById(id)?.addEventListener('change', syncAsrFieldsVisibility);
+  });
+
+  document.getElementById('asr-test-btn')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    setBtnBusy(btn, '⏳ Testing…');
+    setAsrStatus('Testing…');
+    try {
+      const res = await fetch(`${serverUrl}/api/setup/asr-test`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(asrFormValues()),
+      });
+      const d = await res.json();
+      if (d.ok) {
+        // Be explicit about word-level timing, since karaoke captions depend on it.
+        const timing = d.word_timestamps === false
+          ? ' (no word timings — highlight will be approximated)'
+          : (d.word_timestamps === true ? ' (word timings supported)' : '');
+        setAsrStatus(`✅ Works${timing}`, 'ok');
+        showToast(`✅ Subtitle engine reachable${timing}`, 'success');
+      } else {
+        setAsrStatus(`❌ ${d.error || d.detail || 'Test failed'}`, 'bad');
+        showToast(`❌ ${d.error || d.detail || 'Test failed'}`, 'error');
+      }
+    } catch (err) {
+      setAsrStatus(`❌ ${err.message}`, 'bad');
+    } finally {
+      setBtnIdle(btn);
+    }
+  });
+
+  document.getElementById('asr-save-btn')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    setBtnBusy(btn, '⏳ Saving…');
+    try {
+      const res = await fetch(`${serverUrl}/api/setup/asr-endpoint`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(asrFormValues()),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.detail || 'Could not save');
+      playSuccessSound();
+      showToast('💾 Subtitle engine saved — used on the next clipping run', 'success');
+      const keyInput = document.getElementById('asr-api-key');
+      if (keyInput) keyInput.value = '';
+      loadAsrEndpoint();
+      loadServerHealth?.();          // header shows the active engine
+    } catch (err) {
+      showAlert(`Could not save subtitle engine: ${err.message}`);
+    } finally {
+      setBtnIdle(btn);
+    }
+  });
+})();
+
+// ------------------------------------------------------------------
+// Busy-state helpers for action buttons.
+//
+// These replace the old `const orig = btn.textContent` / restore pattern, which
+// could permanently strand a button on its busy label: if the label was read
+// while the button was ALREADY busy (a second invocation, or a run whose
+// restore never happened), the busy text became the "original" and got restored
+// forever — e.g. a card stuck reading "⏳ Re-rendering…". Stashing the idle
+// label in a data attribute and only ever capturing it once makes that
+// impossible, and setBtnIdle is safe to call any number of times.
+// ------------------------------------------------------------------
+function setBtnBusy(btn, busyLabel) {
+  if (!btn) return;
+  if (btn.dataset.idleLabel === undefined) btn.dataset.idleLabel = btn.textContent;
+  btn.disabled = true;
+  if (busyLabel) btn.textContent = busyLabel;
+}
+
+// The FIRST local-LLM call of a session pays a cold start: Ollama has to load
+// the model into memory before it can generate, which can take tens of seconds
+// on a big model. Later calls hit the resident model and feel instant. Say this
+// once so the first wait doesn't look like a hang.
+let aiColdStartNoted = false;
+function noteAiColdStart() {
+  if (aiColdStartNoted) return;
+  aiColdStartNoted = true;
+  showToast('⏳ First AI request loads the local model into memory — this one is slow, the rest are fast.', 'info');
+}
+
+function setBtnIdle(btn, fallbackLabel) {
+  if (!btn) return;
+  btn.disabled = false;
+  const idle = btn.dataset.idleLabel;
+  if (idle !== undefined) {
+    btn.textContent = idle;
+    delete btn.dataset.idleLabel;
+  } else if (fallbackLabel) {
+    btn.textContent = fallbackLabel;
+  }
 }
 
 function copyClipHook(idx) {
@@ -2311,34 +2681,100 @@ function copyClipHook(idx) {
   });
 }
 
+// Pick Frame: generate a few scored candidate cover frames and let the user
+// choose one to set as the poster or download as an image (png/jpg/webp).
+let thumbState = { clipIdx: null, video: null, selected: null };
+
 async function pickClipThumbnail(idx, videoEl) {
   const clip = generatedClips[idx];
   if (!clip || !clip.output_file) return;
-  const currentTime = videoEl ? videoEl.currentTime : 0.5;
+  thumbState = { clipIdx: idx, video: videoEl, selected: null };
+  const wrap = document.getElementById('thumb-candidates');
+  if (wrap) wrap.innerHTML = '<p class="muted small">⏳ Finding the best frames…</p>';
+  document.getElementById('thumb-modal')?.classList.remove('hidden');
   try {
-    const res = await fetch(`${serverUrl}/export/thumbnail`, {
+    const res = await fetch(`${serverUrl}/export/thumbnail-candidates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video_path: clip.output_file, count: 3 }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Failed to generate candidates');
+    renderThumbCandidates(data.candidates || []);
+  } catch (err) {
+    if (wrap) wrap.innerHTML = `<p class="muted small">Couldn't generate candidates: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+function renderThumbCandidates(cands) {
+  const wrap = document.getElementById('thumb-candidates');
+  if (!wrap) return;
+  if (!cands.length) { wrap.innerHTML = '<p class="muted small">No candidate frames found.</p>'; return; }
+  wrap.innerHTML = cands.map((c, i) => `
+    <button type="button" class="thumb-candidate${i === 0 ? ' selected' : ''}" data-ts="${c.timestamp}" data-path="${escapeHtml(c.path)}">
+      <img src="${escapeHtml(fileUrl(c.path, true))}" alt="Candidate frame at ${c.timestamp}s" />
+      <span class="thumb-ts">${Number(c.timestamp).toFixed(1)}s</span>
+    </button>`).join('');
+  // Default-select the first (highest-scored) candidate.
+  thumbState.selected = { path: cands[0].path, timestamp: cands[0].timestamp };
+  wrap.querySelectorAll('.thumb-candidate').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      wrap.querySelectorAll('.thumb-candidate').forEach((b) => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      thumbState.selected = { path: btn.dataset.path, timestamp: parseFloat(btn.dataset.ts) };
+    });
+  });
+}
+
+document.getElementById('thumb-close')?.addEventListener('click', () => {
+  document.getElementById('thumb-modal')?.classList.add('hidden');
+});
+
+document.getElementById('thumb-set-poster')?.addEventListener('click', () => {
+  const clip = generatedClips[thumbState.clipIdx];
+  if (!clip || !thumbState.selected) { showToast('Pick a frame first', 'info'); return; }
+  clip.thumbnail_path = thumbState.selected.path;
+  if (thumbState.video) thumbState.video.setAttribute('poster', fileUrl(thumbState.selected.path, true));
+  saveCurrentProjectSilently();
+  playSuccessSound();
+  showToast('🖼️ Cover frame set', 'success');
+  document.getElementById('thumb-modal')?.classList.add('hidden');
+});
+
+document.getElementById('thumb-download')?.addEventListener('click', async () => {
+  const clip = generatedClips[thumbState.clipIdx];
+  if (!clip || !thumbState.selected) { showToast('Pick a frame first', 'info'); return; }
+  const fmt = document.getElementById('thumb-format')?.value || 'png';
+  const folder = await chooseExportFolder();
+  if (!folder) return;
+  const btn = document.getElementById('thumb-download');
+  setBtnBusy(btn, '⏳ Saving…');
+  try {
+    const res = await fetch(`${serverUrl}/export/thumbnail-save`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         video_path: clip.output_file,
-        timestamp: currentTime > 0 ? currentTime : 0.5,
-      })
+        timestamp: thumbState.selected.timestamp,
+        output_dir: folder,
+        image_format: fmt,
+        title: clip.title || clip.hook_text || 'thumbnail',
+      }),
     });
     const data = await res.json();
-    if (res.ok && data.thumbnail_path) {
-      clip.thumbnail_path = data.thumbnail_path;
-      if (videoEl) {
-        videoEl.setAttribute('poster', fileUrl(data.thumbnail_path, true));
-      }
-      showToast('🖼️ Thumbnail poster updated from current frame!', 'success');
-      saveCurrentProjectSilently();
+    if (res.ok) {
+      playSuccessSound();
+      revealInFolder(data.path);
+      showToast('⬇️ Thumbnail saved', 'success');
     } else {
-      showAlert(`Thumbnail error: ${data.detail || 'Unknown error'}`);
+      showAlert(`Thumbnail save failed: ${data.detail || 'error'}`);
     }
-  } catch (err) {
-    showAlert(`Thumbnail request failed: ${err.message}`);
+  } catch (e) {
+    showAlert(`Error: ${e.message}`);
+  } finally {
+    setBtnIdle(btn);
   }
-}
+});
 
 async function openSocialMetaModal(idx) {
   const clip = generatedClips[idx];
@@ -2403,17 +2839,8 @@ async function deleteClip(idx) {
       });
     } catch (_) { /* card + manifest removal still proceed */ }
   }
-  const grid = document.getElementById('clips-grid');
-  grid.innerHTML = '';
-  generatedClips.forEach((clip, i) => grid.appendChild(buildClipCard(clip, i)));
-  const summary = document.getElementById('results-summary');
-  if (!generatedClips.length) {
-    renderClipsEmptyState(grid);
-    if (summary) summary.textContent = 'No clips yet.';
-  } else if (summary) {
-    const totalSecs = generatedClips.reduce((a, c) => a + (Number(c.duration) || 0), 0);
-    summary.textContent = `✅ ${generatedClips.length} clip${generatedClips.length === 1 ? '' : 's'} ready to export · ${Math.round(totalSecs)}s total · TikTok / Reels / Shorts`;
-  }
+  // Re-index the remaining cards (order badges + move buttons depend on it).
+  renderClipsGrid();
 }
 
 function appendClipCard(clip, idx) {
@@ -2421,909 +2848,7 @@ function appendClipCard(clip, idx) {
   grid.appendChild(buildClipCard(clip, idx));
 }
 
-// ------------------------------------------------------------------
-// NLE Project Export (Premiere Pro, DaVinci Resolve, CapCut)
-// ------------------------------------------------------------------
-async function exportProject(format) {
-  if (!selectedVideo || !generatedClips.length) {
-    playErrorSound();
-    showAlert("Please generate clips first before exporting a project timeline.");
-    return;
-  }
 
-  try {
-    const res = await fetch(`${serverUrl}/export/project`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        video_path: selectedVideo,
-        clips: generatedClips,
-        format: format,
-        fps: 30.0
-      })
-    });
-    const data = await res.json();
-    if (res.ok) {
-      playSuccessSound();
-      showAlert(`✅ ${data.message}\nSaved at: ${data.export_path}`, 'Export Complete', data.export_path || null);
-    } else {
-      playErrorSound();
-      showAlert(`Export failed: ${data.detail}`);
-    }
-  } catch (err) {
-    playErrorSound();
-    showAlert(`Export error: ${err.message}`);
-  }
-}
-
-document.getElementById('export-premiere')?.addEventListener('click', () => exportProject('fcpxml'));
-document.getElementById('export-davinci')?.addEventListener('click', () => exportProject('edl'));
-document.getElementById('export-capcut')?.addEventListener('click', () => exportProject('capcut'));
-
-// ------------------------------------------------------------------
-// Export Standalone Assets (Audio Only MP3/WAV/FLAC/AAC/M4A, Subtitles SRT/VTT)
-// ------------------------------------------------------------------
-async function exportStandaloneAsset() {
-  if (!selectedVideo) {
-    playErrorSound();
-    showAlert("Please select and load a video file first.");
-    return;
-  }
-  const sel = document.getElementById('standalone-asset');
-  const assetType = sel ? sel.value : 'audio_mp3';
-  const btn = document.getElementById('export-standalone-btn');
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = '⏳ Exporting…';
-  }
-
-  try {
-    const res = await fetch(`${serverUrl}/export/standalone`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        video_path: selectedVideo,
-        asset_type: assetType,
-      })
-    });
-    const data = await res.json();
-    if (res.ok) {
-      playSuccessSound();
-      showAlert(`✅ ${data.message}\nSaved at: ${data.export_path}`, 'Export Complete', data.export_path || null);
-    } else {
-      playErrorSound();
-      showAlert(`Standalone export failed: ${data.detail}`);
-    }
-  } catch (err) {
-    playErrorSound();
-    showAlert(`Export error: ${err.message}`);
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = '💾 Export Asset';
-    }
-  }
-}
-
-document.getElementById('export-standalone-btn')?.addEventListener('click', exportStandaloneAsset);
-
-// ------------------------------------------------------------------
-// Export-As Media (single clip -> mp4/mov/mkv/webm/gif)
-// ------------------------------------------------------------------
-function safeFileName(value) {
-  return String(value || 'clip').replace(/[^a-z0-9 _-]/gi, '').trim().replace(/\s+/g, '_').slice(0, 70) || 'clip';
-}
-
-async function chooseExportFolder(clip) {
-  const configured = document.getElementById('output-folder-input')?.value?.trim();
-  // Always let the user choose where THIS export lands, starting from the
-  // configured output folder (if any). Previously a configured folder was used
-  // silently and the picker never opened.
-  if (window.clipperAPI?.selectOutputFolder) {
-    const picked = await window.clipperAPI.selectOutputFolder(configured || undefined);
-    return picked || null;   // null → user cancelled, so the export is aborted
-  }
-  // Non-Electron fallback (window.prompt is unavailable in Electron).
-  const fallback = window.prompt?.('Choose a folder for this exported clip bundle:', configured || '');
-  return fallback?.trim() || configured || null;
-}
-
-window.exportSingleClip = async function (clipIndex) {
-  const clip = generatedClips[clipIndex];
-  if (!clip || !clip.output_file) {
-    playErrorSound();
-    showAlert('No rendered clip to export yet.');
-    return;
-  }
-  const sel = document.querySelector(`.clip-export-fmt[data-clip-idx="${clipIndex}"]`);
-  const fmt = sel ? sel.value : 'mp4';
-  const exportFolder = await chooseExportFolder(clip);
-  if (!exportFolder) return;
-  const btn = document.querySelector(`.btn-export[data-clip-idx="${clipIndex}"]`);
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = '⏳ Exporting…';
-  }
-  try {
-    const res = await fetch(`${serverUrl}/export/clip-bundle`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        video_path: clip.output_file,
-        output_dir: exportFolder,
-        title: clip.title || clip.hook_text || 'clip',
-        format: fmt,
-        srt_path: clip.srt_path,
-        ass_path: clip.ass_path,
-      })
-    });
-    const data = await res.json();
-    if (res.ok) {
-      playSuccessSound();
-      // /export/clip-bundle returns export_dir + video_path (not export_path):
-      // reading export_path here is what produced the "Saved at: undefined" bug.
-      const savedPath = data.export_dir || data.video_path || '';
-      // Auto-open the destination the user picked, then show the confirmation
-      // (which also keeps an "Open folder" button for reopening later).
-      if (savedPath) revealInFolder(savedPath);
-      showAlert(`✅ ${data.message}\nSaved at: ${savedPath}`, 'Export Complete', savedPath || null);
-    } else {
-      playErrorSound();
-      showAlert(`Export failed: ${data.detail}`);
-    }
-  } catch (err) {
-    playErrorSound();
-    showAlert(`Export error: ${err.message}`);
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = '🚀 Export';
-    }
-  }
-};
-
-// ------------------------------------------------------------------
-// Export-All-as-Reel (compile all clips into one media file)
-// ------------------------------------------------------------------
-async function exportCompileReel() {
-  if (!generatedClips.length) {
-    playErrorSound();
-    showAlert('Please generate clips first before compiling a reel.');
-    return;
-  }
-  const fmt = document.getElementById('compile-format') ? document.getElementById('compile-format').value : 'mp4';
-  const btn = document.getElementById('export-compile');
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = '⏳ Compiling reel…';
-  }
-  try {
-    const clipPaths = generatedClips.map((c) => c.output_file).filter(Boolean);
-    const res = await fetch(`${serverUrl}/export/compile`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        clip_paths: clipPaths,
-        format: fmt,
-        title: 'highlights_reel',
-      })
-    });
-    const data = await res.json();
-    if (res.ok) {
-      playSuccessSound();
-      showAlert(`✅ ${data.message}\nSaved at: ${data.export_path}`, 'Export Complete', data.export_path || null);
-    } else {
-      playErrorSound();
-      showAlert(`Compile failed: ${data.detail}`);
-    }
-  } catch (err) {
-    playErrorSound();
-    showAlert(`Compile error: ${err.message}`);
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = '🎬 Export All as Reel';
-    }
-  }
-}
-
-// ------------------------------------------------------------------
-// Caption preset preview
-// Converts ASS colors (&HB BG R R) to CSS and mirrors the preset's
-// primary + highlight so the style bar shows a live sample.
-// ------------------------------------------------------------------
-const CAPTION_PREVIEW = {
-  viral_yellow:  { text: '#ffffff', accent: '#ffd21e', back: '#000000', font: 'Arial Black' },
-  neon_green:    { text: '#ffffff', accent: '#1bff3a', back: '#111111', font: 'Impact' },
-  bold_white:    { text: '#e0e0e0', accent: '#ffffff', back: '#000000', font: 'Montserrat, Arial' },
-  cyberpunk_cyan:{ text: '#64e6ff', accent: '#ff40d0', back: '#050515', font: 'Arial Black' },
-  tiktok_pop:    { text: '#ffd21e', accent: '#ff2a3a', back: '#000000', font: 'Arial Black' },
-  fire_red:      { text: '#ffffff', accent: '#ff4530', back: '#000000', font: 'Impact' },
-  retro_vaporwave:{ text: '#e0b0ff', accent: '#ffff59', back: '#330033', font: 'Trebuchet MS' },
-  mrbeast_impact:{ text: '#ffffff', accent: '#ffd21e', back: '#000000', font: 'Impact' },
-  pastel_pink:   { text: '#ffffff', accent: '#ffa4d8', back: '#2e1b33', font: 'Arial' },
-  minimalist_dark:{ text: '#f0f0f0', accent: '#ff8a4d', back: '#000000', font: 'Helvetica' },
-  comic_punch:   { text: '#ffd21e', accent: '#ffffff', back: '#000000', font: 'Impact' },
-  golden_hour:   { text: '#fff0e6', accent: '#ffa510', back: '#1a1005', font: 'Arial Black' },
-  electric_purple:{ text: '#ffffff', accent: '#b833ff', back: '#1b0324', font: 'Arial Black' },
-  sunset_orange: { text: '#ffffff', accent: '#ff7b14', back: '#050905', font: 'Impact' },
-  matrix_green:  { text: '#00cc33', accent: '#80ff80', back: '#001500', font: 'Courier New' },
-  deep_blue:     { text: '#ffffff', accent: '#33aaff', back: '#051024', font: 'Arial Black' },
-  boxed_karaoke: { text: '#dddddd', accent: '#ffe500', back: '#000000', font: 'Arial' },
-  glitch_shadow: { text: '#ffffff', accent: '#ff30e0', back: '#000000', font: 'Arial Black' },
-  elegant_serif: { text: '#f5f5f5', accent: '#ff6bd3', back: '#1c1c1c', font: 'Georgia' },
-  high_contrast: { text: '#000000', accent: '#ffcc00', back: '#000000', font: 'Arial Black' },
-  monochrome_chic:{ text: '#888888', accent: '#ffffff', back: '#111111', font: 'Helvetica' },
-  gaming_rgb:    { text: '#80ffaa', accent: '#ff20b0', back: '#000000', font: 'Impact' },
-};
-
-function captionFontSize() {
-  // The generated-clips toolbar is the single source of truth for both the
-  // initial render and the caption editor preview.
-  const slider = document.getElementById('generated-caption-font-size');
-  const n = parseFloat(slider ? slider.value : '40');
-  return Number.isFinite(n) ? n : 40;
-}
-
-function globalCaptionFontSize() {
-  const slider = document.getElementById('generated-caption-font-size');
-  const n = parseFloat(slider ? slider.value : '40');
-  return Number.isFinite(n) ? n : 40;
-}
-
-function collectCaptionOptions() {
-  const preset = document.getElementById('generated-caption-preset')?.value || 'viral_yellow';
-  const fontSize = globalCaptionFontSize();
-  const fontName = document.getElementById('caption-font-name')?.value || null;
-  const primaryColor = document.getElementById('caption-primary-color')?.value || null;
-  const highlightColor = document.getElementById('caption-highlight-color')?.value || null;
-  const outlineColor = document.getElementById('caption-outline-color')?.value || null;
-  const outlineWidthVal = document.getElementById('caption-outline-width')?.value;
-  const outlineWidth = outlineWidthVal !== undefined && outlineWidthVal !== '' ? parseInt(outlineWidthVal, 10) : null;
-  const positionVal = document.getElementById('caption-position')?.value;
-  const position = positionVal ? parseInt(positionVal, 10) : null;
-  const chunkSizeVal = document.getElementById('caption-chunk-size')?.value;
-  const chunkSize = chunkSizeVal && chunkSizeVal !== '0' ? parseInt(chunkSizeVal, 10) : null;
-  const uppercase = document.getElementById('caption-uppercase')?.checked || false;
-  const bold = document.getElementById('caption-bold')?.checked || false;
-  const italic = document.getElementById('caption-italic')?.checked || false;
-  const introEnabled = document.getElementById('caption-intro-enabled')?.checked || false;
-  const introCaption = introEnabled ? (document.getElementById('caption-intro-text')?.value || '').trim() : null;
-  const introCaptionDuration = parseFloat(document.getElementById('caption-intro-duration')?.value || '3');
-
-  return {
-    caption_style: preset,
-    style_preset: preset,
-    font_size: fontSize,
-    font_name: fontName || undefined,
-    primary_color: primaryColor || undefined,
-    highlight_color: highlightColor || undefined,
-    outline_color: outlineColor || undefined,
-    outline_width: Number.isFinite(outlineWidth) ? outlineWidth : undefined,
-    position: Number.isFinite(position) ? position : undefined,
-    chunk_size: Number.isFinite(chunkSize) ? chunkSize : undefined,
-    uppercase,
-    bold,
-    italic,
-    intro_caption: introCaption || undefined,
-    intro_caption_duration: Number.isFinite(introCaptionDuration) ? introCaptionDuration : 3,
-    // Flag so the backend auto-generates a hook per clip when the toggle is on
-    // but the optional custom text is left blank.
-    intro_enabled: introEnabled,
-    // Optional bigger font for the intro hook (from the caption editor's slider).
-    intro_font_size: parseInt(document.getElementById('generated-intro-font-size')?.value || '', 10) || undefined,
-  };
-}
-
-// Live preview of the intro hook at the top of the caption stage, styled with
-// the current preset/colors and sized by the hook font-size slider.
-function updateHookPreview() {
-  const el = document.getElementById('hook-preview');
-  if (!el) return;
-  const raw = (document.getElementById('edit-intro-hook')?.value || '').trim();
-  if (!raw) { el.classList.add('hidden'); el.textContent = ''; return; }
-  el.classList.remove('hidden');
-  const isUpper = document.getElementById('caption-uppercase')?.checked;
-  el.textContent = isUpper ? raw.toUpperCase() : raw;
-
-  const presetId = document.getElementById('generated-caption-preset')?.value || 'viral_yellow';
-  const base = CAPTION_PREVIEW[presetId] || CAPTION_PREVIEW.viral_yellow;
-  const primary = document.getElementById('caption-primary-color')?.value || base.text;
-  const accent = document.getElementById('caption-highlight-color')?.value || base.accent;
-  const stroke = document.getElementById('caption-outline-color')?.value || base.back;
-  const font = document.getElementById('caption-font-name')?.value || base.font;
-  const hookSize = parseInt(document.getElementById('intro-hook-font-size')?.value || '64', 10);
-
-  const stage = el.parentElement;
-  const ratio = document.getElementById('clip-aspect-ratio')?.value || '9:16';
-  const canvasWidth = ratio === '16:9' ? 1920 : 1080;
-  const previewWidth = stage && stage.clientWidth > 0 ? stage.clientWidth : 540;
-  const scale = previewWidth / canvasWidth;
-
-  el.style.color = primary;
-  el.style.fontFamily = font;
-  el.style.fontSize = `${Math.max(10, Math.round(hookSize * scale))}px`;
-  el.style.fontWeight = document.getElementById('caption-bold')?.checked ? '900' : '800';
-  const w = parseInt(document.getElementById('caption-outline-width')?.value || '3', 10);
-  const o = stroke || '#000000';
-  el.style.textShadow = w > 0
-    ? `${w}px 0 0 ${o}, -${w}px 0 0 ${o}, 0 ${w}px 0 ${o}, 0 -${w}px 0 ${o}, 0 0 14px ${accent}55`
-    : `0 0 14px ${accent}55`;
-}
-
-function applyCaptionPreviewStyle() {
-  const preview = document.getElementById('caption-preview');
-  if (!preview) return;
-  const presetId = document.getElementById('generated-caption-preset')?.value || 'viral_yellow';
-  const baseStyle = CAPTION_PREVIEW[presetId] || CAPTION_PREVIEW.viral_yellow;
-
-  const fontName = document.getElementById('caption-font-name')?.value;
-  const primaryColor = document.getElementById('caption-primary-color')?.value;
-  const highlightColor = document.getElementById('caption-highlight-color')?.value;
-  const outlineColor = document.getElementById('caption-outline-color')?.value;
-  const outlineWidth = parseInt(document.getElementById('caption-outline-width')?.value || '3', 10);
-  const isUppercase = document.getElementById('caption-uppercase')?.checked;
-  const isBold = document.getElementById('caption-bold')?.checked;
-  const isItalic = document.getElementById('caption-italic')?.checked;
-
-  const font = fontName || baseStyle.font;
-  const textColor = primaryColor || baseStyle.text;
-  const accentColor = highlightColor || baseStyle.accent;
-  const strokeColor = outlineColor || baseStyle.back;
-
-  preview.style.color = textColor;
-  preview.style.fontFamily = font;
-  const previewStage = preview.parentElement;
-  const ratio = document.getElementById('clip-aspect-ratio')?.value || '9:16';
-  const canvasWidth = ratio === '16:9' ? 1920 : 1080;
-  const previewWidth = previewStage?.clientWidth > 0 ? previewStage.clientWidth : 540;
-  const previewScale = previewWidth / canvasWidth;
-  preview.style.fontSize = `${Math.max(1, Math.round(captionFontSize() * previewScale))}px`;
-  preview.style.fontWeight = isBold ? '900' : 'normal';
-  preview.style.fontStyle = isItalic ? 'italic' : 'normal';
-  preview.style.textTransform = isUppercase ? 'uppercase' : 'none';
-
-  if (outlineWidth > 0) {
-    const o = strokeColor || '#000000';
-    const w = outlineWidth;
-    preview.style.textShadow = `${w}px 0 0 ${o}, -${w}px 0 0 ${o}, 0 ${w}px 0 ${o}, 0 -${w}px 0 ${o}, ${w}px ${w}px 0 ${o}, -${w}px -${w}px 0 ${o}, ${w}px -${w}px 0 ${o}, -${w}px ${w}px 0 ${o}, 0 0 16px ${accentColor}55`;
-  } else {
-    preview.style.textShadow = `0 0 16px ${accentColor}55`;
-  }
-
-  const highlights = preview.querySelectorAll('mark');
-  highlights.forEach((m) => {
-    m.style.color = accentColor;
-    m.style.background = 'transparent';
-  });
-  applyPortraitCaptionPreviewStyle();
-  updateHookPreview();  // keep the hook preview in sync with style changes
-}
-
-function refreshCaptionPreview() {
-  const preview = document.getElementById('caption-preview');
-  if (!preview) return;
-  const rawWords = preview.dataset.words || 'Your caption appears here';
-  const isUppercase = document.getElementById('caption-uppercase')?.checked;
-  const words = isUppercase ? rawWords.toUpperCase() : rawWords;
-
-
-  // Render words, highlighting every few so the accent shows like a karaoke lead.
-
-  const list = words.split(' ').map((w, i) => (i % 3 === 0 ? `<mark>${escapeHtml(w)}</mark>` : escapeHtml(w)));
-  preview.innerHTML = list.join(' ');
-  preview.dataset.words = rawWords;
-  refreshPortraitCaptionPreview();
-  applyCaptionPreviewStyle();
-}
-
-function applyPortraitCaptionPreviewStyle() {
-  const preview = document.getElementById('portrait-caption-preview');
-  if (!preview) return;
-  const presetId = document.getElementById('generated-caption-preset')?.value || 'viral_yellow';
-  const baseStyle = CAPTION_PREVIEW[presetId] || CAPTION_PREVIEW.viral_yellow;
-
-  const fontName = document.getElementById('caption-font-name')?.value;
-  const primaryColor = document.getElementById('caption-primary-color')?.value;
-  const highlightColor = document.getElementById('caption-highlight-color')?.value;
-  const outlineColor = document.getElementById('caption-outline-color')?.value;
-  const outlineWidth = parseInt(document.getElementById('caption-outline-width')?.value || '3', 10);
-  const isBold = document.getElementById('caption-bold')?.checked;
-  const isItalic = document.getElementById('caption-italic')?.checked;
-  const isUppercase = document.getElementById('caption-uppercase')?.checked;
-
-  const font = fontName || baseStyle.font;
-  const textColor = primaryColor || baseStyle.text;
-  const accentColor = highlightColor || baseStyle.accent;
-  const strokeColor = outlineColor || baseStyle.back;
-
-  const positionVal = document.getElementById('caption-position')?.value || '2';
-  const alignClass = ['1'].includes(positionVal) ? 'caption-align-left' : (['3'].includes(positionVal) ? 'caption-align-right' : 'caption-align-center');
-  const verticalClass = ['8'].includes(positionVal) ? 'caption-pos-top' : (['2', '1', '3'].includes(positionVal) ? 'caption-pos-bottom' : 'caption-pos-middle');
-  const screenEl = preview.parentElement;
-  if (screenEl) {
-    screenEl.classList.remove('caption-align-left', 'caption-align-right', 'caption-align-center');
-    screenEl.classList.remove('caption-pos-top', 'caption-pos-bottom', 'caption-pos-middle');
-    screenEl.classList.add(alignClass, verticalClass);
-  }
-
-  // Calculate proportional font size matching 1080x1920 video canvas
-  const containerWidth = (screenEl && screenEl.clientWidth > 0) ? screenEl.clientWidth : 200;
-  const rawSize = captionFontSize();
-  const ratio = document.getElementById('clip-aspect-ratio')?.value || '9:16';
-  const canvasWidth = ratio === '16:9' ? 1920 : (ratio === '1:1' ? 1080 : (ratio === '4:5' ? 1080 : 1080));
-  const scaledFontSize = Math.max(1, Math.round(rawSize * (containerWidth / canvasWidth)));
-  const scaledOutline = Math.max(0, Math.round(outlineWidth * (containerWidth / canvasWidth)));
-
-  preview.style.color = textColor;
-  preview.style.fontFamily = font;
-  preview.style.fontSize = `${scaledFontSize}px`;
-  preview.style.fontWeight = isBold ? '900' : 'normal';
-  preview.style.fontStyle = isItalic ? 'italic' : 'normal';
-  preview.style.textTransform = isUppercase ? 'uppercase' : 'none';
-
-  if (outlineWidth > 0) {
-    const o = strokeColor || '#000000';
-    const w = scaledOutline;
-    preview.style.textShadow = `${w}px 0 0 ${o}, -${w}px 0 0 ${o}, 0 ${w}px 0 ${o}, 0 -${w}px 0 ${o}, ${w}px ${w}px 0 ${o}, -${w}px -${w}px 0 ${o}, ${w}px -${w}px 0 ${o}, -${w}px ${w}px 0 ${o}, 0 0 14px ${accentColor}55`;
-  } else {
-    preview.style.textShadow = `0 0 14px ${accentColor}55`;
-  }
-
-  const highlights = preview.querySelectorAll('mark');
-  highlights.forEach((m) => {
-    m.style.color = accentColor;
-    m.style.background = 'transparent';
-  });
-}
-
-
-function refreshPortraitCaptionPreview() {
-  const preview = document.getElementById('portrait-caption-preview');
-  if (!preview) return;
-  const rawWords = preview.dataset.words || 'Your caption appears here';
-  const isUppercase = document.getElementById('caption-uppercase')?.checked;
-  const words = isUppercase ? rawWords.toUpperCase() : rawWords;
-
-
-  // Mirror the modal preview: highlight every 3rd word with the accent color.
-  const list = words.split(' ').map((w, i) => (i % 3 === 0 ? `<mark>${escapeHtml(w)}</mark>` : escapeHtml(w)));
-  preview.innerHTML = list.join(' ');
-  preview.dataset.words = rawWords;
-  applyPortraitCaptionPreviewStyle();
-  refreshIntroPreview();
-}
-
-// Separate live preview for the INTRO HOOK (top-center, bigger font) shown in
-// the same phone frame. Reuses the caption preset + color controls, but with
-// its own font size so the user can size the hook independently of the captions.
-function refreshIntroPreview() {
-  const el = document.getElementById('portrait-intro-preview');
-  if (!el) return;
-  const enabled = document.getElementById('caption-intro-enabled')?.checked;
-  if (!enabled) { el.classList.add('hidden'); return; }
-  el.classList.remove('hidden');
-
-  const raw = (document.getElementById('caption-intro-text')?.value || '').trim() || 'Your hook here';
-  const isUppercase = document.getElementById('caption-uppercase')?.checked;
-  el.textContent = isUppercase ? raw.toUpperCase() : raw;
-
-  const presetId = document.getElementById('generated-caption-preset')?.value || 'viral_yellow';
-  const baseStyle = CAPTION_PREVIEW[presetId] || CAPTION_PREVIEW.viral_yellow;
-  const fontName = document.getElementById('caption-font-name')?.value || baseStyle.font;
-  const accentColor = document.getElementById('caption-highlight-color')?.value || baseStyle.accent;
-  const strokeColor = document.getElementById('caption-outline-color')?.value || baseStyle.back;
-  const outlineWidth = parseInt(document.getElementById('caption-outline-width')?.value || '3', 10);
-
-  const screenEl = el.parentElement;
-  const containerWidth = (screenEl && screenEl.clientWidth > 0) ? screenEl.clientWidth : 200;
-  const ratio = document.getElementById('clip-aspect-ratio')?.value || '9:16';
-  const canvasWidth = ratio === '16:9' ? 1920 : 1080;
-  const rawSize = parseInt(document.getElementById('generated-intro-font-size')?.value || '64', 10);
-  const scaled = Math.max(1, Math.round(rawSize * (containerWidth / canvasWidth)));
-  const w = Math.max(0, Math.round(outlineWidth * (containerWidth / canvasWidth)));
-
-  el.style.color = accentColor;        // hooks pop in the highlight color
-  el.style.fontFamily = fontName;
-  el.style.fontSize = `${scaled}px`;
-  el.style.fontWeight = '900';
-  el.style.textShadow = w > 0
-    ? `${w}px 0 0 ${strokeColor}, -${w}px 0 0 ${strokeColor}, 0 ${w}px 0 ${strokeColor}, 0 -${w}px 0 ${strokeColor}, 0 0 14px ${accentColor}55`
-    : `0 0 14px ${accentColor}55`;
-}
-
-// Wire the intro-hook controls to the live preview (runs once at load).
-(function wireIntroHookPreview() {
-  const introSize = document.getElementById('generated-intro-font-size');
-  const introSizeLabel = document.getElementById('generated-intro-font-size-label');
-  document.getElementById('caption-intro-text')?.addEventListener('input', refreshIntroPreview);
-  document.getElementById('caption-intro-enabled')?.addEventListener('change', refreshIntroPreview);
-  introSize?.addEventListener('input', () => {
-    if (introSizeLabel) introSizeLabel.textContent = introSize.value;
-    refreshIntroPreview();
-  });
-})();
-
-// ------------------------------------------------------------------
-// Interactive Caption Editor
-// ------------------------------------------------------------------
-window.openCaptionEditor = function(clipIndex) {
-  const clip = generatedClips[clipIndex];
-  if (!clip) return;
-  currentEditingClip = clip;
-
-  // Seed the intro-hook editor with this clip's current hook and reset the
-  // rotation cache so "Suggest another" pulls fresh candidates for this clip.
-  const titleInput = document.getElementById('edit-clip-title');
-  if (titleInput) titleInput.value = clip.title || clip.hook_text || '';
-  const hookInput = document.getElementById('edit-intro-hook');
-  if (hookInput) hookInput.value = clip.intro_caption || clip.hook_text || '';
-  const hookSizeInput = document.getElementById('intro-hook-font-size');
-  if (hookSizeInput) {
-    hookSizeInput.value = clip.intro_font_size || 64;
-    const lbl = document.getElementById('intro-hook-font-size-label');
-    if (lbl) lbl.textContent = hookSizeInput.value;
-  }
-  hookCandidates = [];
-  hookCandidateIdx = -1;
-  const vbox = document.getElementById('hook-variants');
-  if (vbox) { vbox.classList.add('hidden'); vbox.innerHTML = ''; }
-  updateHookPreview();
-
-  const modal = document.getElementById('caption-modal');
-  const chipsContainer = document.getElementById('word-chips');
-  chipsContainer.innerHTML = '';
-
-  const words = clip.words && clip.words.length ? clip.words : (clip.hook_text || '').split(' ').map((w, i) => ({ word: w, start: i * 0.4, end: (i + 1) * 0.4 }));
-
-  words.forEach((w) => {
-    // Coerce timings defensively: backend word entries occasionally omit
-    // start/end, which used to throw on .toFixed and leave the editor half-built.
-    const start = Number.isFinite(w.start) ? w.start : 0;
-    const end = Number.isFinite(w.end) ? w.end : start;
-    const chip = document.createElement('div');
-    chip.className = 'word-chip';
-    chip.innerHTML =
-      `<span class="word-text" contenteditable="true">${escapeHtml(w.word || String(w))}</span> ` +
-      `<small class="word-time" data-start="${escapeHtml(start)}" data-end="${escapeHtml(end)}" style="color:var(--text-muted);">[${start.toFixed(1)}s]</small>`;
-    chipsContainer.appendChild(chip);
-  });
-
-  // Seed the preview with a real snippet from this clip's words.
-  const preview = document.getElementById('caption-preview');
-  const sample = (clip.hook_text || (clip.words || []).map((x) => x.word).join(' ') || 'Your caption appears here').trim();
-  if (preview) {
-    preview.dataset.words = sample.length ? sample : 'Your caption appears here';
-    refreshCaptionPreview();
-  }
-  const previewFontSize = document.getElementById('caption-preview-font-size');
-  const generatedFontSize = document.getElementById('generated-caption-font-size');
-  const previewFontLabel = document.getElementById('caption-preview-font-size-label');
-  if (previewFontSize && generatedFontSize) {
-    previewFontSize.value = generatedFontSize.value;
-    if (previewFontLabel) previewFontLabel.textContent = generatedFontSize.value;
-  }
-
-  modal.classList.remove('hidden');
-};
-
-document.getElementById('close-caption-modal')?.addEventListener('click', () => {
-  document.getElementById('caption-modal').classList.add('hidden');
-});
-
-// Rotate through hook suggestions drawn from THIS clip's transcript. Fetches
-// once, then cycles on each click (wrapping around).
-document.getElementById('suggest-hook-btn')?.addEventListener('click', async () => {
-  if (!currentEditingClip) return;
-  const input = document.getElementById('edit-intro-hook');
-  const btn = document.getElementById('suggest-hook-btn');
-  if (!hookCandidates.length) {
-    if (btn) { btn.disabled = true; btn.textContent = '⏳ Thinking…'; }
-    try {
-      const res = await fetch(`${serverUrl}/tools/suggest-hooks`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: currentEditingClip.full_text || currentEditingClip.reason || currentEditingClip.hook_text || '',
-          words: currentEditingClip.words || [],
-          count: 8,
-        }),
-      });
-      const data = await res.json();
-      hookCandidates = (data.hooks || []).filter(Boolean);
-    } catch (_) {
-      hookCandidates = [];
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '🔄 Suggest another'; }
-    }
-  }
-  if (!hookCandidates.length) {
-    showToast('No alternative hooks found for this clip', 'info');
-    return;
-  }
-  hookCandidateIdx = (hookCandidateIdx + 1) % hookCandidates.length;
-  if (input) input.value = hookCandidates[hookCandidateIdx];
-  updateHookPreview();
-});
-
-// A/B hook variants: fetch several options at once (AI if Ollama is running,
-// else transcript heuristics) and show them as clickable chips to compare/pick.
-async function showHookVariants() {
-  if (!currentEditingClip) return;
-  const box = document.getElementById('hook-variants');
-  const btn = document.getElementById('hook-variants-btn');
-  if (!box) return;
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating…'; }
-  let hooks = [];
-  let usedAi = false;
-  try {
-    const res = await fetch(`${serverUrl}/tools/rewrite-hook`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: currentEditingClip.full_text || currentEditingClip.reason || currentEditingClip.hook_text || '',
-        words: currentEditingClip.words || [],
-        current_hook: document.getElementById('edit-intro-hook')?.value || '',
-        count: 6,
-        preset: document.getElementById('generated-caption-preset')?.value || '',
-      }),
-    });
-    const data = await res.json();
-    hooks = (data.hooks || []).filter(Boolean);
-    usedAi = !!data.used_ai;
-  } catch (_) { hooks = []; }
-  if (btn) { btn.disabled = false; btn.textContent = '⚖️ Variants'; }
-  if (!hooks.length) { showToast('No hook variants found for this clip', 'info'); return; }
-  box.classList.remove('hidden');
-  box.innerHTML = `<div class="hook-variants-head muted small">${usedAi ? '✨ AI' : 'Suggested'} variants — click one to use it:</div>` +
-    hooks.map((h) => `<button type="button" class="hook-variant-chip">${escapeHtml(h)}</button>`).join('');
-  box.querySelectorAll('.hook-variant-chip').forEach((chip) => {
-    chip.addEventListener('click', () => {
-      const input = document.getElementById('edit-intro-hook');
-      if (input) input.value = chip.textContent;
-      box.querySelectorAll('.hook-variant-chip').forEach((c) => c.classList.remove('chosen'));
-      chip.classList.add('chosen');
-      updateHookPreview();
-    });
-  });
-}
-
-// Optional AI rewrite: punch up the hook with the user's local Ollama model.
-// Falls back to the offline suggestions when Ollama isn't running.
-document.getElementById('ai-rewrite-hook-btn')?.addEventListener('click', async () => {
-  if (!currentEditingClip) return;
-  const input = document.getElementById('edit-intro-hook');
-  const titleInput = document.getElementById('edit-clip-title');
-  const btn = document.getElementById('ai-rewrite-hook-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Rewriting…'; }
-  try {
-    // Full copywriter pass: regenerate the hook AND the title (and a description)
-    // together, so clicking "AI rewrite" visibly refreshes both fields.
-    const res = await fetch(`${serverUrl}/tools/rewrite-copy`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: currentEditingClip.full_text || currentEditingClip.reason || currentEditingClip.hook_text || '',
-        words: currentEditingClip.words || [],
-        current_hook: input?.value || '',
-        preset: document.getElementById('generated-caption-preset')?.value || '',
-      }),
-    });
-    const data = await res.json();
-    const newHook = (data.hook || '').trim();
-    const newTitle = (data.title || '').trim();
-    if (!newHook && !newTitle) { showToast('No copy generated for this clip', 'info'); return; }
-    if (input && newHook) { input.value = newHook; }
-    if (titleInput && newTitle) { titleInput.value = newTitle; }
-    if (data.description) currentEditingClip.description = data.description;
-    updateHookPreview();
-    if (data.used_ai) showToast(`✨ AI hook + title from ${data.model} — edit or Save & Apply to keep`, 'success');
-    else showToast('Ollama not running — used offline suggestions. Start Ollama in Setup for AI rewrites.', 'info');
-  } catch (e) {
-    showToast('AI rewrite failed — try again', 'error');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '✨ AI rewrite'; }
-  }
-});
-
-document.getElementById('save-captions-btn')?.addEventListener('click', async () => {
-  if (!currentEditingClip) {
-    document.getElementById('caption-modal').classList.add('hidden');
-    return;
-  }
-
-  const saveBtn = document.getElementById('save-captions-btn');
-  const originalText = saveBtn ? saveBtn.textContent : '💾 Save & Apply Subtitles';
-  if (saveBtn) {
-    saveBtn.disabled = true;
-    saveBtn.textContent = '⏳ Saving & Burning Captions…';
-  }
-
-  // Read edited word chips: [word] [start] now editable
-  const chips = document.querySelectorAll('#word-chips .word-chip');
-  const editedWords = [];
-  chips.forEach((chip) => {
-    const textEl = chip.querySelector('.word-text');
-    const timeEl = chip.querySelector('.word-time');
-    const word = (textEl ? textEl.textContent : '').trim();
-    if (!word) return;
-    let start = parseFloat((timeEl?.dataset.start || '0').replace(/[^0-9.]/g, ''));
-    let end = parseFloat((timeEl?.dataset.end || '0').replace(/[^0-9.]/g, ''));
-    if (isNaN(start)) start = 0;
-    if (isNaN(end) || end <= start) end = start + 1;
-    editedWords.push({ word, start, end });
-  });
-
-  if (!editedWords.length) {
-    if (saveBtn) {
-      saveBtn.disabled = false;
-      saveBtn.textContent = originalText;
-    }
-    showAlert('No editable words found.');
-    return;
-  }
-
-  const captionOpts = collectCaptionOptions();
-  const outputPath = currentEditingClip.ass_path
-    ? currentEditingClip.ass_path.replace(/\.ass$/i, '.srt')
-    : `${currentEditingClip.output_file}.srt`;
-
-  try {
-    const res = await fetch(`${serverUrl}/export/subtitles`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        output_path: outputPath,
-        words: editedWords,
-        style_preset: captionOpts.style_preset,
-        font_size: captionOpts.font_size,
-        font_name: captionOpts.font_name,
-        primary_color: captionOpts.primary_color,
-        highlight_color: captionOpts.highlight_color,
-        outline_color: captionOpts.outline_color,
-        outline_width: captionOpts.outline_width,
-        position: captionOpts.position,
-        chunk_size: captionOpts.chunk_size,
-        uppercase: captionOpts.uppercase,
-        bold: captionOpts.bold,
-        italic: captionOpts.italic,
-        source_video: selectedVideo,
-        clip_output_file: currentEditingClip.output_file,
-        start_seconds: currentEditingClip.start_time,
-        end_seconds: currentEditingClip.end_time,
-        aspect_ratio: document.getElementById('clip-aspect-ratio')?.value || '9:16',
-        // Burn the (possibly edited/rotated) intro hook for this clip.
-        intro_caption: (document.getElementById('edit-intro-hook')?.value || '').trim() || undefined,
-        intro_enabled: !!(document.getElementById('edit-intro-hook')?.value || '').trim(),
-        intro_caption_duration: parseFloat(document.getElementById('caption-intro-duration')?.value || '3') || 3,
-        intro_font_size: parseInt(document.getElementById('intro-hook-font-size')?.value || '', 10) || undefined,
-        re_render: true,
-      })
-    });
-    const data = await res.json();
-    if (res.ok) {
-      // Update in-memory clip state
-      currentEditingClip.words = editedWords;
-      if (data.export_path) currentEditingClip.srt_path = data.export_path;
-      // Persist the chosen intro hook so it's reflected on the card and re-used.
-      const newHook = (document.getElementById('edit-intro-hook')?.value || '').trim();
-      currentEditingClip.intro_caption = newHook;
-      if (newHook) currentEditingClip.hook_text = newHook;
-      currentEditingClip.intro_font_size = parseInt(document.getElementById('intro-hook-font-size')?.value || '', 10) || undefined;
-      // Editable clip title (used for the export file name + the card label).
-      const newTitle = (document.getElementById('edit-clip-title')?.value || '').trim();
-      if (newTitle) currentEditingClip.title = newTitle;
-
-      // Reload the matching clip card so it plays the freshly burned captions.
-      // Match on the card's own index rather than fuzzy src string-matching,
-      // which was both fragile and mis-grouped (&& binds tighter than ||, so
-      // the old condition reloaded the wrong card or none at all).
-      const targetIdx = generatedClips.indexOf(currentEditingClip);
-      if (targetIdx !== -1) {
-        const card = document.querySelector(`.clip-card[data-clip-idx="${targetIdx}"]`);
-        const vid = card && card.querySelector('video');
-        if (vid) {
-          vid.src = fileUrl(currentEditingClip.output_file, true);
-          vid.load();
-        }
-        // Reflect the edited hook + title on the card immediately. Prefer the
-        // AI-written description for the card blurb (matches buildClipCard),
-        // falling back to the hook line when there's no description.
-        const descEl = card && card.querySelector('.clip-desc');
-        const cardBlurb = (currentEditingClip.description || newHook || '').trim();
-        if (descEl && cardBlurb) descEl.textContent = cardBlurb;
-        const titleEl = card && card.querySelector('.clip-title');
-        if (titleEl && newTitle) titleEl.textContent = newTitle;
-      }
-      saveCurrentProjectSilently();
-      playSuccessSound();
-      showAlert(`✅ Captions updated and applied to clip!`);
-    } else {
-      showAlert(`Save failed: ${data.detail || 'Unknown error'}`);
-    }
-  } catch (err) {
-    showAlert(`Save error: ${err.message}`);
-  } finally {
-    if (saveBtn) {
-      saveBtn.disabled = false;
-      saveBtn.textContent = originalText;
-    }
-    document.getElementById('caption-modal').classList.add('hidden');
-  }
-});
-
-function revealInFolder(filePath) {
-  // Reveal in OS file manager via Electron IPC (fallback: copy path).
-  if (window.clipperAPI && window.clipperAPI.revealInFolder) {
-    window.clipperAPI.revealInFolder(filePath);
-  } else {
-    navigator.clipboard.writeText(filePath).catch(() => {});
-    showAlert(`Path copied to clipboard:\n${filePath}`);
-  }
-}
-
-window.quickCutSilence = async function(clipIndex) {
-  const clip = generatedClips[clipIndex];
-  if (!clip) return;
-  try {
-    const res = await fetch(`${serverUrl}/tools/remove-silence`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ video_path: clip.output_file }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      playSuccessSound();
-      showAlert(`✂️ Dead air removed! Saved ${data.time_saved}s (${data.original_duration}s -> ${data.cut_duration}s)`);
-      clip.output_file = data.output_path;
-      clip.duration = data.cut_duration;
-      showResults(generatedClips);
-    } else {
-      throw new Error(data.detail || 'Silence removal failed');
-    }
-  } catch (e) {
-    showError(e.message);
-  }
-};
-
-window.quickBleepClip = async function(clipIndex) {
-  const clip = generatedClips[clipIndex];
-  if (!clip) return;
-  try {
-    const res = await fetch(`${serverUrl}/tools/bleep-mute`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        video_path: clip.output_file,
-        mode: 'bleep',
-        timestamps: clip.words ? clip.words.map(w => ({ word: w.word, start: w.start, end: w.end })) : [],
-      }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      playSuccessSound();
-      showAlert(`🔇 Bleep filter applied! (${data.message})`);
-      clip.output_file = data.output_path;
-      showResults(generatedClips);
-    } else {
-      throw new Error(data.detail || 'Bleeping failed');
-    }
-  } catch (e) {
-    showError(e.message);
-  }
-};
-
-
-function showError(message) {
-  playErrorSound();
-  const btn = document.getElementById('start-clipping');
-  if (btn) {
-    btn.disabled = false;
-    btn.textContent = '🚀 Start Clipping & Transcribing';
-  }
-  setWizardStep(2);
-  showAlert(`Error: ${message}`);
-}
 
 // ------------------------------------------------------------------
 // Chat
@@ -3413,859 +2938,6 @@ function fileUrl(filePath, cacheBust) {
   return `${prefix}${encoded}${cacheBust ? `#t=${Date.now()}` : ''}`;
 }
 
-// ------------------------------------------------------------------
-// Setup / System panel
-// ------------------------------------------------------------------
-async function loadSetupPanel() {
-  loadSupportLinks();
-  try {
-    const res = await fetch(`${serverUrl}/api/setup/status`);
-    const data = await res.json();
-    renderHardware(data);
-    loadGpuAcceleration();
-    renderRecommendations(data.recommendations);
-    renderDeps(data);
-    bindInstallAll();
-    bindClearCache();
-    loadAiModels(data);
-    renderModelCatalog();
-    loadOptionalAddons();
-  } catch (e) {
-    document.getElementById('setup-hardware').innerHTML = '<span class="muted">⚠️ Could not reach the server.</span>';
-  }
-}
-
-// Optional AI add-ons (currently: speaker diarization via pyannote + HF token).
-async function loadOptionalAddons() {
-  const statusEl = document.getElementById('diarization-status');
-  const installBtn = document.getElementById('install-diarization-btn');
-  // Diarization availability.
-  try {
-    const r = await fetch(`${serverUrl}/tools/diarization-available`);
-    const d = await r.json();
-    if (statusEl) statusEl.textContent = d.available ? '✓ Installed' : 'Not installed';
-    if (installBtn) {
-      installBtn.textContent = d.available ? '✓ Installed' : '⬇️ Install pyannote';
-      installBtn.disabled = !!d.available;
-    }
-  } catch (_) { if (statusEl) statusEl.textContent = ''; }
-  // HF token status.
-  try {
-    const r = await fetch(`${serverUrl}/api/setup/hf-token`);
-    const d = await r.json();
-    const ts = document.getElementById('hf-token-status');
-    if (ts) ts.textContent = d.set ? '· saved ✓' : '· not set';
-  } catch (_) {}
-
-  if (installBtn && !installBtn.dataset.bound) {
-    installBtn.dataset.bound = '1';
-    installBtn.addEventListener('click', async () => {
-      const orig = installBtn.textContent;
-      installBtn.disabled = true;
-      installBtn.textContent = '⏳ Installing… (a few min)';
-      showToast('Installing pyannote.audio — this is a large download', 'info');
-      try {
-        const r = await fetch(`${serverUrl}/api/setup/install-optional?component=diarization`, { method: 'POST' });
-        const d = await r.json();
-        if (d.ok) { showToast('✅ pyannote installed — restart the app to load it', 'success'); }
-        else throw new Error(d.error || d.stderr || 'install failed');
-      } catch (e) {
-        showToast(`Install failed: ${e.message || e}`, 'error');
-      } finally {
-        installBtn.disabled = false;
-        installBtn.textContent = orig;
-        loadOptionalAddons();
-      }
-    });
-  }
-  const saveBtn = document.getElementById('hf-token-save');
-  if (saveBtn && !saveBtn.dataset.bound) {
-    saveBtn.dataset.bound = '1';
-    saveBtn.addEventListener('click', async () => {
-      const input = document.getElementById('hf-token-input');
-      const token = (input && input.value || '').trim();
-      try {
-        const r = await fetch(`${serverUrl}/api/setup/hf-token`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token }),
-        });
-        if (!r.ok) throw new Error(`Server returned ${r.status}`);
-        if (input) input.value = '';
-        showToast(token ? 'Hugging Face token saved ✓' : 'Token cleared', 'success');
-        loadOptionalAddons();
-      } catch (e) {
-        showToast(`Could not save token: ${e.message || e}`, 'error');
-      }
-    });
-  }
-}
-
-// Clips-Kitty-style local-LLM catalog: browse curated models (small → large),
-// download the ones you want, and set the active model. The ⭐ pick matches
-// your hardware. Downloads use Ollama, so the row is disabled if it's absent.
-async function renderModelCatalog() {
-  const grid = document.getElementById('model-catalog');
-  if (!grid) return;
-  let data;
-  try {
-    // Pass the active caption preset so high-energy presets get a punchier pick.
-    const preset = document.getElementById('generated-caption-preset')?.value || '';
-    const res = await fetch(`${serverUrl}/api/setup/model-catalog?preset=${encodeURIComponent(preset)}`);
-    if (!res.ok) throw new Error();
-    data = await res.json();
-  } catch (_) {
-    grid.innerHTML = '<span class="muted">⚠️ Could not load the model catalog.</span>';
-    return;
-  }
-  const ollamaReady = !!(data.ollama && data.ollama.installed);
-  const active = data.active;
-  grid.innerHTML = (data.models || []).map((m) => {
-    const isActive = m.name === active;
-    const badges = [];
-    if (m.recommended) badges.push('<span class="model-badge rec">⭐ Recommended</span>');
-    if (isActive) badges.push('<span class="model-badge active">● In use</span>');
-    else if (m.installed) badges.push('<span class="model-badge dl">✓ Downloaded</span>');
-    if (m.tested) badges.push('<span class="model-badge tested" title="Benchmarked for clip selection on real footage">🧪 Tested</span>');
-    if (m.license) badges.push('<span class="model-badge license" title="Model license">' + escapeHtml(m.license) + '</span>');
-    if (!m.fits_ram) badges.push('<span class="model-badge warn">Needs ' + m.min_ram_gb + 'GB+ RAM</span>');
-
-    let actions;
-    if (!m.installed) {
-      actions = `<button class="btn btn-small btn-secondary" data-pull="${escapeHtml(m.name)}" ${ollamaReady ? '' : 'disabled'}>⬇️ Download (${m.size_gb}GB)</button>`;
-    } else if (isActive) {
-      actions = `<button class="btn btn-small" disabled>● In use</button>` +
-                `<button class="btn btn-small btn-ghost" data-remove="${escapeHtml(m.name)}" title="Delete this model from disk">🗑</button>`;
-    } else {
-      actions = `<button class="btn btn-small btn-primary" data-use="${escapeHtml(m.name)}">Use</button>` +
-                `<button class="btn btn-small btn-ghost" data-remove="${escapeHtml(m.name)}" title="Delete this model from disk">🗑</button>`;
-    }
-    return `
-      <div class="model-card${isActive ? ' is-active' : ''}">
-        <div class="model-card-top">
-          <span class="model-name">${escapeHtml(m.label)}</span>
-          <span class="model-tier">${escapeHtml(m.tier)}</span>
-        </div>
-        <div class="model-badges">${badges.join('')}</div>
-        <div class="model-note muted small">${escapeHtml(m.note)}</div>
-        <div class="model-meta muted small">${escapeHtml(m.params)} · ~${m.size_gb}GB${m.installed ? ' · downloaded' : ' download'}${m.fits_vram ? ' · ⚡ fits your GPU' : ''}</div>
-        <div class="model-card-actions">${actions}</div>
-      </div>`;
-  }).join('');
-
-  if (!ollamaReady) {
-    grid.insertAdjacentHTML('afterbegin',
-      '<p class="muted small" style="grid-column:1/-1;">Ollama isn\'t installed yet — install it from the dependencies above to download and run these models.</p>');
-  }
-
-  // "Currently in use" banner at the very top so the active model is obvious.
-  if (active) {
-    const am = (data.models || []).find((m) => m.name === active);
-    grid.insertAdjacentHTML('afterbegin',
-      `<div class="model-inuse-banner" style="grid-column:1/-1;">🟢 <strong>In use:</strong> ${escapeHtml(am ? am.label : active)} <span class="muted small">— powering hooks, titles &amp; chat right now.</span></div>`);
-  }
-
-  // Transparency footnote (Clips-Kitty-style honesty): be clear about which
-  // models we've actually measured vs. ones that just "should work".
-  grid.insertAdjacentHTML('beforeend',
-    '<p class="muted small" style="grid-column:1/-1; margin-top:6px;">🧪 <strong>Tested</strong> models were benchmarked for clip-selection quality on real footage (RTX 3060). The rest run the same way but haven\'t been measured for pick quality. License badges are best-effort — verify terms before commercial use.</p>');
-
-  grid.querySelectorAll('[data-pull]').forEach((btn) => {
-    btn.addEventListener('click', () => startModelPull(btn.dataset.pull, btn));
-  });
-
-  grid.querySelectorAll('[data-use]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const model = btn.dataset.use;
-      try {
-        const r = await fetch(`${serverUrl}/api/setup/ai-model`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ kind: 'ollama', model }),
-        });
-        if (!r.ok) throw new Error(`Server returned ${r.status}`);
-        showToast(`AI model set to ${model}`, 'success');
-        renderModelCatalog();
-        loadAiModels();
-      } catch (e) {
-        showToast(`Could not set model: ${e.message}`, 'error');
-      }
-    });
-  });
-
-  grid.querySelectorAll('[data-remove]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const model = btn.dataset.remove;
-      const ok = await showConfirm(`Delete the model "${model}" from disk? You can re-download it later.`);
-      if (!ok) return;
-      btn.disabled = true;
-      try {
-        const r = await fetch(`${serverUrl}/api/setup/ollama/remove?model=${encodeURIComponent(model)}`, { method: 'POST' });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok || d.ok === false) throw new Error(d.error || d.stderr || `Server returned ${r.status}`);
-        showToast(`🗑 Removed ${model}`, 'success');
-        renderModelCatalog();
-        loadAiModels();
-      } catch (e) {
-        showToast(`Could not remove model: ${e.message || e}`, 'error');
-        btn.disabled = false;
-      }
-    });
-  });
-}
-
-// Start a streaming model download with a live progress bar + cancel button.
-// Cancel aborts the pull and asks the server to remove the partial model.
-const _pullPollTimers = {};
-async function startModelPull(model, btn) {
-  const card = btn.closest('.model-card');
-  const actions = card ? card.querySelector('.model-card-actions') : null;
-  try {
-    const r = await fetch(`${serverUrl}/api/setup/ollama/pull-start?model=${encodeURIComponent(model)}`, { method: 'POST' });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(d.detail || `Server returned ${r.status}`);
-  } catch (e) {
-    showToast(`Couldn't start download: ${e.message || e}`, 'error');
-    return;
-  }
-  if (actions) {
-    actions.innerHTML = `
-      <div class="pull-progress">
-        <div class="pull-bar"><div class="pull-fill" style="width:0%"></div></div>
-        <div class="pull-row"><span class="pull-pct muted small">Starting…</span>
-          <button class="btn btn-small btn-ghost pull-cancel">Cancel</button></div>
-      </div>`;
-    actions.querySelector('.pull-cancel')?.addEventListener('click', async () => {
-      try { await fetch(`${serverUrl}/api/setup/ollama/pull-cancel?model=${encodeURIComponent(model)}`, { method: 'POST' }); } catch (_) {}
-      const pct = actions.querySelector('.pull-pct');
-      if (pct) pct.textContent = 'Cancelling…';
-    });
-  }
-  // Poll progress.
-  if (_pullPollTimers[model]) clearInterval(_pullPollTimers[model]);
-  _pullPollTimers[model] = setInterval(async () => {
-    let p;
-    try {
-      const res = await fetch(`${serverUrl}/api/setup/ollama/pull-progress?model=${encodeURIComponent(model)}`);
-      p = await res.json();
-    } catch (_) { return; }
-    const fill = actions && actions.querySelector('.pull-fill');
-    const pct = actions && actions.querySelector('.pull-pct');
-    if (fill && typeof p.percent === 'number') fill.style.width = `${p.percent}%`;
-    if (pct) pct.textContent = p.state === 'downloading'
-      ? `${p.status || 'downloading'} · ${Math.round(p.percent || 0)}%`
-      : (p.status || p.state || '');
-    if (p.done || ['success', 'cancelled', 'error', 'idle'].includes(p.state)) {
-      clearInterval(_pullPollTimers[model]);
-      delete _pullPollTimers[model];
-      if (p.state === 'success') showToast(`✅ ${model} downloaded`, 'success');
-      else if (p.state === 'cancelled') showToast(`Cancelled ${model} (partial download removed)`, 'info');
-      else if (p.state === 'error') showToast(`Download failed: ${p.error || 'unknown error'}`, 'error');
-      renderModelCatalog();
-      loadAiModels();
-    }
-  }, 1000);
-}
-
-// Clear the transcript cache (frees space; next run re-transcribes).
-function bindClearCache() {
-  const btn = document.getElementById('clear-cache-btn');
-  if (!btn || btn.dataset.bound) return;
-  btn.dataset.bound = '1';
-  btn.addEventListener('click', async () => {
-    const original = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = '⏳ Clearing…';
-    try {
-      const res = await fetch(`${serverUrl}/api/setup/clear-cache`, { method: 'POST' });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(d.detail || `Server returned ${res.status}`);
-      showToast(`🧹 Cleared ${d.cleared || 0} cached transcript(s) · ${d.mb_freed || 0} MB freed`, 'success');
-    } catch (e) {
-      showToast(`Could not clear cache: ${e.message}`, 'error');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = original;
-    }
-  });
-}
-
-// One-click: install every missing dependency, one at a time, with a real
-// progress bar. Installing sequentially via the per-component endpoint lets us
-// show "Installing X (2/5)" and advance the bar as each finishes — no server
-// streaming needed.
-function bindInstallAll() {
-  const btn = document.getElementById('install-all-btn');
-  if (!btn || btn.dataset.bound) return;
-  btn.dataset.bound = '1';
-  btn.addEventListener('click', async () => {
-    const statusEl = document.getElementById('install-all-status');
-    const progWrap = document.getElementById('install-all-progress');
-    const bar = progWrap ? progWrap.querySelector('.progress-bar') : null;
-    const fill = document.getElementById('install-all-fill');
-    const original = btn.textContent;
-
-    const setProgress = (done, total, label) => {
-      const pct = total ? Math.round((done / total) * 100) : 0;
-      if (fill) fill.style.width = `${pct}%`;
-      if (bar) bar.setAttribute('aria-valuenow', String(pct));
-      if (statusEl) statusEl.textContent = label;
-    };
-
-    btn.disabled = true;
-    btn.textContent = '⏳ Checking what is missing…';
-    if (progWrap) progWrap.classList.remove('hidden');
-    setProgress(0, 1, 'Checking what needs installing…');
-
-    try {
-      const missRes = await fetch(`${serverUrl}/api/setup/missing`);
-      const missData = await missRes.json().catch(() => ({}));
-      if (!missRes.ok) throw new Error(missData.detail || `Server returned ${missRes.status}`);
-      const missing = missData.missing || [];
-
-      if (!missing.length) {
-        setProgress(1, 1, '');
-        showAlert('✅ Everything recommended is already installed — nothing to do.');
-        return;
-      }
-
-      const total = missing.length;
-      const installed = [];
-      const failed = [];
-      for (let i = 0; i < total; i++) {
-        const key = missing[i];
-        btn.textContent = `⏳ Installing ${key} (${i + 1}/${total})…`;
-        setProgress(i, total, `Installing ${key} (${i + 1} of ${total})… this can take a few minutes.`);
-        try {
-          const res = await fetch(`${serverUrl}/api/setup/install`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ component: key }),
-          });
-          const d = await res.json().catch(() => ({}));
-          if (res.ok && !d.error && (d.returncode === 0 || d.returncode === undefined)) installed.push(key);
-          else failed.push(key);
-        } catch (_) {
-          failed.push(key);
-        }
-        setProgress(i + 1, total, `Finished ${i + 1} of ${total}.`);
-      }
-
-      showAlert(`Install All finished.\n\n✅ Installed: ${installed.join(', ') || 'none'}\n❌ Failed: ${failed.join(', ') || 'none'}`);
-      loadSetupPanel();
-    } catch (e) {
-      showAlert(`Install All failed: ${e.message}`);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = original;
-      if (statusEl) statusEl.textContent = '';
-      if (progWrap) progWrap.classList.add('hidden');
-      if (fill) fill.style.width = '0%';
-    }
-  });
-}
-
-// Populate + wire the "Change AI models" selectors.
-async function loadAiModels(statusData) {
-  // Whisper size: keep in sync with the clip-time #whisper-model select + persist.
-  const whisperSel = document.getElementById('ai-whisper-model');
-  if (whisperSel && !whisperSel.dataset.bound) {
-    whisperSel.dataset.bound = '1';
-    const saved = localStorage.getItem('klipzy.whisperModel');
-    const clipSel = document.getElementById('whisper-model');
-    if (saved) whisperSel.value = saved;
-    else if (clipSel && clipSel.value) whisperSel.value = clipSel.value;
-    whisperSel.addEventListener('change', () => {
-      localStorage.setItem('klipzy.whisperModel', whisperSel.value);
-      const cs = document.getElementById('whisper-model');
-      if (cs) cs.value = whisperSel.value;  // the clipping run reads this select
-      showToast(`Transcription model set to ${whisperSel.value} for the next run`, 'success');
-    });
-  }
-
-  // Ollama model: list what's installed locally, let the user pick the active one.
-  const ollamaSel = document.getElementById('ai-ollama-model');
-  if (!ollamaSel) return;
-  try {
-    const res = await fetch(`${serverUrl}/api/setup/ai-models`);
-    if (!res.ok) throw new Error();
-    const data = await res.json();
-    const models = data.installed_ollama_models || [];
-    const active = data.ollama;
-    if (!models.length) {
-      const installed = statusData && statusData.ollama && statusData.ollama.installed;
-      ollamaSel.innerHTML = `<option value="">${installed ? 'No models pulled yet — use “Pull model”' : 'Ollama not installed'}</option>`;
-      ollamaSel.disabled = true;
-    } else {
-      ollamaSel.disabled = false;
-      ollamaSel.innerHTML = models.map((m) =>
-        `<option value="${escapeHtml(m)}"${m === active ? ' selected' : ''}>${escapeHtml(m)}</option>`
-      ).join('');
-      if (active && !models.includes(active)) {
-        ollamaSel.insertAdjacentHTML('afterbegin', `<option value="${escapeHtml(active)}" selected>${escapeHtml(active)} (active)</option>`);
-      }
-    }
-    if (!ollamaSel.dataset.bound) {
-      ollamaSel.dataset.bound = '1';
-      ollamaSel.addEventListener('change', async () => {
-        if (!ollamaSel.value) return;
-        try {
-          const r = await fetch(`${serverUrl}/api/setup/ai-model`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ kind: 'ollama', model: ollamaSel.value }),
-          });
-          if (!r.ok) throw new Error(`Server returned ${r.status}`);
-          showToast(`AI model set to ${ollamaSel.value}`, 'success');
-        } catch (e) {
-          showToast(`Could not set model: ${e.message}`, 'error');
-        }
-      });
-    }
-  } catch (_) {
-    ollamaSel.innerHTML = '<option value="">Could not reach Ollama</option>';
-    ollamaSel.disabled = true;
-  }
-}
-
-let supportLinks = {};
-
-function loadSupportLinks() {
-  fetch(`${serverUrl}/api/setup/support`)
-    .then((r) => r.json())
-    .then((s) => {
-      supportLinks = s || {};
-      const map = { 'support-paypal': s.paypal, 'support-beacons': s.beacons, 'support-star': s.star, 'support-issues': s.issues };
-      Object.entries(map).forEach(([id, url]) => {
-        const el = document.getElementById(id);
-        if (el && url) el.setAttribute('href', url);
-      });
-    })
-    .catch(() => {});
-}
-
-// Single entry point for "Settings" — the Setup view already consolidates
-// hardware, dependencies, model management and support, so route there.
-function openSettings() {
-  const setupNav = document.querySelector('.nav-item[data-view="setup"]');
-  if (setupNav) setupNav.click();   // reuse the normal nav switch
-  loadSetupPanel();                 // refresh diagnostics on the way in
-  document.getElementById('view-setup')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-
-// Support TechFreq: open the best available external link (my links hub, else
-// donate). If we don't have the URLs yet, fall back to the Setup support card.
-function openSupport() {
-  const url = supportLinks.beacons || supportLinks.paypal || supportLinks.star;
-  if (url && window.open) {
-    window.open(url, '_blank', 'noopener');
-    return;
-  }
-  // Links not loaded yet — make sure they get fetched, then land on Setup.
-  openSettings();
-  loadSupportLinks();
-  showToast('💙 Thanks for supporting TechFreq! Support links are in Setup.', 'info');
-}
-
-function renderHardware(data) {
-  const gpu = data.gpu || {};
-  const cpu = data.cpu || {};
-  const torch = data.torch || {};
-  const py = data.python || {};
-  const gpuName = gpu.name ? `${gpu.name}${gpu.vram_gb ? ` (${gpu.vram_gb} GB VRAM)` : ''}` : 'No discrete GPU detected';
-  const accel = torch.cuda ? 'CUDA ✓' : (torch.mps ? 'Apple Silicon (MPS) ✓' : 'CPU only — GPU build of PyTorch not installed');
-  const accelHint = torch.cuda ? '(RTX-class GPU — full GPU speed)'
-    : (torch.mps ? '(Apple Silicon Metal)'
-    : (gpu.name ? `Detected ${escapeHtml(gpu.name)} — install CUDA PyTorch to unlock` : 'Install PyTorch to enable GPU'));
-  document.getElementById('setup-hardware').innerHTML = `
-    <div class="hw-grid">
-      <div class="hw-item"><span class="hw-label">OS</span><strong>${escapeHtml(data.os || 'unknown')}</strong></div>
-      <div class="hw-item"><span class="hw-label">Python</span><strong>${escapeHtml(py.version || '?')}</strong></div>
-      <div class="hw-item"><span class="hw-label">CPU</span><strong>${escapeHtml(String(cpu.cores || '?'))} cores</strong></div>
-      <div class="hw-item"><span class="hw-label">RAM</span><strong>${escapeHtml(String(cpu.ram_gb || '?'))} GB</strong></div>
-      <div class="hw-item"><span class="hw-label">GPU</span><strong>${escapeHtml(gpuName)}</strong></div>
-      <div class="hw-item"><span class="hw-label">Acceleration</span><strong>${escapeHtml(accel)}</strong></div>
-    </div>
-    <div class="hw-note">${escapeHtml(accelHint)}</div>`;
-}
-
-// Hardware-aware GPU-acceleration card: detects a dormant GPU (a CUDA/Metal-
-// capable machine running CPU-only PyTorch) and guides the user to enable it,
-// greys out when already active, and always shows copyable install/uninstall
-// commands so it works on any machine a fork/copy lands on.
-async function loadGpuAcceleration() {
-  const el = document.getElementById('gpu-accel');
-  if (!el) return;
-  let g;
-  try {
-    const res = await fetch(`${serverUrl}/api/setup/gpu`);
-    g = await res.json();
-  } catch (_) {
-    el.innerHTML = '<span class="muted">⚠️ Could not read GPU status.</span>';
-    return;
-  }
-
-  const dotClass = g.state === 'active' ? 'ok' : (g.state === 'cpu_only' ? '' : 'warn');
-  const cmdBlock = (label, cmd) => (cmd ? `
-    <div class="gpu-cmd">
-      <span class="gpu-cmd-label">${escapeHtml(label)}</span>
-      <code class="gpu-cmd-text">${escapeHtml(cmd)}</code>
-      <button class="btn btn-small btn-ghost gpu-copy" data-cmd="${escapeHtml(cmd)}" title="Copy command">📋</button>
-    </div>` : '');
-
-  let actions = '';
-  let guide = '';
-  if (g.state === 'active') {
-    actions = `<button class="btn btn-small" disabled>✓ Acceleration active (${escapeHtml(g.engine || 'GPU')})</button>
-               <button class="btn btn-small btn-ghost" id="gpu-revert-btn" title="Remove the GPU build (revert to CPU)">Revert to CPU…</button>`;
-  } else if (g.state === 'dormant' || g.state === 'not_installed') {
-    const verb = g.state === 'not_installed' ? 'Install PyTorch' : `Enable ${g.plan_label || 'GPU acceleration'}`;
-    actions = `<button class="btn btn-primary btn-small" id="gpu-enable-btn">⚡ ${escapeHtml(verb)}</button>`;
-    guide = `<ol class="gpu-guide">
-      <li>Click <strong>${escapeHtml(verb)}</strong> (or copy the command below and run it yourself), then wait for the download (~2.5GB).</li>
-      <li>When it finishes, <strong>restart the app</strong> so it loads the new build.</li>
-      <li>Return here — this card should then read <strong>"Acceleration active"</strong>.</li>
-    </ol>`;
-  }
-
-  const expWarn = (g.experimental && (g.state === 'dormant' || g.state === 'not_installed'))
-    ? '<p class="gpu-exp small">⚠️ Community-supported path — AMD/Intel acceleration on this OS isn\'t officially tested here. It may not speed up every feature, and CPU stays a reliable fallback. If it works great (or not at all), please <a href="#" class="gpu-feedback">report feedback</a> so we can improve it for your hardware.</p>'
-    : '';
-
-  // Transcription accelerator (MLX on Apple / faster-whisper elsewhere).
-  const t = g.transcription || {};
-  const transLine = t.active ? `Active: ${escapeHtml(t.active)}` : 'Not detected';
-  const transBlock = `
-    <div class="gpu-trans">
-      <span class="gpu-cmd-label">Transcription</span>
-      <span class="gpu-trans-info muted small">${transLine}${t.recommend ? ' — ' + escapeHtml(t.recommend) : ' (accelerated)'}</span>
-      ${t.command ? `<button class="btn btn-small btn-ghost gpu-copy" data-cmd="${escapeHtml(t.command)}" title="Copy install command">📋 Copy</button>` : ''}
-    </div>`;
-
-  el.innerHTML = `
-    <div class="gpu-status">
-      <span class="dot ${dotClass}"></span>
-      <div>
-        <div class="gpu-headline">${escapeHtml(g.headline || '')}</div>
-        <div class="gpu-detail muted small">${escapeHtml(g.detail || '')}</div>
-      </div>
-    </div>
-    ${guide}${expWarn}
-    <div class="gpu-actions">${actions}</div>
-    <div class="gpu-cmds">
-      ${g.state !== 'cpu_only' ? cmdBlock('Enable (' + (g.plan_label || 'accelerated') + ')', g.install_command) : ''}
-      ${cmdBlock('Uninstall PyTorch', g.uninstall_command)}
-      ${g.state === 'active' ? cmdBlock('Revert to CPU build', g.cpu_command) : ''}
-    </div>
-    ${transBlock}
-    <p class="muted small">These commands run inside the app\u2019s own Python environment. Restart the app after changing PyTorch.</p>`;
-
-  el.querySelectorAll('.gpu-copy').forEach((b) => b.addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText(b.dataset.cmd); showToast('Command copied', 'success'); }
-    catch (_) { showToast('Copy failed — select the text manually', 'error'); }
-  }));
-
-  // "Report feedback" — open the project's issues/links (resolved at click time
-  // so it works even if the support links loaded after this card rendered).
-  el.querySelector('.gpu-feedback')?.addEventListener('click', (e) => {
-    e.preventDefault();
-    const url = supportLinks.issues || supportLinks.github || supportLinks.beacons;
-    if (url && window.open) { window.open(url, '_blank', 'noopener'); }
-    else { openSettings(); showToast('Feedback & issue links are in the Support section.', 'info'); }
-  });
-
-  const enableBtn = document.getElementById('gpu-enable-btn');
-  if (enableBtn) enableBtn.addEventListener('click', async () => {
-    const ok = await showConfirm(
-      'Install the GPU (CUDA / Apple-Metal) build of PyTorch? This downloads ~2.5GB and replaces the current CPU build. A restart is needed afterward to load it.',
-      'Enable GPU acceleration');
-    if (!ok) return;
-    const orig = enableBtn.textContent;
-    enableBtn.disabled = true;
-    enableBtn.textContent = '⏳ Installing… (~2.5GB, several min)';
-    showToast('Installing the GPU build of PyTorch — large download, please wait', 'info');
-    try {
-      const r = await fetch(`${serverUrl}/api/setup/gpu/install`, { method: 'POST' });
-      const d = await r.json();
-      if (d.ok) showToast('✅ GPU build installed — restart the app to activate it', 'success');
-      else throw new Error(d.error || d.stderr || 'install failed');
-    } catch (e) {
-      showToast(`Install failed: ${e.message || e}. You can copy the command and run it manually.`, 'error');
-    } finally {
-      enableBtn.disabled = false;
-      enableBtn.textContent = orig;
-      loadGpuAcceleration();
-    }
-  });
-
-  const revertBtn = document.getElementById('gpu-revert-btn');
-  if (revertBtn) revertBtn.addEventListener('click', async () => {
-    const ok = await showConfirm(
-      'Remove the current PyTorch build? Face-tracking will be unavailable until you reinstall PyTorch (the CPU command is shown for that).',
-      'Revert to CPU');
-    if (!ok) return;
-    const orig = revertBtn.textContent;
-    revertBtn.disabled = true;
-    revertBtn.textContent = '⏳ Removing…';
-    try {
-      const r = await fetch(`${serverUrl}/api/setup/uninstall`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ component: 'pytorch' }),
-      });
-      const d = await r.json();
-      if (d.ok) showToast('PyTorch removed. Reinstall with the CPU or GPU command, then restart.', 'success');
-      else throw new Error(d.stderr || d.error || 'uninstall failed');
-    } catch (e) {
-      showToast(`Uninstall failed: ${e.message || e}`, 'error');
-    } finally {
-      revertBtn.disabled = false;
-      revertBtn.textContent = orig;
-      loadGpuAcceleration();
-    }
-  });
-}
-
-function renderRecommendations(recs) {
-  if (!recs) return;
-  const items = [
-    { key: 'whisper', name: '🎤 Whisper (transcription)', ...recs.whisper },
-    { key: 'yolo', name: '👁️ YOLO (face tracking)', ...recs.yolo },
-    { key: 'ollama', name: '🤖 Ollama (AI edit chat)', ...recs.ollama },
-  ];
-  // Which choice is currently selected per kind, so we can highlight it:
-  //  - whisper reflects the actual dropdown value used for the next job
-  //  - others highlight the "Best fit" (first) recommendation for this hardware
-  const whisperSel = document.getElementById('whisper-model')?.value || '';
-  document.getElementById('setup-recommendations').innerHTML = items.map((it) => `
-    <div class="rec-card">
-      <div class="rec-name">${escapeHtml(it.name)}</div>
-      <div class="rec-model">${escapeHtml(it.model)}</div>
-      <div class="rec-meta">
-        ${it.engine ? `<span class="rec-chip">⚡ ${escapeHtml(it.engine)}</span>` : ''}
-        ${it.realtime_factor ? `<span class="rec-chip">${escapeHtml(it.realtime_factor)}</span>` : ''}
-      </div>
-      <div class="rec-note muted">${escapeHtml(it.note || '')}</div>
-      ${it.choices ? `<div class="rec-choices">${it.choices.map((choice, i) => {
-        const selected = it.key === 'whisper' ? (choice.model === whisperSel) : (i === 0);
-        return `<button class="btn btn-small rec-choice${selected ? ' is-selected' : ''}" data-model-kind="${it.key}" data-model="${escapeHtml(choice.model)}">
-          ${escapeHtml(choice.tier)}: ${escapeHtml(choice.model)}
-        </button>`;
-      }).join('')}</div>` : ''}
-    </div>`).join('');
-  document.querySelectorAll('.rec-choice').forEach((button) => {
-    button.addEventListener('click', () => {
-      if (button.dataset.modelKind === 'whisper') {
-        const select = document.getElementById('whisper-model');
-        if (select) select.value = button.dataset.model;
-        // Move the highlight to the clicked whisper choice.
-        button.parentElement.querySelectorAll('.rec-choice').forEach((b) => b.classList.remove('is-selected'));
-        button.classList.add('is-selected');
-        showToast(`Whisper model set to ${button.dataset.model}`, 'success');
-      } else {
-        showToast(`${button.dataset.model} is the recommended Ollama choice. Ollama will use it locally when AI is enabled.`, 'info');
-      }
-    });
-  });
-}
-
-const DEP_DEF = {
-  ffmpeg: {
-    label: 'FFmpeg',
-    desc: 'Required for video trimming, cropping, and audio extraction',
-    check: (d) => d.ffmpeg && d.ffmpeg.ffmpeg,
-    statusText: (d) => (d.ffmpeg && d.ffmpeg.ffmpeg ? 'Installed' : 'Missing'),
-  },
-  whisper: {
-    label: 'OpenAI Whisper',
-    desc: 'Speech-to-text engine — the universal transcription fallback',
-    check: (d) => d.whisper && d.whisper.installed,
-    statusText: (d) => (d.whisper && d.whisper.installed ? 'Installed' : 'Missing'),
-  },
-  'faster-whisper': {
-    label: 'Faster-Whisper',
-    desc: 'CTranslate2 backend — 3-5x faster transcription on CPU/GPU',
-    check: (d) => d.faster_whisper && d.faster_whisper.installed,
-    statusText: (d) => (d.faster_whisper && d.faster_whisper.installed ? 'Installed' : 'Missing'),
-  },
-  'mlx-whisper': {
-    label: 'MLX-Whisper (Apple Silicon)',
-    desc: 'Native MLX acceleration — fastest transcription on M-series Macs',
-    check: (d) => d.mlx_whisper && d.mlx_whisper.installed,
-    statusText: (d) => (d.mlx_whisper && d.mlx_whisper.installed ? 'Installed' : 'Missing'),
-  },
-  librosa: {
-    label: 'librosa',
-    desc: 'Audio-energy analysis for excitement/loudness highlight detection',
-    check: (d) => d.librosa && d.librosa.installed,
-    statusText: (d) => (d.librosa && d.librosa.installed ? 'Installed' : 'Missing'),
-  },
-  ollama: {
-    label: 'Ollama (Required)',
-    desc: 'Install Ollama once; Klipzy connects to its local service automatically when AI analysis or chat is enabled.',
-    check: (d) => d.ollama && d.ollama.installed,
-    statusText: (d) => {
-      if (!d.ollama || !d.ollama.installed) return 'Missing - required';
-      return d.ollama.running ? '✅ Running' : 'Installed (offline · launch app)';
-    },
-  },
-  lmstudio: {
-    label: 'LM Studio (Optional)',
-    desc: 'Alternative local LLM engine (OpenAI-compatible server on port 1234)',
-    check: (d) => d.lmstudio && d.lmstudio.installed,
-    statusText: (d) => {
-      if (!d.lmstudio || !d.lmstudio.installed) return 'Not found';
-      return d.lmstudio.running ? '✅ Running' : 'Installed (offline · start server)';
-    },
-  },
-  pytorch: {
-    label: 'PyTorch',
-    desc: 'ML backend for GPU-accelerated Whisper & YOLO',
-    check: (d) => d.torch && d.torch.installed,
-    statusText: (d) => (d.torch && d.torch.installed ? `v${d.torch.version || 'installed'}` : 'Missing'),
-  },
-  ultralytics: {
-    label: 'Ultralytics (YOLO)',
-    desc: 'Face tracking for smart auto-reframing',
-    check: (d) => !!d.ultralytics && d.ultralytics.installed,
-    statusText: (d) => (d.ultralytics && d.ultralytics.installed ? 'Installed' : 'Missing'),
-  },
-};
-function renderDeps(data) {
-  const cmds = data.install_commands || {};
-  const uninstallCmds = data.uninstall_commands || {};
-  // Show every component the server knows how to install, plus the always-relevant
-  // core ones. mlx-whisper only appears when the server offers it (Apple Silicon).
-  const base = ['ollama', 'lmstudio', 'ffmpeg', 'pytorch', 'whisper', 'faster-whisper', 'librosa', 'ultralytics'];
-  if (cmds['mlx-whisper'] || (data.mlx_whisper && data.mlx_whisper.installed)) base.push('mlx-whisper');
-  const renderable = base.filter((key) => DEP_DEF[key]);
-  const rows = renderable.map((key) => {
-    const def = DEP_DEF[key];
-    const ok = def.check(data);
-    const cmdAvailable = !!cmds[key];
-    const canUninstall = ok && !!uninstallCmds[key];
-    const statusMark = ok ? '✅' : '❌';
-    const tag = def.statusText ? def.statusText(data) : (ok ? 'Installed' : 'Missing');
-    return `
-      <div class="dep-row ${ok ? 'ok' : 'missing'}" data-key="${key}">
-        <div class="dep-info">
-          <span class="dep-status">${statusMark}</span>
-          <div>
-            <strong>${escapeHtml(def.label)}</strong>
-            <span class="muted small">${escapeHtml(def.desc)}</span>
-          </div>
-        </div>
-        <div class="dep-actions">
-          ${ok
-            ? `<span class="dep-installed">${escapeHtml(tag)}</span>`
-              + (canUninstall ? ` <button class="btn btn-small btn-ghost" data-uninstall="${escapeHtml(key)}" title="Remove this package">🗑 Uninstall</button>` : '')
-            : (cmdAvailable
-              ? `<button class="btn btn-small btn-primary" data-install="${escapeHtml(key)}">⬇️ Install</button>`
-              : '<span class="muted small">Manual install needed</span>')}
-        </div>
-      </div>`;
-  }).join('');
-  document.getElementById('setup-deps').innerHTML = rows;
-
-  // Uninstall buttons (pip packages only)
-  document.querySelectorAll('[data-uninstall]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const key = btn.dataset.uninstall;
-      const confirmed = await showConfirm(`Uninstall ${key}? You can reinstall it later from this panel.`);
-      if (!confirmed) return;
-      btn.disabled = true;
-      btn.textContent = '⏳ Removing…';
-      try {
-        const res = await fetch(`${serverUrl}/api/setup/uninstall`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ component: key }),
-        });
-        const d = await res.json().catch(() => ({}));
-        if (!res.ok || d.error) throw new Error(d.error || d.detail || `Server returned ${res.status}`);
-        showToast(d.ok ? `${key} uninstalled` : `${key}: exit ${d.returncode}`, d.ok ? 'success' : 'error');
-        loadSetupPanel();
-      } catch (e) {
-        showAlert(`Uninstall failed: ${e.message}`);
-        btn.disabled = false;
-        btn.textContent = '🗑 Uninstall';
-      }
-    });
-  });
-
-  document.querySelectorAll('[data-install]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const key = btn.dataset.install;
-      btn.disabled = true;
-      btn.textContent = '⏳ Installing... (may take a while)';
-      try {
-        const res = await fetch(`${serverUrl}/api/setup/install`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ component: key }),
-        });
-        const data = await res.json();
-        if (data.error) {
-          showAlert(`Install failed: ${data.error}`);
-          btn.disabled = false;
-          btn.textContent = '⬇️ Install';
-        } else if (data.returncode === 0) {
-          showAlert(`✅ ${key} installed successfully!\n\nCommand: ${data.command}`);
-          loadSetupPanel();
-        } else {
-          showAlert(`Install may have failed (code ${data.returncode}).\n\nCommand: ${data.command}\n\n${data.stderr || data.stdout || ''}`);
-          btn.disabled = false;
-          btn.textContent = '⬇️ Install';
-        }
-      } catch (e) {
-        showAlert(`Install error: ${e.message}`);
-        btn.disabled = false;
-        btn.textContent = '⬇️ Install';
-      }
-    });
-  });
-
-  // One-click Ollama model pull (auto-downloads a GGUF model in the app)
-  if (data.ollama && data.ollama.installed) {
-    const row = document.querySelector('.dep-row[data-key="ollama"]');
-    if (row) row.querySelector('.dep-actions').insertAdjacentHTML('beforeend', '<button class="btn btn-small" id="ollama-pull-btn">🔄 Pull model</button>');
-  }
-  const pullBtn = document.getElementById('ollama-pull-btn');
-  if (pullBtn) pullBtn.addEventListener('click', async () => {
-    pullBtn.disabled = true;
-    pullBtn.textContent = '⏳ Downloading model...';
-    try {
-      const res = await fetch(`${serverUrl}/api/setup/ollama/pull?model=gemma2:2b`, { method: 'POST' });
-      const d = await res.json();
-      if (d.error) showAlert(`Pull failed: ${d.error}`);
-      else if (d.returncode === 0) showAlert('✅ gemma2:2b downloaded and ready!');
-      else showAlert(`Pull may have failed (code ${d.returncode}).\n\n${d.stderr || d.stdout || ''}`);
-    } catch (e) {
-      showAlert('Pull error: ' + e.message);
-    }
-    pullBtn.disabled = false;
-    pullBtn.textContent = '🔄 Pull model';
-  });
-}
-
-// Render time estimator
-function bindEstimator() {
-  const btn = document.getElementById('estimate-btn');
-  if (!btn) return;
-  btn.addEventListener('click', async () => {
-    const duration = parseFloat(document.getElementById('estimate-duration').value) || 30;
-    const layout = document.getElementById('estimate-layout').value;
-    const resultEl = document.getElementById('estimate-result');
-    resultEl.classList.remove('hidden');
-    try {
-      const res = await fetch(`${serverUrl}/api/setup/estimate?duration=${duration}&layout=${layout}`);
-      const e = await res.json();
-      resultEl.innerHTML =
-        `<strong>${escapeHtml(e.estimated_text)}</strong> &nbsp;·&nbsp; <span class="muted">${escapeHtml(e.engine)} — ~${escapeHtml(e.realtime_factor)} realtime</span>`;
-    } catch (err) {
-      resultEl.innerHTML = '<span class="muted">⚠️ Could not estimate.</span>';
-    }
-  });
-}
-
 // Start
 // ------------------------------------------------------------------
 // Audio Feedback (Clicks, Success Chimes, Error Alerts)
@@ -4340,427 +3012,6 @@ function playErrorSound() {
   } catch (e) { /* audio unavailable */ }
 }
 
-// ------------------------------------------------------------------
-// Multi-Aspect Export Pack (9:16, 1:1, 4:5, 16:9)
-// ------------------------------------------------------------------
-// Export one clip in a specific platform's preferred aspect ratio. Reuses the
-// proven multi-aspect endpoint with a single ratio so we don't duplicate render
-// logic. 9:16 platforms reuse the clip as-is; feed/landscape get a re-render.
-async function exportForPlatform(idx, platform, ratio, btnEl) {
-  const clip = generatedClips[idx];
-  if (!clip) return;
-  const original = btnEl ? btnEl.textContent : '';
-  if (btnEl) { btnEl.disabled = true; btnEl.textContent = '⏳'; }
-  showToast(`⏳ Exporting for ${platform} (${ratio})…`, 'info');
-  try {
-    const res = await fetch(`${serverUrl}/export/multi-aspect`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        clip_path: clip.output_file,
-        source_video: selectedVideo,
-        start_seconds: clip.start_time,
-        end_seconds: clip.end_time,
-        title: `${clip.title || 'clip'} [${platform}]`,
-        burn_captions: true,
-        subtitle_path: clip.ass_path || clip.srt_path,
-        aspect_ratios: [ratio],
-      }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || `Server returned ${res.status}`);
-    playSuccessSound();
-    const out = data.exports ? Object.values(data.exports)[0] : null;
-    showToast(`✅ ${platform} export ready`, 'success');
-    if (out) revealInFolder(out);
-  } catch (err) {
-    playErrorSound();
-    showAlert(`${platform} export failed: ${err.message}`);
-  } finally {
-    if (btnEl) { btnEl.disabled = false; btnEl.textContent = original; }
-  }
-}
-
-// Quick per-clip hook swap from the card: rotate to a fresh suggested hook and
-// re-render just this clip (burns the new top hook in place).
-async function quickRerollHook(idx, btn) {
-  const clip = generatedClips[idx];
-  if (!clip || !clip.output_file) { showAlert('No rendered clip to update yet.'); return; }
-  // Build the richest transcript context we have for this clip: prefer the full
-  // clip transcript, then the clip's own word list (present even on older clips),
-  // falling back to the hook line. Using ONLY hook_text returned a single
-  // candidate, so "New Hook" kept re-picking the exact same line — which is why
-  // the text never appeared to change.
-  const clipText = clip.full_text || clip.reason
-    || (Array.isArray(clip.words) && clip.words.length ? clip.words.map((w) => w.word).join(' ') : '')
-    || clip.hook_text || '';
-  // Fetch + cache AI hook options per clip (grounded in that transcript), then
-  // rotate on each click. rewrite-hook returns several DISTINCT viral hooks and
-  // falls back to offline suggestions server-side when Ollama isn't running.
-  if (!Array.isArray(clip._hookCandidates) || !clip._hookCandidates.length) {
-    try {
-      const res = await fetch(`${serverUrl}/tools/rewrite-hook`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: clipText,
-          words: clip.words || [],
-          current_hook: clip.hook_text || '',
-          count: 6,
-          preset: document.getElementById('generated-caption-preset')?.value || '',
-        }),
-      });
-      const data = await res.json();
-      clip._hookCandidates = (data.hooks || []).filter(Boolean);
-      clip._hookIdx = -1;
-    } catch (_) { clip._hookCandidates = []; }
-  }
-  if (!clip._hookCandidates.length) { showToast('No alternative hooks found for this clip', 'info'); return; }
-  // Rotate to the next candidate; if it matches the current hook, skip once so
-  // the burned text visibly changes.
-  clip._hookIdx = ((clip._hookIdx == null ? -1 : clip._hookIdx) + 1) % clip._hookCandidates.length;
-  let newHook = clip._hookCandidates[clip._hookIdx];
-  if (clip._hookCandidates.length > 1 && newHook.trim() === (clip.hook_text || '').trim()) {
-    clip._hookIdx = (clip._hookIdx + 1) % clip._hookCandidates.length;
-    newHook = clip._hookCandidates[clip._hookIdx];
-  }
-
-  const orig = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Re-rendering…'; }
-
-  const words = (clip.words && clip.words.length)
-    ? clip.words
-    : (clip.hook_text || '').split(' ').map((w, i) => ({ word: w, start: i * 0.4, end: (i + 1) * 0.4 }));
-  const captionOpts = collectCaptionOptions();
-  const outputPath = clip.ass_path ? clip.ass_path.replace(/\.ass$/i, '.srt') : `${clip.output_file}.srt`;
-  try {
-    const res = await fetch(`${serverUrl}/export/subtitles`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        output_path: outputPath,
-        words,
-        style_preset: captionOpts.style_preset,
-        font_size: captionOpts.font_size,
-        font_name: captionOpts.font_name,
-        primary_color: captionOpts.primary_color,
-        highlight_color: captionOpts.highlight_color,
-        outline_color: captionOpts.outline_color,
-        outline_width: captionOpts.outline_width,
-        position: captionOpts.position,
-        chunk_size: captionOpts.chunk_size,
-        uppercase: captionOpts.uppercase,
-        bold: captionOpts.bold,
-        italic: captionOpts.italic,
-        source_video: selectedVideo,
-        clip_output_file: clip.output_file,
-        start_seconds: clip.start_time,
-        end_seconds: clip.end_time,
-        aspect_ratio: document.getElementById('clip-aspect-ratio')?.value || '9:16',
-        intro_caption: newHook,
-        intro_enabled: true,
-        intro_caption_duration: parseFloat(document.getElementById('caption-intro-duration')?.value || '3') || 3,
-        intro_font_size: clip.intro_font_size || captionOpts.intro_font_size,
-        re_render: true,
-      }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      clip.intro_caption = newHook;
-      clip.hook_text = newHook;
-      if (data.export_path) clip.srt_path = data.export_path;
-      const card = document.querySelector(`.clip-card[data-clip-idx="${idx}"]`);
-      const vid = card && card.querySelector('video');
-      if (vid) { vid.src = fileUrl(clip.output_file, true); vid.load(); }
-      const descEl = card && card.querySelector('.clip-desc');
-      if (descEl) descEl.textContent = newHook;
-      saveCurrentProjectSilently();
-      playSuccessSound();
-      showToast(`🎣 New hook: "${newHook}"`, 'success');
-    } else {
-      showAlert(`Could not update hook: ${data.detail || 'error'}`);
-    }
-  } catch (e) {
-    showAlert(`Error: ${e.message}`);
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = orig; }
-  }
-}
-
-// #13 Filler-word + dead-air removal for a clip (uses its word timestamps).
-async function quickRemoveFillers(idx, btn) {
-  const clip = generatedClips[idx];
-  if (!clip || !clip.output_file) { showAlert('No rendered clip yet.'); return; }
-  const orig = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Cutting…'; }
-  try {
-    const aggressive = !!document.getElementById('filler-aggressive')?.checked;
-    const res = await fetch(`${serverUrl}/tools/remove-fillers`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        video_path: clip.output_file,
-        words: clip.words || [],
-        also_remove_silence: true,
-        remove_phrases: aggressive,  // conservative (disfluencies only) unless the toggle is on
-      }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      clip.output_file = data.output_path;
-      if (typeof data.cut_duration === 'number') clip.duration = data.cut_duration;
-      const card = document.querySelector(`.clip-card[data-clip-idx="${idx}"]`);
-      const vid = card && card.querySelector('video');
-      if (vid) { vid.src = fileUrl(clip.output_file, true); vid.load(); }
-      saveCurrentProjectSilently();
-      playSuccessSound();
-      showToast(`🧹 ${data.message || 'Fillers removed'}`, 'success');
-    } else {
-      showAlert(`Filler removal failed: ${data.detail || 'error'}`);
-    }
-  } catch (e) {
-    showAlert(`Error: ${e.message}`);
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = orig; }
-  }
-}
-
-// #14 Translate a clip's captions into another language (local Ollama).
-let translateClip = null;
-async function openTranslateModal(idx) {
-  const clip = generatedClips[idx];
-  if (!clip) return;
-  if (!clip.srt_path) { showAlert('No subtitle file for this clip yet — generate captions first.'); return; }
-  translateClip = clip;
-  const sel = document.getElementById('translate-lang');
-  if (sel && sel.dataset.loaded !== '1') {
-    try {
-      const r = await fetch(`${serverUrl}/tools/languages`);
-      const d = await r.json();
-      sel.innerHTML = (d.languages || []).map((l) => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
-      sel.dataset.loaded = '1';
-    } catch (_) { sel.innerHTML = '<option value="Spanish">Spanish</option>'; }
-  }
-  document.getElementById('translate-modal')?.classList.remove('hidden');
-}
-document.getElementById('translate-close')?.addEventListener('click', () => document.getElementById('translate-modal')?.classList.add('hidden'));
-document.getElementById('translate-cancel')?.addEventListener('click', () => document.getElementById('translate-modal')?.classList.add('hidden'));
-document.getElementById('translate-go')?.addEventListener('click', async () => {
-  if (!translateClip) return;
-  const custom = (document.getElementById('translate-lang-custom')?.value || '').trim();
-  const lang = custom || document.getElementById('translate-lang')?.value || '';
-  if (!lang) { showToast('Pick or type a language', 'info'); return; }
-  const burn = !!document.getElementById('translate-burn')?.checked;
-  const btn = document.getElementById('translate-go');
-  const orig = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = burn ? '⏳ Translating + rendering…' : '⏳ Translating…'; }
-  try {
-    const body = { srt_path: translateClip.srt_path, target_lang: lang };
-    if (burn) {
-      body.burn = true;
-      body.source_video = selectedVideo;
-      body.start_seconds = translateClip.start_time;
-      body.end_seconds = translateClip.end_time;
-      body.aspect_ratio = document.getElementById('clip-aspect-ratio')?.value || '9:16';
-      body.style_preset = document.getElementById('generated-caption-preset')?.value || 'viral_yellow';
-      body.font_size = parseInt(document.getElementById('generated-caption-font-size')?.value || '', 10) || undefined;
-    }
-    const res = await fetch(`${serverUrl}/tools/translate-captions`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      document.getElementById('translate-modal')?.classList.add('hidden');
-      playSuccessSound();
-      let msg = `✅ Translated ${data.translated} caption lines to ${lang}.\nSaved:\n• ${data.srt}\n• ${data.vtt}`;
-      const reveal = data.burned_video || data.srt || null;
-      if (data.burned_video) msg += `\n\n🎬 Burned video:\n• ${data.burned_video}`;
-      else if (data.burn_error) msg += `\n\n⚠️ Couldn't burn the video: ${data.burn_error}`;
-      if (reveal) revealInFolder(reveal);
-      showAlert(msg, 'Translation Complete', reveal);
-    } else {
-      showAlert(`Translation failed: ${data.detail || 'error'}`);
-    }
-  } catch (e) {
-    showAlert(`Error: ${e.message}`);
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = orig; }
-  }
-});
-
-// #16 Speaker diarization (optional — needs pyannote + HF token).
-// Detects who spoke when, then rewrites the clip's captions with friendly
-// "Speaker 1:" / "Speaker 2:" labels (whoever talks first = Speaker 1) and can
-// re-render the clip to burn the labels in. Degrades gracefully when pyannote
-// isn't installed.
-async function detectSpeakers(idx, btn) {
-  const clip = generatedClips[idx];
-  if (!clip || !clip.output_file) return;
-
-  const words = (clip.words && clip.words.length) ? clip.words : null;
-  if (!words) {
-    showAlert('This clip has no word timestamps to label. Re-transcribe it first.', 'Speakers');
-    return;
-  }
-
-  const burn = await showConfirm(
-    'Detect speakers and add "Speaker 1:" / "Speaker 2:" labels to this clip\'s captions?\n\n' +
-    'Choose OK to also re-render the clip and burn the labels in, or Cancel to just write the caption files (.srt/.ass).',
-    'Speaker-labeled captions',
-  );
-
-  const orig = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Analyzing…'; }
-  try {
-    const captionOpts = collectCaptionOptions();
-    const outputPath = clip.ass_path ? clip.ass_path.replace(/\.ass$/i, '.srt') : `${clip.output_file}.srt`;
-    const res = await fetch(`${serverUrl}/tools/speaker-captions`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        output_path: outputPath,
-        words,
-        style_preset: captionOpts.style_preset,
-        font_size: captionOpts.font_size,
-        font_name: captionOpts.font_name,
-        primary_color: captionOpts.primary_color,
-        highlight_color: captionOpts.highlight_color,
-        outline_color: captionOpts.outline_color,
-        outline_width: captionOpts.outline_width,
-        position: captionOpts.position,
-        chunk_size: captionOpts.chunk_size,
-        uppercase: captionOpts.uppercase,
-        bold: captionOpts.bold,
-        italic: captionOpts.italic,
-        source_video: selectedVideo,
-        clip_output_file: clip.output_file,
-        start_seconds: clip.start_time,
-        end_seconds: clip.end_time,
-        aspect_ratio: document.getElementById('clip-aspect-ratio')?.value || clip.aspect_ratio || '9:16',
-        layout: clip.layout || '',
-        cam_video: clip.cam_video,
-        cam_scale: clip.cam_scale,
-        cam_position: clip.cam_position,
-        crop_x_offset: clip.crop_x_offset,
-        re_render: !!burn,
-      }),
-    });
-    const d = await res.json();
-    if (d.available) {
-      if (d.srt_path) clip.srt_path = d.srt_path;
-      if (d.ass_path) clip.ass_path = d.ass_path;
-      if (d.re_rendered) {
-        const card = document.querySelector(`.clip-card[data-clip-idx="${idx}"]`);
-        const vid = card && card.querySelector('video');
-        if (vid) { vid.src = fileUrl(clip.output_file, true); vid.load(); }
-      }
-      const who = (d.speakers || []).join(', ');
-      showToast(`🗣 ${d.message}`, 'success');
-      showAlert(`🗣 ${d.message}${who ? `\n\nSpeakers: ${who}` : ''}`, 'Speaker-labeled captions');
-    } else {
-      showAlert(`Speaker detection is optional and not enabled yet.\n\n${d.message}\n\nTo enable, open Setup → Optional AI add-ons, install pyannote.audio, and set a Hugging Face token.`, 'Speaker Diarization (optional)');
-    }
-  } catch (e) {
-    showAlert(`Error: ${e.message}`);
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = orig; }
-  }
-}
-
-const MULTI_ASPECT_RATIOS = [
-  { ratio: '9:16', label: 'Vertical 9:16', tag: 'TikTok / Reels / Shorts' },
-  { ratio: '1:1', label: 'Square 1:1', tag: 'Feed' },
-  { ratio: '4:5', label: 'Portrait 4:5', tag: 'IG feed' },
-  { ratio: '16:9', label: 'Landscape 16:9', tag: 'YouTube / X' },
-];
-let multiAspectClip = null;
-
-// Opens a preview-before-export modal (OpenClipper-style): shows the clip framed
-// in each aspect ratio, lets the user pick which to render, then choose a folder.
-function exportMultiAspectPack(idx) {
-  const clip = generatedClips[idx];
-  if (!clip || !clip.output_file) {
-    showAlert('No rendered clip to export yet.');
-    return;
-  }
-  multiAspectClip = clip;
-  const wrap = document.getElementById('multi-aspect-previews');
-  if (wrap) {
-    const src = fileUrl(clip.output_file);
-    wrap.innerHTML = MULTI_ASPECT_RATIOS.map(({ ratio, label, tag }) => `
-      <div class="ma-card">
-        <label class="ma-card-head">
-          <input type="checkbox" class="ma-check" value="${ratio}" checked />
-          <span class="ma-label">${label}</span>
-        </label>
-        <div class="ma-frame" style="aspect-ratio:${ratio.replace(':', ' / ')}">
-          <video src="${escapeHtml(src)}" muted playsinline preload="metadata"></video>
-        </div>
-        <span class="muted small">${tag}</span>
-        <button class="btn btn-small btn-secondary ma-export-one" data-ratio="${ratio}">⬇️ Export ${ratio}</button>
-      </div>`).join('');
-    // Individual per-aspect export (OpenClipper-style): export just this ratio.
-    wrap.querySelectorAll('.ma-export-one').forEach((b) => {
-      b.addEventListener('click', () => runMultiAspectExport([b.dataset.ratio], b));
-    });
-  }
-  document.getElementById('multi-aspect-modal')?.classList.remove('hidden');
-}
-
-document.getElementById('multi-aspect-close')?.addEventListener('click', () => {
-  document.getElementById('multi-aspect-modal')?.classList.add('hidden');
-});
-document.getElementById('multi-aspect-cancel')?.addEventListener('click', () => {
-  document.getElementById('multi-aspect-modal')?.classList.add('hidden');
-});
-
-document.getElementById('multi-aspect-export')?.addEventListener('click', () => {
-  const ratios = Array.from(document.querySelectorAll('#multi-aspect-previews .ma-check:checked')).map((c) => c.value);
-  if (!ratios.length) {
-    showToast('Pick at least one aspect ratio', 'info');
-    return;
-  }
-  runMultiAspectExport(ratios, document.getElementById('multi-aspect-export'));
-});
-
-// Render the given aspect ratios for the current clip into a chosen folder,
-// then reveal it. Shared by "Export selected" and the per-aspect buttons.
-async function runMultiAspectExport(ratios, btn) {
-  if (!multiAspectClip || !ratios || !ratios.length) return;
-  const exportFolder = await chooseExportFolder(multiAspectClip);
-  if (!exportFolder) return;   // cancelled the folder picker
-  const orig = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Rendering…'; }
-  try {
-    const res = await fetch(`${serverUrl}/export/multi-aspect`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        clip_path: multiAspectClip.output_file,
-        source_video: selectedVideo,
-        start_seconds: multiAspectClip.start_time,
-        end_seconds: multiAspectClip.end_time,
-        title: multiAspectClip.title,
-        burn_captions: true,
-        subtitle_path: multiAspectClip.ass_path || multiAspectClip.srt_path,
-        aspect_ratios: ratios,
-        output_dir: exportFolder,
-      })
-    });
-    const data = await res.json();
-    if (res.ok) {
-      playSuccessSound();
-      const firstOut = data.exports ? Object.values(data.exports)[0] : null;
-      if (firstOut) revealInFolder(firstOut);
-      showAlert(`✅ Exported:\n${Object.entries(data.exports).map(([k, v]) => `• ${k}: ${v}`).join('\n')}`, 'Export Complete', firstOut || null);
-    } else {
-      playErrorSound();
-      showAlert(`Multi-aspect export failed: ${data.detail}`);
-    }
-  } catch (err) {
-    playErrorSound();
-    showAlert(`Error: ${err.message}`);
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = orig; }
-  }
-}
 
 // -----------------------------------------------------------------------
 // Local KEYWORD_EMOJIS map (mirrors server/overlay_manager.py) for
@@ -4871,6 +3122,14 @@ document.getElementById('clear-music-btn')?.addEventListener('click', () => {
 // Builds the /process request body from the current UI settings. Shared by the
 // single-video "Start Clipping" flow and the batch flow (which swaps in a list
 // of video_paths).
+function censorProfanity() {
+  return !!document.getElementById('censor-profanity')?.checked;
+}
+
+function censorMode() {
+  return document.getElementById('censor-mode')?.value || 'bleep';
+}
+
 function buildProcessPayload() {
   const captionOpts = collectCaptionOptions();
   return {
@@ -4903,8 +3162,11 @@ function buildProcessPayload() {
     speaker_aware_crop: document.getElementById('speaker-aware-crop') ? document.getElementById('speaker-aware-crop').checked : false,
     burn_captions: document.getElementById('burn-captions').checked,
     remove_silence: document.getElementById('remove-silence') ? document.getElementById('remove-silence').checked : false,
-    bleep_profanity: document.getElementById('censor-profanity') ? document.getElementById('censor-profanity').checked : false,
-    mute_profanity: false,
+    // One checkbox arms censoring; the mode select picks bleep vs mute. The
+    // pipeline already implemented both, but mute_profanity was hardcoded
+    // false, so the "Mute" half of the old label was unreachable.
+    bleep_profanity: censorProfanity() && censorMode() === 'bleep',
+    mute_profanity: censorProfanity() && censorMode() === 'mute',
     normalize_audio: document.getElementById('normalize-audio') ? document.getElementById('normalize-audio').checked : false,
     auto_zoom: document.getElementById('auto-zoom') ? document.getElementById('auto-zoom').checked : false,
     music_path: (document.getElementById('music-path') && document.getElementById('music-path').value) || null,
