@@ -169,6 +169,23 @@ launch installers and touch the filesystem).
 
 ---
 
+## 🎚️ Which models should I use?
+
+**You don't have to choose.** Open **Setup** and Klipzy checks your CPU / RAM / GPU and marks the
+best fit with a ⭐. Nothing downloads unless you click.
+
+If you want to decide yourself, the full guide is in
+**[INSTRUCTIONS.md § 5 — Choosing Models & AI Engines](INSTRUCTIONS.md#5-choosing-models--ai-engines)**.
+The two-line version:
+
+- **Whisper (subtitles):** `base` for clean single-speaker audio; step up to `small` / `medium`
+  for street interviews, crowds, music or crosstalk — this is the setting that most affects
+  caption quality.
+- **Local LLM (hooks/titles, optional):** `gemma2:2b` on 8GB RAM, `qwen2.5:7b` on 16GB,
+  `phi4` if you have ~12GB VRAM. Leave it off entirely and the built-in heuristics still work.
+
+---
+
 ## 🔌 AI engine — bring your own (optional)
 
 One app, one setting. **Ollama is built in and used by default**, so there's nothing to
