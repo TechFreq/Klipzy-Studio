@@ -13,6 +13,11 @@ echo [1/5] Checking Python...
 python --version >nul 2>&1
 if errorlevel 1 goto :no_python
 
+REM Present but too old? The ML stack needs 3.10+, and a 3.9 venv fails later
+REM with confusing import errors, so check the version up front.
+python -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>&1
+if errorlevel 1 goto :old_python
+
 REM ---------- [2/5] Find / create / repair virtual environment ----------
 echo [2/5] Checking virtual environment...
 set "VENVPY="
@@ -76,8 +81,42 @@ rmdir /s /q "ui\node_modules"
 echo Installing UI dependencies...
 pushd ui
 call npm install
-if errorlevel 1 goto :ui_failed
+if errorlevel 1 ( popd & goto :ui_failed )
 popd
+
+REM ---- Verify Electron actually landed, don't just trust npm's exit code ----
+REM npm 12+ blocks dependency install scripts by default. Electron's postinstall
+REM is what DOWNLOADS the Electron binary, so npm can report "added 310 packages"
+REM and still leave Electron unusable - the app then dies with the cryptic
+REM "Electron failed to install correctly". path.txt is written by that
+REM postinstall, so its absence is the reliable signal. package.json now carries
+REM an allowScripts entry for electron; this retry covers machines where npm
+REM config or an older checkout still blocks it.
+if exist "ui\node_modules\electron\path.txt" goto :launch
+echo.
+echo Electron's binary did not download (npm blocked its install script).
+echo Repairing...
+REM Verified: a plain `npm install` does NOT fix this - npm sees the tree as
+REM complete, reports "up to date", and never re-runs the postinstall. `npm
+REM rebuild` forces install scripts to run again, which is what actually repairs it.
+pushd ui
+call npm rebuild electron
+popd
+if exist "ui\node_modules\electron\path.txt" goto :electron_repaired
+
+REM Last resort: remove just Electron so npm has to genuinely reinstall it
+REM (a real install DOES run the postinstall), rather than wiping all 310 packages.
+echo Rebuild did not take - reinstalling Electron from scratch...
+if exist "ui\node_modules\electron" rmdir /s /q "ui\node_modules\electron"
+pushd ui
+call npm install --allow-scripts=electron
+popd
+if exist "ui\node_modules\electron\path.txt" goto :electron_repaired
+goto :electron_failed
+
+:electron_repaired
+echo Electron repaired successfully.
+goto :launch
 
 REM ---------- [5/5] Launch Klipzy Studio ----------
 :launch
@@ -98,35 +137,124 @@ exit /b 0
 REM ============ ERROR HANDLERS ============
 :no_python
 echo.
-echo ERROR: Python not found.
-echo Install Python 3.10+ from https://www.python.org/downloads/
-echo Make sure to tick "Add Python to PATH" during install.
+echo Python was not found on this PC.
+echo Klipzy needs Python 3.10 or newer.
+echo.
+where winget >nul 2>&1
+if errorlevel 1 goto :python_manual
+choice /c YN /n /m "Install Python 3.12 automatically now? [Y/N] "
+if errorlevel 2 goto :python_manual
+echo.
+echo Installing Python 3.12 (this opens Windows Package Manager)...
+winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements
+if errorlevel 1 goto :python_manual
+goto :reopen_needed
+
+:old_python
+echo.
+for /f "tokens=*" %%v in ('python --version 2^>^&1') do echo Found %%v - too old.
+echo Klipzy needs Python 3.10 or newer.
+echo.
+echo Direct Windows download (pick "Windows installer (64-bit)"):
+echo    https://www.python.org/downloads/windows/
+echo During setup, TICK "Add python.exe to PATH".
 echo.
 pause
 exit /b 1
 
+:python_manual
+echo.
+echo Install Python manually - direct Windows download page:
+echo    https://www.python.org/downloads/windows/
+echo Pick "Windows installer (64-bit)" under the latest 3.12 or 3.13 release.
+echo.
+echo IMPORTANT: on the first setup screen, TICK "Add python.exe to PATH"
+echo before clicking Install, or this launcher won't find it.
+echo.
+pause
+exit /b 1
+
+:no_node
+echo.
+echo Node.js was not found on this PC.
+echo Klipzy needs Node.js 18 or newer (any current LTS is fine).
+echo.
+where winget >nul 2>&1
+if errorlevel 1 goto :node_manual
+choice /c YN /n /m "Install the latest Node.js LTS automatically now? [Y/N] "
+if errorlevel 2 goto :node_manual
+echo.
+echo Installing Node.js LTS (this opens Windows Package Manager)...
+winget install -e --id OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements
+if errorlevel 1 goto :node_manual
+goto :reopen_needed
+
+:node_manual
+echo.
+echo Install Node.js manually - direct Windows download page:
+echo    https://nodejs.org/en/download
+echo Choose the Windows Installer (.msi, 64-bit). The LTS build is recommended,
+echo but any version 18 or newer works.
+echo.
+pause
+exit /b 1
+
+:reopen_needed
+echo.
+echo ==============================================
+echo    Installed. One more step:
+echo ==============================================
+echo.
+echo CLOSE this window, then run start_klipzy.bat again.
+echo Windows only shows newly installed programs to a freshly opened window,
+echo so this launcher can't see it until you reopen it.
+echo.
+pause
+exit /b 0
+
 :venv_failed
-echo ERROR: Failed to create virtual environment.
+echo.
+echo ERROR: Failed to create the Python virtual environment.
+echo Try deleting the ".venv" folder in this directory, then run this again.
 pause
 exit /b 1
 
 :pydeps_failed
 echo.
 echo ERROR: Failed to install Python dependencies.
-pause
-exit /b 1
-
-:no_node
 echo.
-echo ERROR: Node.js not found.
-echo Install Node.js 18+ from https://nodejs.org/
+echo Most common causes:
+echo   - No internet connection, or a VPN/proxy blocking pypi.org
+echo   - Antivirus blocking the install
 echo.
+echo To start clean: delete the ".venv" folder in this directory and run again.
 pause
 exit /b 1
 
 :ui_failed
 echo.
-echo ERROR: Failed to install UI dependencies.
-popd
+echo ERROR: Failed to install UI dependencies (npm install).
+echo.
+echo To start clean: delete the "ui\node_modules" folder and run again.
+pause
+exit /b 1
+
+:electron_failed
+echo.
+echo ERROR: Electron did not install correctly.
+echo.
+echo npm downloaded the packages but blocked Electron's install script, which is
+echo what fetches the Electron program itself.
+echo.
+echo Fix it manually with these commands:
+echo    cd /d "%~dp0ui"
+echo    npm install-scripts approve electron
+echo    npm rebuild electron
+echo.
+echo Note: plain "npm install" will NOT fix it - npm thinks everything is already
+echo installed and skips the step that downloads Electron. "npm rebuild" is the
+echo command that forces it.
+echo.
+echo If that still fails, delete "ui\node_modules" entirely and run this again.
 pause
 exit /b 1
