@@ -62,21 +62,22 @@ REM npm 12+ blocks dependency install scripts, and Electron's postinstall is wha
 REM downloads the Electron binary - so npm can succeed while leaving Electron
 REM unusable ("Electron failed to install correctly"). path.txt is written by
 REM that postinstall, so verify it rather than trusting npm's exit code.
-REM Repair uses `npm rebuild`: a plain `npm install` reports "up to date" and
-REM never re-runs the script, so it does NOT fix a broken tree (verified).
+REM Repair by running Electron's own installer directly: npm isn't involved, so
+REM npm's policy can't block it. (Tested: npm install says "up to date", npm
+REM rebuild claims success without doing anything, and --allow-scripts is
+REM rejected in project installs with EALLOWSCRIPTS.)
 if not exist "ui\node_modules\electron\path.txt" (
-    echo Electron binary missing - repairing with npm rebuild...
-    pushd ui
-    call npm rebuild electron
+    echo Electron program files missing - downloading them directly ^(~170 MB^)...
+    pushd "ui\node_modules\electron"
+    call node install.js
     popd
 )
 if not exist "ui\node_modules\electron\path.txt" (
     echo.
     echo ERROR: Electron did not install correctly. Fix it with:
-    echo    cd /d "%~dp0..\ui"
-    echo    npm install-scripts approve electron
-    echo    npm rebuild electron
-    echo ^(plain "npm install" will NOT fix it - it skips the download step.^)
+    echo    cd /d "%~dp0..\ui\node_modules\electron"
+    echo    node install.js
+    echo ^("npm install" / "npm rebuild" will NOT fix it.^)
     pause
     exit /b 1
 )

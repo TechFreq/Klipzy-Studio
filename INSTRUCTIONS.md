@@ -373,20 +373,27 @@ or from a OneDrive-synced folder, causes unrelated path failures.
 supply-chain hardening. Electron's install script is the part that **downloads Electron itself**,
 so `npm install` prints "added 310 packages" and succeeds while leaving Electron unusable.
 
-Current versions of Klipzy declare the needed approval in `ui/package.json`, so a fresh install
-works. If you already have a broken copy, repair it with:
+The launcher now detects this and repairs it automatically. To fix it by hand, run Electron's
+own downloader directly:
 
 ```bash
-cd ui
-npm install-scripts approve electron
-npm rebuild electron
+cd ui/node_modules/electron
+node install.js
 ```
 
-**`npm install` on its own will not fix it** — npm considers the tree complete, prints
-"up to date", and skips the download step. `npm rebuild` is what forces it. (Verified: after a
-blocked install, `npm install` left it broken and `npm rebuild electron` repaired it.)
+That's exactly what npm is skipping — it fetches the ~170 MB Electron program. Because npm isn't
+involved, no npm setting can block it, so this works on every npm version.
 
-Failing that, delete `ui\node_modules` entirely and run the launcher again.
+**The obvious npm commands do not work here** — all three were tested against a blocked install:
+
+| Command | What happens |
+|---|---|
+| `npm install` | Prints "up to date" — npm sees the tree as complete and never re-runs the step |
+| `npm rebuild electron` | Reports "rebuilt dependencies successfully" while doing nothing |
+| `npm install --allow-scripts=electron` | Fails with `EALLOWSCRIPTS` — the flag is only valid for global installs |
+
+Deleting `ui\node_modules` and reinstalling doesn't help either, since the fresh install is
+blocked the same way. Use `node install.js`.
 
 ### Q: npm printed deprecation warnings and "10 vulnerabilities". Is that a problem?
 **A:** Those come from transitive dependencies of the build tooling (`electron-builder`), not from

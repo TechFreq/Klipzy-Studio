@@ -94,27 +94,35 @@ REM an allowScripts entry for electron; this retry covers machines where npm
 REM config or an older checkout still blocks it.
 if exist "ui\node_modules\electron\path.txt" goto :launch
 echo.
-echo Electron's binary did not download (npm blocked its install script).
-echo Repairing...
-REM Verified: a plain `npm install` does NOT fix this - npm sees the tree as
-REM complete, reports "up to date", and never re-runs the postinstall. `npm
-REM rebuild` forces install scripts to run again, which is what actually repairs it.
-pushd ui
-call npm rebuild electron
+echo Electron's program files did not download (npm skipped its install step).
+echo Repairing - this downloads about 170 MB, please wait...
+echo.
+
+REM Electron's postinstall is literally "node install.js", so run that script
+REM DIRECTLY. npm is not involved, so nothing npm does can block it - this works
+REM regardless of npm version or policy. Verified: produces path.txt + a real
+REM 168MB electron.exe from a blocked install.
+REM
+REM Why not the npm routes? Tested and both let us down:
+REM   npm install                  -> "up to date", never re-runs the script
+REM   npm rebuild electron         -> reports "rebuilt successfully", does nothing
+REM   npm install --allow-scripts= -> EALLOWSCRIPTS, rejected in project installs
+if not exist "ui\node_modules\electron\install.js" goto :electron_try_rebuild
+pushd "ui\node_modules\electron"
+call node install.js
 popd
 if exist "ui\node_modules\electron\path.txt" goto :electron_repaired
 
-REM Last resort: remove just Electron so npm has to genuinely reinstall it
-REM (a real install DOES run the postinstall), rather than wiping all 310 packages.
-echo Rebuild did not take - reinstalling Electron from scratch...
-if exist "ui\node_modules\electron" rmdir /s /q "ui\node_modules\electron"
+:electron_try_rebuild
+echo Direct install did not take - trying npm rebuild...
 pushd ui
-call npm install --allow-scripts=electron
+call npm rebuild electron
 popd
 if exist "ui\node_modules\electron\path.txt" goto :electron_repaired
 goto :electron_failed
 
 :electron_repaired
+echo.
 echo Electron repaired successfully.
 goto :launch
 
@@ -246,15 +254,18 @@ echo.
 echo npm downloaded the packages but blocked Electron's install script, which is
 echo what fetches the Electron program itself.
 echo.
-echo Fix it manually with these commands:
-echo    cd /d "%~dp0ui"
-echo    npm install-scripts approve electron
-echo    npm rebuild electron
+echo Fix it manually - copy and paste these two lines:
 echo.
-echo Note: plain "npm install" will NOT fix it - npm thinks everything is already
-echo installed and skips the step that downloads Electron. "npm rebuild" is the
-echo command that forces it.
+echo    cd /d "%~dp0ui\node_modules\electron"
+echo    node install.js
 echo.
-echo If that still fails, delete "ui\node_modules" entirely and run this again.
+echo That runs Electron's own downloader directly, which npm is skipping.
+echo It needs internet access and downloads about 170 MB.
+echo.
+echo Note: "npm install" and "npm rebuild" will NOT fix this - npm reports
+echo success without actually downloading Electron.
+echo.
+echo If it fails with a network/proxy error, check your connection or antivirus
+echo and run this launcher again.
 pause
 exit /b 1
