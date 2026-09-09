@@ -373,16 +373,28 @@ or from a OneDrive-synced folder, causes unrelated path failures.
 supply-chain hardening. Electron's install script is the part that **downloads Electron itself**,
 so `npm install` prints "added 310 packages" and succeeds while leaving Electron unusable.
 
-The launcher now detects this and repairs it automatically. To fix it by hand, run Electron's
-own downloader directly:
+**Fix: double-click `fix_electron.bat`** in the Klipzy folder. It prints diagnostics, tries
+several repair methods in order, and reports which one worked — no commands to type. Then run
+`start_klipzy.bat` again. (The launcher also attempts this automatically.)
 
-```bash
-cd ui/node_modules/electron
+To do it by hand instead, run Electron's own downloader — note the `cd` differs by shell:
+
+```bat
+REM Command Prompt (cmd)
+cd /d "ui\node_modules\electron"
 node install.js
 ```
 
-That's exactly what npm is skipping — it fetches the ~170 MB Electron program. Because npm isn't
-involved, no npm setting can block it, so this works on every npm version.
+```powershell
+# PowerShell - /d is not valid here
+cd "ui\node_modules\electron"
+node install.js
+```
+
+That's exactly what npm is skipping: it fetches the ~170 MB Electron program. Because npm isn't
+involved, no npm setting can block it. If `install.js` isn't there either, delete
+`ui\node_modules\electron` and re-run the launcher — or just use `fix_electron.bat`, which
+handles that case.
 
 **The obvious npm commands do not work here** — all three were tested against a blocked install:
 
