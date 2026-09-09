@@ -98,6 +98,10 @@ cd ..
 
 ## 3. Running Klipzy Studio
 
+> **Windows: extract the ZIP first.** Don't run the launcher from inside a ZIP viewer. If Windows
+> blocks it, right-click the ZIP → **Properties** → tick **Unblock** before extracting, or see
+> [§9](#q-windows-11-blocked-start_klipzybat-from-running).
+
 ### Option A: One-Click Launchers (Recommended)
 
 - **Windows:** Double-click `scripts\run_windows.bat`
@@ -346,6 +350,49 @@ The compiled binaries will be output to the `ui/dist/` directory.
 ---
 
 ## 9. Troubleshooting & FAQs
+
+### Q: Windows 11 blocked `start_klipzy.bat` from running
+**A:** That's Windows protecting you from an unsigned script downloaded from the internet, not a
+fault in Klipzy. Two different guards can fire:
+
+- **"Windows protected your PC" (SmartScreen)** → click **More info** → **Run anyway**.
+- **Smart App Control** (on by default on some new Windows 11 PCs) blocks unsigned scripts with
+  no "run anyway" option. Either:
+  1. Right-click the downloaded ZIP → **Properties** → tick **Unblock** → OK, then extract it
+     again and run the launcher; or
+  2. Skip the launcher and run the [manual steps](#option-b-manual-launch-two-terminals); or
+  3. Turn Smart App Control off in **Windows Security → App & browser control → Smart App
+     Control** — note this is a one-way switch, it can't be re-enabled without resetting Windows,
+     so try options 1 and 2 first.
+
+Extracting the ZIP **before** running anything also helps: launching from inside a ZIP viewer,
+or from a OneDrive-synced folder, causes unrelated path failures.
+
+### Q: "Electron failed to install correctly" when the app tries to start
+**A:** npm 12 (July 2026) stopped running dependency install scripts by default, as
+supply-chain hardening. Electron's install script is the part that **downloads Electron itself**,
+so `npm install` prints "added 310 packages" and succeeds while leaving Electron unusable.
+
+Current versions of Klipzy declare the needed approval in `ui/package.json`, so a fresh install
+works. If you already have a broken copy, repair it with:
+
+```bash
+cd ui
+npm install-scripts approve electron
+npm rebuild electron
+```
+
+**`npm install` on its own will not fix it** — npm considers the tree complete, prints
+"up to date", and skips the download step. `npm rebuild` is what forces it. (Verified: after a
+blocked install, `npm install` left it broken and `npm rebuild electron` repaired it.)
+
+Failing that, delete `ui\node_modules` entirely and run the launcher again.
+
+### Q: npm printed deprecation warnings and "10 vulnerabilities". Is that a problem?
+**A:** Those come from transitive dependencies of the build tooling (`electron-builder`), not from
+Klipzy's own code, and they don't affect a local install. Don't run `npm audit fix --force` — it
+will happily upgrade `electron-builder` across a major version and break packaging. They're on
+the maintenance list.
 
 ### Q: Why is FFmpeg not found?
 **A:** Ensure `ffmpeg` and `ffprobe` are in your operating system's PATH. You can verify this by opening a terminal and running `ffmpeg -version`.
