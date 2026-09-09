@@ -98,25 +98,37 @@ echo Electron's program files did not download (npm skipped its install step).
 echo Repairing - this downloads about 170 MB, please wait...
 echo.
 
-REM Electron's postinstall is literally "node install.js", so run that script
-REM DIRECTLY. npm is not involved, so nothing npm does can block it - this works
-REM regardless of npm version or policy. Verified: produces path.txt + a real
-REM 168MB electron.exe from a blocked install.
-REM
-REM Why not the npm routes? Tested and both let us down:
+REM Three escalating attempts, each reporting what it did so a failure report
+REM tells us which one ran. Why the obvious npm routes are not trusted here:
 REM   npm install                  -> "up to date", never re-runs the script
 REM   npm rebuild electron         -> reports "rebuilt successfully", does nothing
 REM   npm install --allow-scripts= -> EALLOWSCRIPTS, rejected in project installs
-if not exist "ui\node_modules\electron\install.js" goto :electron_try_rebuild
+REM Electron's postinstall is literally "node install.js", so attempt 1 runs that
+REM directly - npm is not involved, so npm policy cannot block it.
+if not exist "ui\node_modules\electron\install.js" goto :electron_no_installjs
+echo   [1/3] Running Electron's own downloader directly...
 pushd "ui\node_modules\electron"
 call node install.js
 popd
 if exist "ui\node_modules\electron\path.txt" goto :electron_repaired
+goto :electron_step2
 
-:electron_try_rebuild
-echo Direct install did not take - trying npm rebuild...
+:electron_no_installjs
+echo   [1/3] Skipped: install.js is not present in ui\node_modules\electron.
+
+:electron_step2
+echo   [2/3] Trying npm rebuild electron...
 pushd ui
 call npm rebuild electron
+popd
+if exist "ui\node_modules\electron\path.txt" goto :electron_repaired
+
+REM Remove ONLY Electron and reinstall it. ui\.npmrc + package.json now allow its
+REM install script, so a genuine reinstall should fetch the binary.
+echo   [3/3] Removing Electron and reinstalling it...
+if exist "ui\node_modules\electron" rmdir /s /q "ui\node_modules\electron"
+pushd ui
+call npm install
 popd
 if exist "ui\node_modules\electron\path.txt" goto :electron_repaired
 goto :electron_failed
@@ -254,18 +266,14 @@ echo.
 echo npm downloaded the packages but blocked Electron's install script, which is
 echo what fetches the Electron program itself.
 echo.
-echo Fix it manually - copy and paste these two lines:
+echo NEXT STEP - run the dedicated repair tool:
 echo.
-echo    cd /d "%~dp0ui\node_modules\electron"
-echo    node install.js
+echo    Double-click  fix_electron.bat  in this folder.
 echo.
-echo That runs Electron's own downloader directly, which npm is skipping.
-echo It needs internet access and downloads about 170 MB.
+echo It tries several methods and reports exactly what happened, with no
+echo commands to type. It needs internet access and downloads about 170 MB.
 echo.
-echo Note: "npm install" and "npm rebuild" will NOT fix this - npm reports
-echo success without actually downloading Electron.
-echo.
-echo If it fails with a network/proxy error, check your connection or antivirus
-echo and run this launcher again.
+echo If it still fails, send the output from fix_electron.bat - it prints the
+echo diagnostics needed to tell what is blocking the download.
 pause
 exit /b 1
