@@ -2260,31 +2260,56 @@ function buildClipCard(clip, idx) {
       </div>
     </div>
     <div class="clip-actions">
-      <button class="btn btn-small" data-action="copy-hook" title="Copy hook title / opening line to clipboard">📋 Copy Hook</button>
-      <button class="btn btn-small" data-action="social-meta" title="Generate AI Social Title, Description, and Hashtags">📱 Social Post</button>
-      <button class="btn btn-small" data-action="pick-thumb" title="Generate AI Thumbnail poster from current video frame">🖼️ Pick Frame</button>
-      <button class="btn btn-small btn-edit" data-action="edit" title="Open the built-in editor: reframe, trim, zoom, add music">✂️ Edit</button>
-      <button class="btn btn-small" data-action="edit-captions">✏️ Edit Captions</button>
-      <button class="btn btn-small" data-action="reroll-hook" title="Swap in a fresh hook for this clip and re-render it">🎣 New Hook</button>
-      <button class="btn btn-small" data-action="remove-hook" title="Remove the burned-in intro hook and re-render this clip without it">🚫 Remove Hook</button>
-      <button class="btn btn-small" data-action="multi-aspect" title="Render 9:16 + 1:1 + 4:5 + 16:9 in one pass">📐 Multi-Aspect</button>
-      <button class="btn btn-small" data-action="overlay" title="Add B-roll video cutaway or reaction image">🎭 B-Roll</button>
-      <button class="btn btn-small" data-action="snip-silence" title="Auto-cut dead air pauses">✂️ Snip Silence</button>
-      <button class="btn btn-small" data-action="remove-fillers" title="Cut filler words (um, uh…) + dead air using the transcript">🧹 Fillers</button>
-      <button class="btn btn-small" data-action="translate" title="Translate this clip's captions to another language (local AI)">🌐 Translate</button>
-      <button class="btn btn-small" data-action="speakers" title="Detect who spoke when (optional — needs pyannote)">🗣 Speakers</button>
-      <button class="btn btn-small" data-action="bleep" title="Bleep or mute profanity">🔇 Bleep</button>
-      <button class="btn btn-small" data-action="open-folder">📂 Open</button>
-      <button class="btn btn-small btn-danger" data-action="delete" title="Remove this clip">🗑 Delete</button>
-      <select class="export-format-select clip-export-fmt" data-clip-idx="${idx}" title="Clip output format">
-        <option value="mp4">📦 MP4 (H.264)</option>
-        <option value="webm">🌐 WebM (VP9)</option>
-        <option value="av1">⚡ AV1 (Next-Gen)</option>
-        <option value="mov">🍏 MOV</option>
-        <option value="mkv">🎬 MKV</option>
-        <option value="gif">🖼️ GIF</option>
-      </select>
-      <button class="btn btn-small btn-export" data-action="export" data-clip-idx="${idx}">🚀 Export</button>
+      <!-- Primary actions stay one click away; the rest are grouped into
+           progressive-disclosure menus so the card isn't a wall of ~20 buttons.
+           Every data-action is preserved, so the delegated click handler and
+           the delete listener are unchanged. -->
+      <button class="btn btn-small btn-edit" data-action="edit" title="Open the built-in editor: reframe, trim, zoom, add music, text & graphics">✂️ Edit</button>
+
+      <details class="clip-menu">
+        <summary class="btn btn-small" title="Enhance & fix this clip">✨ Enhance ▾</summary>
+        <div class="clip-menu-items">
+          <button class="btn btn-small" data-action="edit-captions">✏️ Edit Captions</button>
+          <button class="btn btn-small" data-action="reroll-hook" title="Swap in a fresh hook for this clip and re-render it">🎣 New Hook</button>
+          <button class="btn btn-small" data-action="remove-hook" title="Remove the burned-in intro hook and re-render this clip without it">🚫 Remove Hook</button>
+          <button class="btn btn-small" data-action="multi-aspect" title="Render 9:16 + 1:1 + 4:5 + 16:9 in one pass">📐 Multi-Aspect</button>
+          <button class="btn btn-small" data-action="overlay" title="Add B-roll video cutaway or reaction image">🎭 B-Roll</button>
+          <button class="btn btn-small" data-action="snip-silence" title="Auto-cut dead air pauses">✂️ Snip Silence</button>
+          <button class="btn btn-small" data-action="remove-fillers" title="Cut filler words (um, uh…) + dead air using the transcript">🧹 Fillers</button>
+          <button class="btn btn-small" data-action="translate" title="Translate this clip's captions to another language (local AI)">🌐 Translate</button>
+          <button class="btn btn-small" data-action="speakers" title="Detect who spoke when (optional — needs pyannote)">🗣 Speakers</button>
+          <button class="btn btn-small" data-action="bleep" title="Bleep or mute profanity">🔇 Bleep</button>
+          <button class="btn btn-small" data-action="pick-thumb" title="Generate AI Thumbnail poster from current video frame">🖼️ Pick Frame</button>
+        </div>
+      </details>
+
+      <details class="clip-menu">
+        <summary class="btn btn-small" title="Share & copy">📤 Share ▾</summary>
+        <div class="clip-menu-items">
+          <button class="btn btn-small" data-action="copy-hook" title="Copy hook title / opening line to clipboard">📋 Copy Hook</button>
+          <button class="btn btn-small" data-action="social-meta" title="Generate AI Social Title, Description, and Hashtags">📱 Social Post</button>
+        </div>
+      </details>
+
+      <span class="clip-export-group">
+        <select class="export-format-select clip-export-fmt" data-clip-idx="${idx}" title="Clip output format">
+          <option value="mp4">📦 MP4 (H.264)</option>
+          <option value="webm">🌐 WebM (VP9)</option>
+          <option value="av1">⚡ AV1 (Next-Gen)</option>
+          <option value="mov">🍏 MOV</option>
+          <option value="mkv">🎬 MKV</option>
+          <option value="gif">🖼️ GIF</option>
+        </select>
+        <button class="btn btn-small btn-export" data-action="export" data-clip-idx="${idx}">🚀 Export</button>
+      </span>
+
+      <details class="clip-menu clip-menu-right">
+        <summary class="btn btn-small" title="Open folder & delete">⚙️ Manage ▾</summary>
+        <div class="clip-menu-items">
+          <button class="btn btn-small" data-action="open-folder">📂 Open folder</button>
+          <button class="btn btn-small btn-danger" data-action="delete" title="Remove this clip">🗑 Delete</button>
+        </div>
+      </details>
     </div>
   `;
 
@@ -2337,9 +2362,20 @@ function buildClipCard(clip, idx) {
   card.addEventListener('mouseenter', () => video.play().catch(() => {}));
   card.addEventListener('mouseleave', () => { video.pause(); });
 
+  const closeClipMenus = () => card.querySelectorAll('details.clip-menu[open]').forEach((d) => d.removeAttribute('open'));
+
   card.addEventListener('click', (e) => {
+    // Accordion: opening one action menu closes the others on this card.
+    const summary = e.target.closest('summary');
+    if (summary) {
+      const thisDetails = summary.parentElement;
+      card.querySelectorAll('details.clip-menu[open]').forEach((d) => { if (d !== thisDetails) d.removeAttribute('open'); });
+      return;
+    }
     const actionBtn = e.target.closest('[data-action]');
     if (!actionBtn) return;
+    // Once an action is chosen, collapse the menu it came from.
+    closeClipMenus();
     const idx2 = parseInt(card.dataset.clipIdx, 10);
     switch (actionBtn.dataset.action) {
       case 'copy-hook': copyClipHook(idx2); break;
@@ -2373,6 +2409,16 @@ function buildClipCard(clip, idx) {
         break;
     }
   });
+
+  // Close any open clip action menu when clicking outside it (bound once).
+  if (!window.__clipMenuOutsideBound) {
+    window.__clipMenuOutsideBound = true;
+    document.addEventListener('click', (e) => {
+      document.querySelectorAll('details.clip-menu[open]').forEach((d) => {
+        if (!d.contains(e.target)) d.removeAttribute('open');
+      });
+    });
+  }
 
   const deleteBtn = card.querySelector('[data-action="delete"]');
   deleteBtn.addEventListener('click', async (e) => {

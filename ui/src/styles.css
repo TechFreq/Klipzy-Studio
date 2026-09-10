@@ -2091,3 +2091,37 @@ body {
 .editor-item-num { display: inline-flex; align-items: center; gap: 4px; font-size: 0.82em; color: var(--text-muted, #9aa); }
 .editor-item-num input { width: 58px; }
 .editor-ov-item { cursor: move; }
+
+
+/* ------------------------------------------------------------------ */
+/* Clip-card action menus (progressive disclosure)                    */
+/* ------------------------------------------------------------------ */
+.clip-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.clip-export-group { display: inline-flex; align-items: center; gap: 6px; }
+
+.clip-menu { position: relative; display: inline-block; }
+.clip-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+.clip-menu > summary::-webkit-details-marker { display: none; }
+.clip-menu > summary::marker { content: ''; }
+
+.clip-menu-items {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: var(--panel, #1b1b24);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+}
+.clip-menu-right .clip-menu-items { left: auto; right: 0; }
+.clip-menu-items .btn { width: 100%; text-align: left; }
