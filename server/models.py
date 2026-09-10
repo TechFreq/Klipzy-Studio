@@ -518,3 +518,22 @@ class EmojiSuggestRequest(BaseModel):
 class EmojiSuggestResponse(BaseModel):
     suggestions: List[dict] = Field(default_factory=list)
 
+
+
+class EditorExportRequest(BaseModel):
+    """Render an edited clip from an Edit Spec (see server/core/edit_spec.py).
+
+    `spec` is the full edit document (canvas + tracks). `output_dir` is where the
+    rendered file lands (defaults beside the source). `subtitle_path` optionally
+    burns a caption file; `normalize_audio` applies EBU R128 loudness.
+    """
+    spec: dict
+    output_dir: Optional[str] = None
+    filename: Optional[str] = None
+    subtitle_path: Optional[str] = None
+    normalize_audio: bool = False
+
+
+class EditorExportResponse(BaseModel):
+    job_id: str
+    status: str = "started"
