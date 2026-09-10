@@ -2083,8 +2083,11 @@ body {
 
 .editor-item-list { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 4px; }
 .editor-item {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 5px 8px; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px;
   font-size: 0.85em;
 }
-.editor-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-item > span { flex: 1 1 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-item-num { display: inline-flex; align-items: center; gap: 4px; font-size: 0.82em; color: var(--text-muted, #9aa); }
+.editor-item-num input { width: 58px; }
+.editor-ov-item { cursor: move; }

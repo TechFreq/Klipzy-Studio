@@ -101,7 +101,7 @@
     var canvasW = _CANVAS_W[editorState().ratio] || 1080;
     var scale = rect.w / canvasW;
 
-    editorStickers.forEach(function (s) {
+    editorStickers.forEach(function (s, i) {
       var img = document.createElement('img');
       img.src = fileUrl(s.path);
       img.className = 'editor-ov-item';
@@ -110,10 +110,11 @@
       img.style.width = Math.max(12, s.scale * rect.w) + 'px';
       img.dataset.start = String(s.start);
       img.dataset.end = String(s.end);
+      makeDraggable(img, 'sticker', i);
       layer.appendChild(img);
     });
 
-    editorTexts.forEach(function (t) {
+    editorTexts.forEach(function (t, i) {
       var el = document.createElement('div');
       el.className = 'editor-ov-item editor-ov-text';
       el.textContent = t.text;
@@ -123,9 +124,42 @@
       el.style.fontSize = Math.max(10, (t.size || 96) * scale) + 'px';
       el.dataset.start = String(t.start);
       el.dataset.end = String(t.end);
+      makeDraggable(el, 'text', i);
       layer.appendChild(el);
     });
     syncOverlayVisibility();
+  }
+
+  // Drag an overlay item to reposition it; writes back normalized x/y (0..1)
+  // to the underlying item so the export lands where the preview shows it.
+  function makeDraggable(el, kind, index) {
+    el.style.pointerEvents = 'auto';
+    el.style.cursor = 'move';
+    el.title = 'Drag to reposition';
+    el.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      var rect = displayedVideoRect();
+      var layer = $('editor-overlay-layer');
+      if (!rect || !layer) return;
+      var arr = kind === 'text' ? editorTexts : editorStickers;
+      try { el.setPointerCapture(e.pointerId); } catch (_) { /* older engines */ }
+      function onMove(ev) {
+        var lr = layer.getBoundingClientRect();
+        var x = ((ev.clientX - lr.left) - rect.left) / rect.w;
+        var y = ((ev.clientY - lr.top) - rect.top) / rect.h;
+        x = Math.max(0, Math.min(1, x));
+        y = Math.max(0, Math.min(1, y));
+        if (arr[index]) { arr[index].x = x; arr[index].y = y; }
+        el.style.left = (rect.left + x * rect.w) + 'px';
+        el.style.top = (rect.top + y * rect.h) + 'px';
+      }
+      function onUp() {
+        el.removeEventListener('pointermove', onMove);
+        el.removeEventListener('pointerup', onUp);
+      }
+      el.addEventListener('pointermove', onMove);
+      el.addEventListener('pointerup', onUp);
+    });
   }
 
   // Show/hide preview overlays based on the playhead so timing reads true.
@@ -140,33 +174,97 @@
     });
   }
 
+  // A compact labelled number input that writes back to item[key] on change.
+  function numField(label, item, key, opts) {
+    opts = opts || {};
+    var wrap = document.createElement('label');
+    wrap.className = 'editor-item-num';
+    wrap.textContent = label;
+    var inp = document.createElement('input');
+    inp.type = 'number';
+    inp.step = opts.step || '0.1';
+    if (opts.min !== undefined) inp.min = String(opts.min);
+    if (opts.max !== undefined) inp.max = String(opts.max);
+    inp.value = String(item[key]);
+    inp.addEventListener('change', function () {
+      var v = parseFloat(inp.value);
+      if (isFinite(v)) { item[key] = v; if (opts.onChange) opts.onChange(); }
+    });
+    // Don't let clicks/drover bubble to the video card handlers.
+    inp.addEventListener('click', function (e) { e.stopPropagation(); });
+    wrap.appendChild(inp);
+    return wrap;
+  }
+
+  function removeBtn(arr, i) {
+    var rm = document.createElement('button');
+    rm.className = 'btn btn-small btn-danger';
+    rm.textContent = '✕';
+    rm.title = 'Remove';
+    rm.addEventListener('click', function () {
+      arr.splice(i, 1);
+      renderItemLists();
+      renderPreviewOverlays();
+    });
+    return rm;
+  }
+
   function renderItemLists() {
-    var mk = function (listId, arr, label) {
-      var ul = $(listId);
-      if (!ul) return;
-      ul.innerHTML = '';
-      arr.forEach(function (item, i) {
+    var dur = clipDuration();
+    var reflow = function () { renderPreviewOverlays(); };
+
+    // Text: label + start/end + size.
+    var tl = $('editor-text-list');
+    if (tl) {
+      tl.innerHTML = '';
+      editorTexts.forEach(function (t, i) {
         var li = document.createElement('li');
         li.className = 'editor-item';
         var name = document.createElement('span');
-        name.textContent = label(item);
-        var rm = document.createElement('button');
-        rm.className = 'btn btn-small btn-danger';
-        rm.textContent = '✕';
-        rm.title = 'Remove';
-        rm.addEventListener('click', function () {
-          arr.splice(i, 1);
-          renderItemLists();
-          renderPreviewOverlays();
-        });
+        name.textContent = '🅣 ' + t.text.slice(0, 18);
         li.appendChild(name);
-        li.appendChild(rm);
-        ul.appendChild(li);
+        li.appendChild(numField('start', t, 'start', { min: 0, max: dur, onChange: reflow }));
+        li.appendChild(numField('end', t, 'end', { min: 0, max: dur, onChange: reflow }));
+        li.appendChild(numField('size', t, 'size', { step: '4', min: 8, onChange: reflow }));
+        li.appendChild(removeBtn(editorTexts, i));
+        tl.appendChild(li);
       });
-    };
-    mk('editor-text-list', editorTexts, function (t) { return '🅣 ' + t.text.slice(0, 24); });
-    mk('editor-sticker-list', editorStickers, function (s) { return '🖼️ ' + s.name; });
-    mk('editor-sfx-list', editorSfx, function (s) { return '🔊 ' + s.name; });
+    }
+
+    // Stickers: name + start/end + scale.
+    var sl = $('editor-sticker-list');
+    if (sl) {
+      sl.innerHTML = '';
+      editorStickers.forEach(function (s, i) {
+        var li = document.createElement('li');
+        li.className = 'editor-item';
+        var name = document.createElement('span');
+        name.textContent = '🖼️ ' + s.name;
+        li.appendChild(name);
+        li.appendChild(numField('start', s, 'start', { min: 0, max: dur, onChange: reflow }));
+        li.appendChild(numField('end', s, 'end', { min: 0, max: dur, onChange: reflow }));
+        li.appendChild(numField('size', s, 'scale', { step: '0.05', min: 0.02, max: 4, onChange: reflow }));
+        li.appendChild(removeBtn(editorStickers, i));
+        sl.appendChild(li);
+      });
+    }
+
+    // SFX: name + start + volume.
+    var fl = $('editor-sfx-list');
+    if (fl) {
+      fl.innerHTML = '';
+      editorSfx.forEach(function (s, i) {
+        var li = document.createElement('li');
+        li.className = 'editor-item';
+        var name = document.createElement('span');
+        name.textContent = '🔊 ' + s.name;
+        li.appendChild(name);
+        li.appendChild(numField('at', s, 'start', { min: 0, max: dur }));
+        li.appendChild(numField('vol', s, 'gain', { step: '0.05', min: 0, max: 4 }));
+        li.appendChild(removeBtn(editorSfx, i));
+        fl.appendChild(li);
+      });
+    }
   }
 
   function baseName(p) {
@@ -322,8 +420,9 @@
       '1. Reframe — pick a ratio (or keep Original).\n' +
       '2. Trim — drag the start/end handles.\n' +
       '3. Zoom — add a gentle push-in if you like.\n' +
-      '4. Music — add a track; it ducks under speech.\n' +
-      '5. Export — renders on your GPU; nothing is uploaded.',
+      '4. Text / graphics — add them, then DRAG them on the preview to position; set start/end in the list.\n' +
+      '5. Music / SFX — add a track; music ducks under speech.\n' +
+      '6. Export — renders on your GPU; nothing is uploaded.',
       '✂️ Editor — quick tour'
     );
   }
