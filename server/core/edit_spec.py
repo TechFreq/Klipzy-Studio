@@ -69,6 +69,12 @@ def _norm_video_clip(item: Any, idx: int) -> Dict[str, Any]:
         raise ValueError(f"video clip #{idx}: 'out' ({tout}) must be > 'in' ({tin})")
     transform = item.get("transform") if isinstance(item.get("transform"), dict) else {}
     zoom = _num(transform.get("zoom"), 1.0) or 1.0
+    # Optional colour filter names (e.g. "warm", "bw"); the compositor maps known
+    # names to ffmpeg filters and silently ignores unknown ones.
+    raw_filters = item.get("filters")
+    if isinstance(raw_filters, str):
+        raw_filters = [raw_filters]
+    filters = [str(f) for f in (raw_filters or []) if f and str(f) != "none"]
     return {
         "src": str(item["src"]),
         "in": tin,
@@ -80,6 +86,7 @@ def _norm_video_clip(item: Any, idx: int) -> Dict[str, Any]:
             "x": transform.get("x"),            # active-speaker offset (px) or None
             "zoom": max(1.0, zoom),
         },
+        "filters": filters,
         "speed": max(0.1, _num(item.get("speed"), 1.0) or 1.0),
     }
 
@@ -131,6 +138,11 @@ def _norm_audio(item: Any, idx: int) -> Dict[str, Any]:
         "src": str(item["src"]),
         "gain": max(0.0, min(4.0, _num(item.get("gain"), 0.12))),
         "duck": bool(item.get("duck", True)),
+        # Music beds loop to cover the clip; one-shot SFX do not. Default True
+        # keeps the Phase-1 single-music behaviour (a looped bed).
+        "loop": bool(item.get("loop", True)),
+        # Optional role hint for the UI ("music" | "sfx"); not used by the compile.
+        "role": str(item.get("role") or "music"),
     })
     return base
 

@@ -40,6 +40,9 @@
     var zoom = _num(state.zoom, 1.0);
     if (zoom < 1) zoom = 1.0;
 
+    var clipDur = trimOut - trimIn;
+    var filter = state.filter && state.filter !== 'none' ? [state.filter] : [];
+
     var tracks = [{
       kind: 'video',
       clips: [{
@@ -52,18 +55,66 @@
           cropRatio: ratio === 'full' ? null : ratio,
           zoom: zoom,
         },
+        filters: filter,
       }],
     }];
 
+    // Audio: one optional looping music bed + any number of one-shot SFX.
+    var audioItems = [];
     var music = state.music;
     if (music && music.enabled && music.path) {
+      audioItems.push({
+        src: music.path,
+        gain: Math.max(0, Math.min(4, _num(music.gain, 0.12))),
+        duck: music.duck !== false,
+        loop: true,
+        role: 'music',
+      });
+    }
+    (state.sfx || []).forEach(function (s) {
+      if (!s || !s.path) return;
+      audioItems.push({
+        src: s.path,
+        gain: Math.max(0, Math.min(4, _num(s.gain, 0.8))),
+        duck: false,
+        loop: false,
+        role: 'sfx',
+        start: Math.max(0, _num(s.start, 0)),
+      });
+    });
+    if (audioItems.length) tracks.push({ kind: 'audio', items: audioItems });
+
+    // Image graphics / stickers.
+    var stickers = (state.stickers || []).filter(function (s) { return s && s.path; });
+    if (stickers.length) {
       tracks.push({
-        kind: 'audio',
-        items: [{
-          src: music.path,
-          gain: Math.max(0, Math.min(4, _num(music.gain, 0.12))),
-          duck: music.duck !== false,
-        }],
+        kind: 'overlay',
+        items: stickers.map(function (s) {
+          return {
+            src: s.path,
+            start: Math.max(0, _num(s.start, 0)),
+            end: _num(s.end, clipDur),
+            pos: { x: _clamp01(s.x, 0.5), y: _clamp01(s.y, 0.5) },
+            scale: Math.max(0.01, Math.min(4, _num(s.scale, 0.25))),
+          };
+        }),
+      });
+    }
+
+    // Free-floating text / titles.
+    var texts = (state.texts || []).filter(function (t) { return t && t.text; });
+    if (texts.length) {
+      tracks.push({
+        kind: 'text',
+        items: texts.map(function (t) {
+          return {
+            text: String(t.text),
+            start: Math.max(0, _num(t.start, 0)),
+            end: _num(t.end, clipDur),
+            pos: { x: _clamp01(t.x, 0.5), y: _clamp01(t.y, 0.85) },
+            style: { size: Math.max(8, _num(t.size, 96)), primary: t.color || '#ffffff' },
+          };
+        }),
       });
     }
 
@@ -71,9 +122,15 @@
       version: 1,
       source: src,
       canvas: { ratio: ratio, fps: _num(state.fps, 30) || 30 },
-      duration: trimOut - trimIn,
+      duration: clipDur,
       tracks: tracks,
     };
+  }
+
+  function _clamp01(v, d) {
+    var n = parseFloat(v);
+    if (!isFinite(n)) n = d;
+    return Math.max(0, Math.min(1, n));
   }
 
   // The preview crop-overlay aspect (width/height) for a ratio, or null for

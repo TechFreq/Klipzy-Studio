@@ -65,6 +65,146 @@ def _overlays(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
     return items
 
 
+# Colour-grade presets → ffmpeg filter bodies. Unknown names are ignored so a
+# new UI filter can't break a render before the backend knows it.
+FILTER_PRESETS: Dict[str, str] = {
+    "warm": "eq=gamma_r=1.06:gamma_b=0.94:saturation=1.12",
+    "cool": "eq=gamma_b=1.06:gamma_r=0.95:saturation=1.05",
+    "vivid": "eq=saturation=1.4:contrast=1.08",
+    "bw": "hue=s=0",
+    "mono": "hue=s=0",
+    "film": "curves=preset=vintage",
+}
+
+# Canvas pixel space per ratio, used as the ASS PlayRes for text positioning
+# (libass scales it to the real frame, so no probe is needed).
+_CANVAS_PX = {
+    "9:16": (1080, 1920), "4:5": (1080, 1350), "1:1": (1080, 1080),
+    "16:9": (1920, 1080), "full": (1080, 1920),
+}
+
+
+def _all_audio(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    for t in tracks_of_kind(spec, "audio"):
+        items.extend(t.get("items") or [])
+    return items
+
+
+def _text_items(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    for t in tracks_of_kind(spec, "text"):
+        items.extend(t.get("items") or [])
+    return items
+
+
+def _hex_to_ass(color: Optional[str], default: str = "&H00FFFFFF") -> str:
+    """#RRGGBB -> ASS &H00BBGGRR (ASS is BGR with a leading alpha byte)."""
+    if not color or not isinstance(color, str):
+        return default
+    c = color.strip().lstrip("#")
+    if len(c) != 6:
+        return default
+    try:
+        r, g, b = c[0:2], c[2:4], c[4:6]
+        return f"&H00{b}{g}{r}".upper()
+    except Exception:
+        return default
+
+
+def _ass_time(t: float) -> str:
+    t = max(0.0, float(t))
+    h = int(t) // 3600
+    m = (int(t) // 60) % 60
+    s = int(t) % 60
+    cs = int(round((t - int(t)) * 100))
+    if cs >= 100:
+        cs = 99
+    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+
+
+def text_items_to_ass(spec: Dict[str, Any]) -> Optional[str]:
+    """Render free-floating text items to an ASS document (or None if there are
+    none). Uses libass (via the subtitles filter) rather than drawtext, which is
+    font-config-fragile on Windows — libass is the same engine the captions
+    already burn through, so it's proven here. Pure (returns a string)."""
+    items = _text_items(spec)
+    if not items:
+        return None
+    ratio = spec.get("canvas", {}).get("ratio", "9:16")
+    px_w, px_h = _CANVAS_PX.get(ratio, (1080, 1920))
+    header = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        f"PlayResX: {px_w}\nPlayResY: {px_h}\n"
+        "WrapStyle: 2\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, "
+        "Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        "Style: Txt,Arial,96,&H00FFFFFF,&H00000000,&H00000000,-1,0,1,4,0,5,10,10,10,1\n\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+    lines = [header]
+    for it in items:
+        text = str(it.get("text") or "").replace("\\", "\\\\").replace("{", "(").replace("}", ")")
+        text = text.replace("\r", "").replace("\n", "\\N")
+        start = _ass_time(it.get("start") or 0.0)
+        end = _ass_time(it.get("end") or ((it.get("start") or 0.0) + 3.0))
+        pos = it.get("pos") or {"x": 0.5, "y": 0.85}
+        x = int(float(pos.get("x", 0.5)) * px_w)
+        y = int(float(pos.get("y", 0.85)) * px_h)
+        style = it.get("style") or {}
+        size = int(style.get("size") or 96)
+        col = _hex_to_ass(style.get("primary"))
+        override = f"{{\\an5\\pos({x},{y})\\fs{size}\\c{col}}}"
+        lines.append(f"Dialogue: 0,{start},{end},Txt,,0,0,0,,{override}{text}")
+    return "\n".join(lines) + "\n"
+
+
+def _build_multi_audio(items_with_idx, normalize: bool = False):
+    """Mix speech + N music/SFX beds into one track. Each bed gets its own gain
+    and optional start delay; if ANY bed asks to duck, the whole bed mix is
+    sidechain-compressed under the speech. Returns (chains, out_label).
+
+    Used only for 2+ beds; the 0/1 case stays on the tested
+    build_audio_filter_chain so Phase-1 behaviour is unchanged.
+    """
+    stereo = "aformat=channel_layouts=stereo:sample_rates=48000"
+    chains: List[str] = []
+    bed_labels: List[str] = []
+    any_duck = False
+    for k, (idx, item) in enumerate(items_with_idx):
+        ops = [f"volume={float(item.get('gain', 0.12)):.3f}", stereo]
+        start = float(item.get("start") or 0.0)
+        if start > 0:
+            ms = int(start * 1000)
+            ops.append(f"adelay={ms}|{ms}")
+        chains.append(f"[{idx}:a]{','.join(ops)}[m{k}]")
+        bed_labels.append(f"[m{k}]")
+        if item.get("duck", True):
+            any_duck = True
+
+    if len(bed_labels) == 1:
+        bed = bed_labels[0]
+    else:
+        chains.append(f"{''.join(bed_labels)}amix=inputs={len(bed_labels)}:normalize=0[bed]")
+        bed = "[bed]"
+
+    sp_ops = []
+    if normalize:
+        sp_ops.append("loudnorm=I=-14.0:TP=-1.5:LRA=11")
+    sp_ops.append(stereo)
+    chains.append(f"[0:a]{','.join(sp_ops)}[sp]")
+    if any_duck:
+        chains.append("[sp]asplit=2[spmain][spsc]")
+        chains.append(f"{bed}[spsc]sidechaincompress=threshold=0.05:ratio=8:attack=5:release=250[bedduck]")
+        chains.append("[spmain][bedduck]amix=inputs=2:duration=first:normalize=0[aout]")
+    else:
+        chains.append(f"[sp]{bed}amix=inputs=2:duration=first:normalize=0[aout]")
+    return chains, "[aout]"
+
+
 def _reframe_chain(ratio: str, x_expr: Optional[str]) -> Optional[str]:
     """The crop/letterbox filter body for a canvas ratio (no in/out labels), or
     None for a full-frame passthrough. Reuses the tested pipeline builders."""
@@ -103,18 +243,21 @@ def build_export_command(
     else:
         duration = spec.get("duration") or 0.0
 
-    music = _first_music(spec)
+    audio_items = _all_audio(spec)
     overlays = _overlays(spec)
 
     # ---- inputs (index order matters for the filtergraph) -----------------
     cmd: List[str] = ["ffmpeg", "-y", "-ss", f"{seek}", "-i", source]
     input_idx = 0
-    music_idx = None
-    if music:
+    audio_input_idx: List[int] = []
+    for a in audio_items:
         input_idx += 1
-        music_idx = input_idx
-        # Loop the track so a short song still covers the clip; output -t bounds it.
-        cmd += ["-stream_loop", "-1", "-i", music["src"]]
+        audio_input_idx.append(input_idx)
+        # Music beds loop to cover the clip; one-shot SFX play once.
+        if a.get("loop", True):
+            cmd += ["-stream_loop", "-1", "-i", a["src"]]
+        else:
+            cmd += ["-i", a["src"]]
     overlay_idx: List[int] = []
     for ov in overlays:
         input_idx += 1
@@ -150,6 +293,14 @@ def build_export_command(
         graph.append(build_zoompan_filter(cur, "[vzoom]", zw, zh, sfps, zoom_max=zoom))
         cur = "[vzoom]"
 
+    # colour-grade filters (applied to the base video, before overlays so a
+    # sticker isn't graded along with the footage).
+    filt_names = prim.get("filters") if prim else []
+    filt_bodies = [FILTER_PRESETS[f] for f in (filt_names or []) if f in FILTER_PRESETS]
+    if filt_bodies:
+        graph.append(f"{cur}{','.join(filt_bodies)}[vfilt]")
+        cur = "[vfilt]"
+
     # image overlays: scale to a fraction of their own width, then position the
     # centre-ish via the free-space fraction, enabled for the item's time window.
     for n, ov in zip(overlay_idx, overlays):
@@ -179,13 +330,22 @@ def build_export_command(
         video_label = "[vout]"
 
     # ---- audio graph ------------------------------------------------------
-    audio_chains, audio_out = build_audio_filter_chain(
-        speech_label="0:a",
-        music_label=(f"{music_idx}:a" if music_idx is not None else None),
-        normalize=normalize_audio,
-        music_volume=(music["gain"] if music else 0.12),
-        duck=(music["duck"] if music else True),
-    )
+    # 0 or 1 bed → reuse the tested single-music builder (Phase-1 behaviour);
+    # 2+ beds → the multi-track mixer below (music + layered SFX).
+    if len(audio_items) <= 1:
+        music = audio_items[0] if audio_items else None
+        music_idx = audio_input_idx[0] if audio_items else None
+        audio_chains, audio_out = build_audio_filter_chain(
+            speech_label="0:a",
+            music_label=(f"{music_idx}:a" if music_idx is not None else None),
+            normalize=normalize_audio,
+            music_volume=(music["gain"] if music else 0.12),
+            duck=(music["duck"] if music else True),
+        )
+    else:
+        audio_chains, audio_out = _build_multi_audio(
+            list(zip(audio_input_idx, audio_items)), normalize=normalize_audio,
+        )
     graph += audio_chains
 
     # ---- assemble ---------------------------------------------------------
@@ -215,6 +375,19 @@ def render(
     prim = _primary_video(ns)
     if prim and prim["transform"].get("zoom", 1.0) > 1.0:
         src_dims = probe_video_dims(prim["src"])
+
+    # Free-floating text items become an ASS file burned via the subtitles
+    # filter (libass — reliable across platforms, unlike drawtext). Only when
+    # the caller didn't already pass a subtitle file to burn.
+    if subtitle_path is None:
+        ass = text_items_to_ass(ns)
+        if ass:
+            ass_path = str(Path(output_path).with_suffix(".text.ass"))
+            try:
+                Path(ass_path).write_text(ass, encoding="utf-8")
+                subtitle_path = ass_path
+            except OSError:
+                subtitle_path = None
 
     cmd, cwd = build_export_command(
         ns, output_path, encoder, enc_args,

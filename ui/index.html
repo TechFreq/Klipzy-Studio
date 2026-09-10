@@ -741,6 +741,7 @@
               <div class="editor-preview">
                 <div class="editor-stage" id="editor-stage">
                   <video id="editor-video" preload="metadata" playsinline></video>
+                  <div id="editor-overlay-layer" class="editor-overlay-layer" aria-hidden="true"></div>
                   <div id="editor-crop-overlay" class="editor-crop-overlay hidden" aria-hidden="true"></div>
                 </div>
                 <div class="editor-transport">
@@ -799,6 +800,47 @@
                   <label class="editor-check">
                     <input type="checkbox" id="editor-music-duck" checked /> Duck under speech
                   </label>
+                </div>
+
+                <div class="editor-group" data-tip="Apply a colour look. Previews live on the video.">
+                  <span class="editor-group-label">🎨 Filter</span>
+                  <div class="editor-filter-chips" id="editor-filter-chips" role="group" aria-label="Colour filter">
+                    <button class="filter-chip is-selected" data-filter="none">None</button>
+                    <button class="filter-chip" data-filter="warm">Warm</button>
+                    <button class="filter-chip" data-filter="cool">Cool</button>
+                    <button class="filter-chip" data-filter="vivid">Vivid</button>
+                    <button class="filter-chip" data-filter="bw">B&amp;W</button>
+                    <button class="filter-chip" data-filter="film">Film</button>
+                  </div>
+                </div>
+
+                <div class="editor-group" data-tip="Add a title or caption line. It shows on the preview and burns in on export.">
+                  <span class="editor-group-label">🅣 Text</span>
+                  <div class="editor-text-form">
+                    <input type="text" id="editor-text-input" maxlength="120" placeholder="Type a title…" />
+                    <div class="editor-text-row">
+                      <select id="editor-text-pos" aria-label="Text position">
+                        <option value="0.15">Top</option>
+                        <option value="0.5">Middle</option>
+                        <option value="0.85" selected>Bottom</option>
+                      </select>
+                      <input type="color" id="editor-text-color" value="#ffffff" aria-label="Text colour" />
+                      <button class="btn btn-small btn-secondary" id="editor-add-text">➕ Add</button>
+                    </div>
+                  </div>
+                  <ul class="editor-item-list" id="editor-text-list"></ul>
+                </div>
+
+                <div class="editor-group" data-tip="Drop a logo, arrow or reaction image onto the clip.">
+                  <span class="editor-group-label">🖼️ Graphics</span>
+                  <button class="btn btn-small btn-secondary" id="editor-add-sticker">📂 Add image / sticker</button>
+                  <ul class="editor-item-list" id="editor-sticker-list"></ul>
+                </div>
+
+                <div class="editor-group" data-tip="Layer one-shot sound effects on top of the audio.">
+                  <span class="editor-group-label">🔊 Sound effects</span>
+                  <button class="btn btn-small btn-secondary" id="editor-add-sfx">📂 Add sound effect</button>
+                  <ul class="editor-item-list" id="editor-sfx-list"></ul>
                 </div>
 
                 <!-- Export + progress -->

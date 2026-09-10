@@ -19,7 +19,33 @@
   var editorJobId = null;
   var TIP_SEEN_KEY = 'klipzy.editor.tipSeen';
 
+  // Phase 2 in-memory item lists for the open clip (reset on openEditor).
+  var editorTexts = [];      // { text, x, y, color, size, start, end }
+  var editorStickers = [];   // { path, name, x, y, scale, start, end }
+  var editorSfx = [];        // { path, name, start, gain }
+
+  // Approximate CSS equivalents of the ffmpeg colour presets, for live preview.
+  var FILTER_CSS = {
+    none: '',
+    warm: 'saturate(1.15) sepia(0.15)',
+    cool: 'saturate(1.05) hue-rotate(-8deg) brightness(1.02)',
+    vivid: 'saturate(1.5) contrast(1.1)',
+    bw: 'grayscale(1)',
+    film: 'sepia(0.35) contrast(1.05) saturate(0.9)',
+  };
+
   function $(id) { return document.getElementById(id); }
+
+  function selectedFilter() {
+    var chip = document.querySelector('#editor-filter-chips .filter-chip.is-selected');
+    return chip ? chip.dataset.filter : 'none';
+  }
+
+  function clipDuration() {
+    var vid = $('editor-video');
+    if (vid && isFinite(vid.duration)) return vid.duration;
+    return editorClip ? Number(editorClip.duration) || 0 : 0;
+  }
 
   function editorState() {
     var vid = $('editor-video');
@@ -32,13 +58,119 @@
       trimIn: parseFloat($('editor-trim-in').value) || 0,
       trimOut: parseFloat($('editor-trim-out').value) || duration,
       zoom: parseFloat($('editor-zoom').value) || 1,
+      filter: selectedFilter(),
       music: {
         enabled: $('editor-music-enabled').checked,
         path: $('editor-music-path').value || '',
         gain: parseFloat($('editor-music-volume').value) || 0.12,
         duck: $('editor-music-duck').checked,
       },
+      texts: editorTexts.slice(),
+      stickers: editorStickers.slice(),
+      sfx: editorSfx.slice(),
     };
+  }
+
+  function applyFilterPreview() {
+    var vid = $('editor-video');
+    if (vid) vid.style.filter = FILTER_CSS[selectedFilter()] || '';
+  }
+
+  // Displayed video width inside the letterboxed stage — shared by the crop
+  // overlay and the text/sticker preview so everything lines up.
+  function displayedVideoRect() {
+    var vid = $('editor-video');
+    if (!vid || !vid.videoWidth) return null;
+    var boxW = vid.clientWidth, boxH = vid.clientHeight;
+    var vidAspect = vid.videoWidth / vid.videoHeight;
+    var w, h;
+    if (vidAspect > boxW / boxH) { w = boxW; h = boxW / vidAspect; }
+    else { h = boxH; w = boxH * vidAspect; }
+    return { w: w, h: h, left: (boxW - w) / 2, top: (boxH - h) / 2 };
+  }
+
+  var _CANVAS_W = { '9:16': 1080, '4:5': 1080, '1:1': 1080, '16:9': 1920, full: 1080 };
+
+  // Rebuild the live text/sticker preview layer from the item arrays.
+  function renderPreviewOverlays() {
+    var layer = $('editor-overlay-layer');
+    if (!layer) return;
+    layer.innerHTML = '';
+    var rect = displayedVideoRect();
+    if (!rect) return;
+    var canvasW = _CANVAS_W[editorState().ratio] || 1080;
+    var scale = rect.w / canvasW;
+
+    editorStickers.forEach(function (s) {
+      var img = document.createElement('img');
+      img.src = fileUrl(s.path);
+      img.className = 'editor-ov-item';
+      img.style.left = (rect.left + s.x * rect.w) + 'px';
+      img.style.top = (rect.top + s.y * rect.h) + 'px';
+      img.style.width = Math.max(12, s.scale * rect.w) + 'px';
+      img.dataset.start = String(s.start);
+      img.dataset.end = String(s.end);
+      layer.appendChild(img);
+    });
+
+    editorTexts.forEach(function (t) {
+      var el = document.createElement('div');
+      el.className = 'editor-ov-item editor-ov-text';
+      el.textContent = t.text;
+      el.style.left = (rect.left + t.x * rect.w) + 'px';
+      el.style.top = (rect.top + t.y * rect.h) + 'px';
+      el.style.color = t.color || '#fff';
+      el.style.fontSize = Math.max(10, (t.size || 96) * scale) + 'px';
+      el.dataset.start = String(t.start);
+      el.dataset.end = String(t.end);
+      layer.appendChild(el);
+    });
+    syncOverlayVisibility();
+  }
+
+  // Show/hide preview overlays based on the playhead so timing reads true.
+  function syncOverlayVisibility() {
+    var vid = $('editor-video');
+    var t = vid ? vid.currentTime : 0;
+    document.querySelectorAll('#editor-overlay-layer .editor-ov-item').forEach(function (el) {
+      var s = parseFloat(el.dataset.start) || 0;
+      var e = parseFloat(el.dataset.end);
+      if (!isFinite(e)) e = Infinity;
+      el.style.visibility = (t >= s && t <= e) ? 'visible' : 'hidden';
+    });
+  }
+
+  function renderItemLists() {
+    var mk = function (listId, arr, label) {
+      var ul = $(listId);
+      if (!ul) return;
+      ul.innerHTML = '';
+      arr.forEach(function (item, i) {
+        var li = document.createElement('li');
+        li.className = 'editor-item';
+        var name = document.createElement('span');
+        name.textContent = label(item);
+        var rm = document.createElement('button');
+        rm.className = 'btn btn-small btn-danger';
+        rm.textContent = '✕';
+        rm.title = 'Remove';
+        rm.addEventListener('click', function () {
+          arr.splice(i, 1);
+          renderItemLists();
+          renderPreviewOverlays();
+        });
+        li.appendChild(name);
+        li.appendChild(rm);
+        ul.appendChild(li);
+      });
+    };
+    mk('editor-text-list', editorTexts, function (t) { return '🅣 ' + t.text.slice(0, 24); });
+    mk('editor-sticker-list', editorStickers, function (s) { return '🖼️ ' + s.name; });
+    mk('editor-sfx-list', editorSfx, function (s) { return '🔊 ' + s.name; });
+  }
+
+  function baseName(p) {
+    return String(p || '').split(/[\\/]/).pop() || p;
   }
 
   function fmtClock(s) {
@@ -220,6 +352,7 @@
       $('editor-trim-out').value = String(dur.toFixed(1));
       updateTrimLabel();
       updateCropOverlay();
+      renderPreviewOverlays();
       $('editor-time').textContent = fmtClock(0) + ' / ' + fmtClock(dur);
     });
     vid.addEventListener('timeupdate', function () {
@@ -228,6 +361,7 @@
       // Loop playback within the trimmed window so the preview reflects the cut.
       if (vid.currentTime > o) vid.currentTime = i;
       $('editor-time').textContent = fmtClock(vid.currentTime) + ' / ' + fmtClock(vid.duration);
+      syncOverlayVisibility();
     });
 
     $('editor-ratio-chips').addEventListener('click', function (e) {
@@ -236,6 +370,7 @@
       document.querySelectorAll('#editor-ratio-chips .ratio-chip').forEach(function (c) { c.classList.remove('is-selected'); });
       chip.classList.add('is-selected');
       updateCropOverlay();
+      renderPreviewOverlays();
     });
 
     $('editor-zoom').addEventListener('input', applyZoomPreview);
@@ -259,7 +394,59 @@
       $('editor-music-volume-label').textContent = Math.round((parseFloat(this.value) || 0) * 100) + '%';
     });
 
-    window.addEventListener('resize', updateCropOverlay);
+    // Filters — live CSS preview + re-scale text overlays.
+    $('editor-filter-chips').addEventListener('click', function (e) {
+      var chip = e.target.closest('.filter-chip');
+      if (!chip) return;
+      document.querySelectorAll('#editor-filter-chips .filter-chip').forEach(function (c) { c.classList.remove('is-selected'); });
+      chip.classList.add('is-selected');
+      applyFilterPreview();
+    });
+
+    // Text — add a title from the inline form.
+    $('editor-add-text').addEventListener('click', function () {
+      var input = $('editor-text-input');
+      var txt = (input.value || '').trim();
+      if (!txt) { showToast('Type some text first.', 'info'); return; }
+      editorTexts.push({
+        text: txt,
+        x: 0.5,
+        y: parseFloat($('editor-text-pos').value) || 0.85,
+        color: $('editor-text-color').value || '#ffffff',
+        size: 96,
+        start: 0,
+        end: clipDuration(),
+      });
+      input.value = '';
+      renderItemLists();
+      renderPreviewOverlays();
+    });
+
+    $('editor-add-sticker').addEventListener('click', addEditorSticker);
+    $('editor-add-sfx').addEventListener('click', addEditorSfx);
+
+    var reflow = function () { updateCropOverlay(); renderPreviewOverlays(); };
+    window.addEventListener('resize', reflow);
+  }
+
+  async function addEditorSticker() {
+    var file = null;
+    // Reuse the camera-clip picker (images/video) if present, else prompt.
+    if (window.clipperAPI && window.clipperAPI.selectCameraClip) file = await window.clipperAPI.selectCameraClip();
+    else file = window.prompt('Paste the full path to an image/sticker (png/jpg):');
+    if (!file) return;
+    editorStickers.push({ path: file, name: baseName(file), x: 0.5, y: 0.5, scale: 0.25, start: 0, end: clipDuration() });
+    renderItemLists();
+    renderPreviewOverlays();
+  }
+
+  async function addEditorSfx() {
+    var file = null;
+    if (window.clipperAPI && window.clipperAPI.selectMusic) file = await window.clipperAPI.selectMusic();
+    else file = window.prompt('Paste the full path to a sound effect (mp3/wav):');
+    if (!file) return;
+    editorSfx.push({ path: file, name: baseName(file), start: 0, gain: 0.8 });
+    renderItemLists();
   }
 
   async function pickEditorMusic() {
@@ -288,17 +475,27 @@
     editorClip = clip;
     bindEditorOnce();
 
-    // Reset controls to defaults for this clip.
+    // Reset controls + item lists to defaults for this clip.
     document.querySelectorAll('#editor-ratio-chips .ratio-chip').forEach(function (c) {
       c.classList.toggle('is-selected', c.dataset.ratio === 'full');
     });
+    document.querySelectorAll('#editor-filter-chips .filter-chip').forEach(function (c) {
+      c.classList.toggle('is-selected', c.dataset.filter === 'none');
+    });
     $('editor-zoom').value = '1';
     applyZoomPreview();
+    applyFilterPreview();
     $('editor-music-enabled').checked = false;
     $('editor-music-path').value = '';
     $('editor-music-volume').value = '0.12';
     $('editor-music-volume-label').textContent = '12%';
     $('editor-music-duck').checked = true;
+    editorTexts = [];
+    editorStickers = [];
+    editorSfx = [];
+    renderItemLists();
+    var layer = $('editor-overlay-layer');
+    if (layer) layer.innerHTML = '';
     $('editor-progress').classList.add('hidden');
     $('editor-crop-overlay').classList.add('hidden');
 
