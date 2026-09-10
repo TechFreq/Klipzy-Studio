@@ -53,6 +53,8 @@ NEXT_SESSION_PROMPT.md
 # public repo. Run locally with `node --test` (frontend) and pytest (backend).
 # The Python suite that used to be tracked here has been untracked (it stays on
 # disk locally); this rule keeps it and any new tests out of the public repo.
+# jsdom lives in node_modules (also ignored), so no test tooling leaks into
+# package.json.
 /ui/test/
 /tests/
 

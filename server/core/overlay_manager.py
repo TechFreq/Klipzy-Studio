@@ -7,9 +7,10 @@ import os
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-import subprocess
+import subprocess  # kept for subprocess.PIPE
 
 from server.core.ffmpeg_tools import detect_hw_encoder, X264_FALLBACK_ARGS
+from server.core import proc  # killable subprocess runner (job cancel)
 from server.models import TranscriptSegment, WordTimestamp
 
 # High-virality keyword-to-emoji mappings for TikTok / Shorts / Reels style punch-ups
@@ -155,7 +156,7 @@ def apply_broll_overlay(
         output_video,
     ]
 
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=burn_cwd)
+    res = proc.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=burn_cwd)
     if res.returncode != 0:
         # Fallback to libx264
         cmd_fb = [c for c in cmd]
@@ -163,7 +164,7 @@ def apply_broll_overlay(
         enc_args_i = enc_i + 2
         cmd_fb[enc_i + 1] = "libx264"
         cmd_fb[enc_args_i:enc_args_i + len(enc_args)] = X264_FALLBACK_ARGS
-        res_fb = subprocess.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=burn_cwd)
+        res_fb = proc.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=burn_cwd)
         if res_fb.returncode != 0:
             raise RuntimeError(f"B-roll overlay failed: {res_fb.stderr[-500:]}")
 

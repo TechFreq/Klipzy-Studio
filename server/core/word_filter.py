@@ -6,10 +6,11 @@ and optionally sanitizes transcript/subtitle text.
 
 import re
 import os
-import subprocess
+import subprocess  # kept for subprocess.PIPE
 from pathlib import Path
 from typing import List, Dict, Tuple, Any, Optional, Set
 from server.core.ffmpeg_tools import detect_hw_encoder, get_video_duration, X264_FALLBACK_ARGS
+from server.core import proc  # killable subprocess runner (job cancel)
 
 
 DEFAULT_PROFANITY_LIST: Set[str] = {
@@ -201,11 +202,11 @@ def apply_bleep_or_mute(
             output_video
         ]
 
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    res = proc.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if res.returncode != 0:
         # If copy fails or filter errors, try re-encoding video
         cmd[cmd.index("-c:v") + 1] = encoder
-        res_fb = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        res_fb = proc.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         if res_fb.returncode != 0:
             raise RuntimeError(f"Profanity bleep/mute failed: {res_fb.stderr[-500:]}")
 

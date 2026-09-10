@@ -5,10 +5,11 @@ Removes awkward pauses, stream dead air, and silence gaps to create fast-paced v
 
 import re
 import os
-import subprocess
+import subprocess  # kept for subprocess.PIPE
 from pathlib import Path
 from typing import List, Dict, Tuple, Any, Optional
 from server.core.ffmpeg_tools import get_video_duration, detect_hw_encoder, X264_FALLBACK_ARGS
+from server.core import proc  # killable subprocess runner (job cancel)
 
 
 def detect_silence_intervals(
@@ -28,7 +29,7 @@ def detect_silence_intervals(
         "-af", f"silencedetect=noise={noise_threshold_db}dB:d={min_silence_duration}",
         "-f", "null", "-"
     ]
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    res = proc.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     stderr = res.stderr
 
     silence_starts = []
@@ -146,7 +147,7 @@ def remove_silence(
         output_video
     ]
 
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    res = proc.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if res.returncode != 0:
         # Fallback to libx264 if hardware encoder fails filter_complex
         cmd_fallback = [
@@ -158,7 +159,7 @@ def remove_silence(
             "-c:a", "aac", "-b:a", "192k",
             output_video
         ]
-        res_fb = subprocess.run(cmd_fallback, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        res_fb = proc.run(cmd_fallback, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         if res_fb.returncode != 0:
             raise RuntimeError(f"Silence removal failed: {res_fb.stderr[-500:]}")
 
@@ -201,7 +202,7 @@ def render_kept_segments(input_video: str, output_video: str, speech_segs: List[
         "-c:a", "aac", "-b:a", "192k",
         output_video,
     ]
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    res = proc.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if res.returncode != 0:
         cmd_fb = [
             "ffmpeg", "-y", "-i", input_video,
@@ -211,7 +212,7 @@ def render_kept_segments(input_video: str, output_video: str, speech_segs: List[
             "-c:a", "aac", "-b:a", "192k",
             output_video,
         ]
-        res_fb = subprocess.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        res_fb = proc.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         if res_fb.returncode != 0:
             raise RuntimeError(f"Segment render failed: {res_fb.stderr[-500:]}")
     return output_video

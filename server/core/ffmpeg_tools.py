@@ -8,9 +8,15 @@ import os
 import platform
 import re
 import shutil
-import subprocess
+import subprocess  # kept for subprocess.PIPE / CompletedProcess kwargs
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+# All ffmpeg/ffprobe calls go through proc.run (a killable subprocess.run
+# work-alike) so a job cancel can hard-stop the active render instead of waiting
+# for it to finish. proc.run behaves exactly like subprocess.run when no cancel
+# is pending, so detection-time calls (outside any job) are unaffected.
+from server.core import proc
 
 # libx264 fallback args reused across render / silence-cut / bleep / export paths.
 X264_FALLBACK_ARGS = ["-preset", "fast", "-crf", "22"]
@@ -48,7 +54,7 @@ def detect_hw_encoder() -> Tuple[str, List[str]]:
 
     system = platform.system()
     try:
-        res = subprocess.run(["ffmpeg", "-encoders"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        res = proc.run(["ffmpeg", "-encoders"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         stdout = res.stdout
 
         # 1. NVIDIA NVENC (Windows / Linux)
@@ -89,7 +95,7 @@ def get_media_info(file_path: str) -> dict:
         "-show_format", "-show_streams",
         file_path
     ]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    result = proc.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"ffprobe failed: {result.stderr}")
     return json.loads(result.stdout)
@@ -111,7 +117,7 @@ def extract_audio(video_path: str, output_audio_path: str, sample_rate: int = 16
         "-ar", str(sample_rate), "-ac", "1",
         output_audio_path
     ]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    result = proc.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"Audio extraction failed: {result.stderr[-500:]}")
     return output_audio_path
@@ -141,7 +147,7 @@ def export_standalone_audio(video_path: str, output_path: str, fmt: str = "mp3")
         cmd += ["-c:a", "libmp3lame", "-b:a", "320k"]
     cmd.append(output_path)
 
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    result = proc.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"Audio export failed: {result.stderr[-500:]}")
     return output_path
@@ -483,6 +489,22 @@ def render_clip(
     Path(output_video).parent.mkdir(parents=True, exist_ok=True)
     duration = end_time - start_time
 
+    def _run_ffmpeg(command, **kwargs):
+        """proc.run, but delete the half-written output file if the render is
+        cancelled mid-encode. A killed ffmpeg leaves a truncated, unplayable
+        ``.mp4`` behind (DEV_TESTING §4.5); removing it on the CancelledError
+        path keeps the clip directory free of broken artifacts. Other failures
+        are left untouched so their partial output can still be inspected."""
+        try:
+            return proc.run(command, **kwargs)
+        except proc.CancelledError:
+            try:
+                if os.path.exists(output_video):
+                    os.remove(output_video)
+            except OSError:
+                pass
+            raise
+
     has_cam = bool(cam_video and os.path.exists(cam_video))
     music_ok = bool(music_path and os.path.exists(str(Path(music_path).expanduser())))
     if music_ok:
@@ -593,7 +615,7 @@ def render_clip(
         cmd += ["-map", audio_out if audio_out else "0:a:0?"]
         cmd += ["-c:a", "aac", "-b:a", "192k", output_video]
 
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=burn_cwd)
+        result = _run_ffmpeg(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=burn_cwd)
         if result.returncode != 0 and video_reencoded:
             # Fallback to software encoding libx264 (only when we actually
             # re-encoded video with the hardware encoder).
@@ -602,7 +624,7 @@ def render_clip(
             enc_args_i = enc_i + 2
             cmd_fb[enc_i + 1] = "libx264"
             cmd_fb[enc_args_i:enc_args_i + len(enc_args)] = X264_FALLBACK_ARGS
-            res_fb = subprocess.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=burn_cwd)
+            res_fb = _run_ffmpeg(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=burn_cwd)
             if res_fb.returncode != 0:
                 raise RuntimeError(f"Clip rendering failed: {res_fb.stderr[-500:]}")
         elif result.returncode != 0:
@@ -621,7 +643,7 @@ def render_clip(
         "-movflags", "+faststart",
         output_video,
     ]
-    res_copy = subprocess.run(cmd_copy, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    res_copy = _run_ffmpeg(cmd_copy, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if res_copy.returncode == 0 and os.path.getsize(output_video) > 0:
         return output_video
 
@@ -638,7 +660,7 @@ def render_clip(
         "-c:a", "aac", "-b:a", "192k",
         output_video,
     ]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    result = _run_ffmpeg(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"Clip rendering failed: {result.stderr[-500:]}")
 
@@ -711,7 +733,7 @@ def export_clip_as(
             cmd += ["-movflags", "+faststart"] if fmt in ("mp4", "mov") else []
         cmd += [out_path]
 
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    result = proc.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if result.returncode != 0 and fmt == "av1":
         # Fallback to libaom-av1 if libsvtav1 is not compiled in FFmpeg
         cmd_aom = [
@@ -722,7 +744,7 @@ def export_clip_as(
             "-c:a", "libopus", "-b:a", "128k",
             out_path,
         ]
-        result = subprocess.run(cmd_aom, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        result = proc.run(cmd_aom, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     elif result.returncode != 0 and fmt in ("mp4", "mov", "mkv"):
         # Hardware encoders (e.g. h264_nvenc) are detected from `ffmpeg -encoders`
         # but can still fail to open at runtime (driver/NVIDIA init, codec clash).
@@ -732,7 +754,7 @@ def export_clip_as(
         enc_args_i = enc_i + 2
         cmd_fb[enc_i + 1] = "libx264"
         cmd_fb[enc_args_i:enc_args_i + len(enc_args)] = list(X264_FALLBACK_ARGS)
-        result = subprocess.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        result = proc.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"Export to {fmt} failed: {result.stderr[-500:]}")
 
@@ -760,7 +782,7 @@ def extract_best_thumbnail(
         "-q:v", "2",
         out_path,
     ]
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    res = proc.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if res.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
         # Fallback to frame 0
         cmd_fb = [
@@ -770,7 +792,7 @@ def extract_best_thumbnail(
             "-q:v", "2",
             out_path,
         ]
-        subprocess.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
         raise RuntimeError(f"Thumbnail extraction failed for {video_path}")
@@ -1006,7 +1028,7 @@ def render_cropped_frame(
         cmd += ["-vf", vf]
     # Sources we couldn't probe fall through as a full-frame grab.
     cmd += ["-q:v", "3", out_path]
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    res = proc.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if res.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
         raise RuntimeError(f"Cropped frame render failed: {res.stderr[-300:]}")
     return out_path
@@ -1073,7 +1095,7 @@ def concat_clips(
                 cmd += ["-c:a", "aac", "-b:a", "192k"]
             cmd += [out_path]
 
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        result = proc.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     finally:
         list_path.unlink(missing_ok=True)
 
@@ -1086,7 +1108,7 @@ def concat_clips(
         cmd_fb[enc_i + 1] = "libx264"
         fallback = list(X264_FALLBACK_ARGS)
         cmd_fb[enc_args_i:enc_args_i + len(enc_args)] = fallback
-        result = subprocess.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        result = proc.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     if result.returncode != 0:
         raise RuntimeError(f"Reel export to {fmt} failed: {result.stderr[-120:]}")

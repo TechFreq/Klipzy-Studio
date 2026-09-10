@@ -31,6 +31,7 @@ from server.models import (
     OverlayRequest, OverlayResponse, EmojiSuggestRequest, EmojiSuggestResponse,
 )
 from server.core.pipeline import VideoClipperEngine
+from server.core import proc
 from server.core.edit_chat import EditChat
 from server.core.export_tools import export_fcpxml, export_edl, export_capcut_draft
 from server.core.ffmpeg_tools import (
@@ -270,8 +271,12 @@ def _prune_jobs():
             break
 
 
-class _CancelledError(Exception):
-    """Raised inside a background job when cancellation is requested."""
+# Cancellation is signalled by proc.CancelledError, which subclasses
+# BaseException so it cuts through the pipeline's broad `except Exception`
+# guards around optional stages. Aliased here so existing `except _CancelledError`
+# handlers keep working and both the cooperative check and a killed subprocess
+# raise the SAME type.
+_CancelledError = proc.CancelledError
 
 
 def _enqueue_process_job(req: "ProcessRequest") -> str:
@@ -304,11 +309,14 @@ def _run_job(job_id: str) -> None:
         return
 
     def progress_callback(step: str, pct: int):
-        if cancel_ev is not None and cancel_ev.is_set():
+        # Cooperative check between stages; a mid-stage subprocess is stopped by
+        # the hard kill in proc.request_cancel() (see /job/{job_id}/cancel).
+        if (cancel_ev is not None and cancel_ev.is_set()) or proc.cancelled():
             raise _CancelledError()
         JOBS[job_id]["progress"] = pct
         JOBS[job_id]["step"] = step
 
+    proc.begin_job()  # reset kill-registry + cancel flag for this job
     try:
         JOBS[job_id]["status"] = "processing"
         clips = ENGINE.process_video(
@@ -324,7 +332,13 @@ def _run_job(job_id: str) -> None:
             use_llm=req.use_llm,
             speaker_aware_selection=req.speaker_aware_selection,
             speaker_aware_crop=req.speaker_aware_crop,
-            llm_model=PREFERRED_OLLAMA_MODEL,
+            # Use the model for the ACTIVE backend, not always the Ollama pick.
+            # A custom OpenAI-compatible endpoint names its models its own way,
+            # so its configured model must win here too — matching every other
+            # AI entry point (chat / translate / hooks), which already funnel
+            # through _active_llm_model(). Passing PREFERRED_OLLAMA_MODEL sent a
+            # meaningless Ollama name to a remote server.
+            llm_model=_active_llm_model(),
             burn_captions=req.burn_captions,
             caption_style=req.caption_style or "viral_yellow",
             font_size=req.font_size,
@@ -362,6 +376,8 @@ def _run_job(job_id: str) -> None:
     except Exception as e:
         JOBS[job_id]["status"] = "failed"
         JOBS[job_id]["error"] = str(e)
+    finally:
+        proc.end_job()  # clear the kill-registry; next job starts clean
 
 
 def _drain_job_queue() -> None:
@@ -486,11 +502,19 @@ def cancel_job(job_id: str):
     status = job.get("status")
     if status in ("completed", "failed", "cancelled"):
         return {"job_id": job_id, "status": status, "message": "Already finished."}
-    # Signal cancellation; the worker checks this at the next progress callback.
+    # Signal cancellation. Two mechanisms, by design:
+    #  - the per-job Event stops a QUEUED job before it starts, and is the
+    #    cooperative check between pipeline stages;
+    #  - for the ACTIVE job, proc.request_cancel() hard-kills the ffmpeg process
+    #    it's running right now so it stops mid-stage instead of running to
+    #    completion first. Only the active job owns live subprocesses, so gating
+    #    on _ACTIVE_JOB_ID avoids killing anything on behalf of a queued job.
     ev = _JOB_CANCEL.get(job_id)
     if ev is not None:
         ev.set()
         job["status"] = "cancelling"
+    if _ACTIVE_JOB_ID == job_id:
+        proc.request_cancel()
     return {"job_id": job_id, "status": job["status"], "message": "Cancellation requested."}
 
 
@@ -2133,6 +2157,110 @@ def ollama_pull_progress(model: str = ""):
 def ollama_pull_cancel(model: str = ""):
     with _PULL_LOCK:
         job = _PULL_JOBS.get((model or "").strip())
+        if not job:
+            return {"model": model, "ok": False, "error": "no active download"}
+        job["cancel"] = True
+        job["status"] = "cancelling"
+    return {"model": model, "ok": True}
+
+
+# ----------------------------------------------------------------------
+# Whisper model download: pre-flight presence check + background download with
+# live progress + cancel. Mirrors the Ollama pull endpoints above so the UI can
+# fetch a transcription model as its OWN visible step, instead of the download
+# happening implicitly inside transcription (where it looked like the job hung).
+# ----------------------------------------------------------------------
+_WHISPER_PULL_JOBS: Dict[str, dict] = {}
+_WHISPER_PULL_LOCK = threading.Lock()
+
+
+@app.get("/api/setup/whisper/model-status")
+def whisper_model_status(model: str = "base"):
+    """Is `model` already downloaded for the backend that would actually run?
+    `downloadable` is False when there's nothing to pre-fetch (a remote ASR
+    endpoint is configured, or no local backend is installed)."""
+    from server.core import whisper_models
+    return {"model": (model or "base").strip(), **whisper_models.status(model)}
+
+
+def _whisper_pull_worker(model: str):
+    from server.core import whisper_models
+
+    def progress(done: int, total: int, pct: float):
+        with _WHISPER_PULL_LOCK:
+            job = _WHISPER_PULL_JOBS.get(model)
+            if not job:
+                return
+            job["completed"] = done
+            job["total"] = total
+            job["percent"] = pct
+            job["status"] = "downloading"
+
+    def should_cancel() -> bool:
+        with _WHISPER_PULL_LOCK:
+            job = _WHISPER_PULL_JOBS.get(model)
+            return bool(job and job.get("cancel"))
+
+    try:
+        whisper_models.download(model, progress, should_cancel)
+    except whisper_models.DownloadCancelled:
+        with _WHISPER_PULL_LOCK:
+            job = _WHISPER_PULL_JOBS.get(model)
+            if job:
+                job["done"] = True
+                job["state"] = "cancelled"
+        return
+    except Exception as e:  # noqa: BLE001
+        with _WHISPER_PULL_LOCK:
+            job = _WHISPER_PULL_JOBS.get(model)
+            if job:
+                job["error"] = str(e)
+                job["state"] = "error"
+                job["done"] = True
+        return
+    with _WHISPER_PULL_LOCK:
+        job = _WHISPER_PULL_JOBS.get(model)
+        if job:
+            job["done"] = True
+            job["state"] = "success"
+            job["percent"] = 100.0
+
+
+@app.post("/api/setup/whisper/pull-start")
+def whisper_pull_start(model: str = "base"):
+    """Begin downloading a Whisper model in the background. Returns immediately;
+    poll /whisper/pull-progress and optionally /whisper/pull-cancel."""
+    model = (model or "base").strip()
+    from server.core import whisper_models
+    st = whisper_models.status(model)
+    if not st.get("downloadable"):
+        # Remote endpoint or no local backend: nothing to fetch.
+        return {"model": model, "started": False, "not_needed": True, "backend": st.get("backend")}
+    if st.get("present"):
+        return {"model": model, "started": False, "already_present": True, "backend": st.get("backend")}
+    with _WHISPER_PULL_LOCK:
+        existing = _WHISPER_PULL_JOBS.get(model)
+        if existing and not existing.get("done"):
+            return {"model": model, "started": False, "already_running": True}
+        _WHISPER_PULL_JOBS[model] = {"state": "downloading", "status": "starting", "percent": 0.0,
+                                     "completed": 0, "total": 0, "cancel": False, "done": False, "error": None}
+    threading.Thread(target=_whisper_pull_worker, args=(model,), daemon=True).start()
+    return {"model": model, "started": True, "backend": st.get("backend")}
+
+
+@app.get("/api/setup/whisper/pull-progress")
+def whisper_pull_progress(model: str = "base"):
+    with _WHISPER_PULL_LOCK:
+        job = _WHISPER_PULL_JOBS.get((model or "base").strip())
+        if not job:
+            return {"model": model, "state": "idle", "percent": 0, "done": True}
+        return {"model": model, **job}
+
+
+@app.post("/api/setup/whisper/pull-cancel")
+def whisper_pull_cancel(model: str = "base"):
+    with _WHISPER_PULL_LOCK:
+        job = _WHISPER_PULL_JOBS.get((model or "base").strip())
         if not job:
             return {"model": model, "ok": False, "error": "no active download"}
         job["cancel"] = True

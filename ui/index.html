@@ -1227,7 +1227,14 @@
 
   <!-- Classic scripts sharing one global scope. renderer.js holds the core
        state + helpers and MUST load first; the feature files below only
-       register listeners at load time, so they can follow in any order. -->
+       register listeners at load time, so they can follow in any order.
+       whisper-sync.js is a self-contained, dependency-free helper module used by
+       renderer.js and setup-panel.js at runtime, so it loads first. -->
+  <script src="src/text-utils.js"></script>
+  <script src="src/whisper-sync.js"></script>
+  <script src="src/ui-helpers.js"></script>
+  <script src="src/model-preflight.js"></script>
+  <script src="src/process-payload.js"></script>
   <script src="src/renderer.js"></script>
   <script src="src/caption-editor.js"></script>
   <script src="src/exports.js"></script>

@@ -282,6 +282,11 @@ async function init() {
   loadProjectList();
   // These all hit the API, so they wait until a token is in hand.
   checkHealth();
+  // Restore + two-way-bind the Whisper model selects before anything can run a
+  // job, independent of whether the Setup panel's server fetch succeeds. Without
+  // this the clip-time select stays at the HTML default `base` and the run
+  // ignores the saved preference until the user re-selects it.
+  initWhisperModelSync();
   loadSetupPanel();
   populateCaptionPresets();
   loadOutputFolder();
@@ -1891,6 +1896,54 @@ async function addTrimmedClip() {
 // ------------------------------------------------------------------
 let lastLoggedStep = '';
 
+// Tracks an in-flight Whisper model download so the Cancel button can stop it
+// during the pre-flight phase (before any /process job exists). Shape:
+// { model, cancelled } or null.
+let activeWhisperPull = null;
+
+// Fills the shared progress UI (badge / step / percent / bar) with a snapshot.
+// Logic lives in the unit-tested KlipzyUI helper (src/ui-helpers.js).
+function setProgressUI(badge, stepText, percent) {
+  if (typeof KlipzyUI !== 'undefined') KlipzyUI.setProgressUI(document, badge, stepText, percent);
+}
+
+// Pre-flight the selected transcription model: if it isn't downloaded yet,
+// fetch it as its own step with a real progress bar, then resolve. Returns true
+// when the model is ready to transcribe with, false if the user cancelled or the
+// download failed. Never blocks on a remote endpoint or a missing backend
+// (nothing to pre-fetch in those cases).
+async function ensureWhisperModelReady(model) {
+  // Thin wrapper: the whole flow lives in the unit-tested KlipzyModelPreflight
+  // module (src/model-preflight.js). Here we just wire in the real fetch, the
+  // progress UI, logging, and the Cancel-button management for the download
+  // phase (there is no /process job yet, so Cancel targets the model pull).
+  if (typeof KlipzyModelPreflight === 'undefined') return true;  // module missing
+  return KlipzyModelPreflight.runModelPreflight({
+    model,
+    serverUrl,
+    fetchFn: (url, opts) => fetch(url, opts),
+    onProgress: (badge, step, pct) => setProgressUI(badge, step, pct),
+    onLog: (msg, kind) => logActivity(msg, kind),
+    onError: (msg) => showError(msg),
+    formatMB: (b) => (typeof KlipzyUI !== 'undefined' ? KlipzyUI.formatMB(b) : `${b}`),
+    onDownloadStart: (m) => {
+      // Show + wire the Cancel button to cancel the DOWNLOAD (no job yet).
+      activeWhisperPull = { model: m, cancelled: false };
+      const cancelBtn = document.getElementById('cancel-active-job-btn');
+      if (cancelBtn) {
+        cancelBtn.style.display = 'inline-block';
+        cancelBtn.disabled = false;
+        cancelBtn.textContent = '🛑 Cancel Download';
+      }
+    },
+    onDownloadEnd: () => {
+      activeWhisperPull = null;
+      const cb = document.getElementById('cancel-active-job-btn');
+      if (cb) { cb.style.display = 'none'; cb.textContent = '🛑 Cancel Processing Job'; }
+    },
+  });
+}
+
 async function startClipping() {
   if (!selectedVideo) return;
 
@@ -1921,6 +1974,20 @@ async function startClipping() {
   setProcessingActive(true);  // show the spinner immediately; pollJob keeps it on
 
   const payload = buildProcessPayload();
+
+  // Pre-flight: make sure the selected transcription model is downloaded BEFORE
+  // the job starts, as its own visible step. Otherwise the model download used
+  // to happen implicitly inside transcription, under the "Transcribing..." bar,
+  // so a multi-GB first-time fetch looked like a stuck job.
+  const modelReady = await ensureWhisperModelReady(payload.whisper_model || 'base');
+  if (!modelReady) {
+    // Cancelled or failed during download — reset so the user can retry.
+    const b = document.getElementById('start-clipping');
+    if (b) { b.disabled = false; b.textContent = '🚀 Start Clipping & Transcribing'; }
+    setProcessingActive(false);
+    setWizardStep(2);
+    return;
+  }
 
   try {
     const res = await fetch(`${serverUrl}/process`, {
@@ -2007,14 +2074,8 @@ function pollJob(jobId) {
         barEl.setAttribute('aria-valuetext', `${progressNum}% — ${stepText}`);
       }
 
-      // Update stage badge
-      let stage = 'Processing';
-      const stepLower = stepText.toLowerCase();
-      if (stepLower.includes('transcrib') || stepLower.includes('whisper')) stage = 'Transcribing';
-      else if (stepLower.includes('audio') || stepLower.includes('energy')) stage = 'Audio Analysis';
-      else if (stepLower.includes('highlight') || stepLower.includes('score') || stepLower.includes('llm')) stage = 'AI Scoring';
-      else if (stepLower.includes('face') || stepLower.includes('crop') || stepLower.includes('track')) stage = 'Smart Cropping';
-      else if (stepLower.includes('caption') || stepLower.includes('render') || stepLower.includes('burn')) stage = 'Rendering Subtitles';
+      // Update stage badge (mapping lives in the unit-tested KlipzyUI helper).
+      const stage = (typeof KlipzyUI !== 'undefined') ? KlipzyUI.stageFromStep(stepText) : 'Processing';
       const badgeEl = document.getElementById('progress-stage-badge');
       if (badgeEl) badgeEl.textContent = stage;
 
@@ -2060,6 +2121,20 @@ function pollJob(jobId) {
 }
 
 async function cancelActiveJob() {
+  // Pre-flight download phase: no /process job yet, so cancel the model pull.
+  if (activeWhisperPull && !currentActiveJobId) {
+    const model = activeWhisperPull.model;
+    activeWhisperPull.cancelled = true;
+    const cancelBtn = document.getElementById('cancel-active-job-btn');
+    if (cancelBtn) { cancelBtn.disabled = true; cancelBtn.textContent = '⏳ Cancelling...'; }
+    try {
+      await fetch(`${serverUrl}/api/setup/whisper/pull-cancel?model=${encodeURIComponent(model)}`, { method: 'POST' });
+      showToast('Download cancellation requested', 'info');
+    } catch (err) {
+      showToast(`Failed to cancel download: ${err.message}`, 'error');
+    }
+    return;
+  }
   if (!currentActiveJobId) {
     showToast('No active job running to cancel.', 'info');
     return;
@@ -2908,35 +2983,10 @@ function appendMessage(role, text) {
 }
 
 // Escapes for BOTH text content and quoted attribute values. The textContent
-// round-trip alone leaves " and ' intact, which made interpolating a value into
-// an attribute (e.g. poster="...") an injection point.
-function escapeHtml(text) {
-  return String(text == null ? '' : text)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-// Builds a usable file:// URL from a Windows or POSIX path.
-//
-// Two traps this avoids:
-//  - Backslashes and spaces/# in paths need normalising and encoding.
-//  - file: URLs have no query component, so the old `?t=<timestamp>` trick for
-//    cache-busting became part of the *path* and the file silently 404'd. A
-//    fragment is ignored by the filesystem layer but still changes the URL
-//    string, so the browser treats it as a new resource.
-function fileUrl(filePath, cacheBust) {
-  if (!filePath) return '';
-  const normalized = String(filePath).replace(/\\/g, '/');
-  const encoded = normalized
-    .split('/')
-    .map((segment) => encodeURIComponent(segment).replace(/%3A/gi, ':'))
-    .join('/');
-  const prefix = encoded.startsWith('/') ? 'file://' : 'file:///';
-  return `${prefix}${encoded}${cacheBust ? `#t=${Date.now()}` : ''}`;
-}
+// NOTE: escapeHtml() and fileUrl() now live in src/text-utils.js (loaded before
+// this file). They remain available as bare globals, so all call sites here and
+// in the other classic scripts are unchanged — the move just makes them
+// unit-testable (ui/test/text-utils.test.js).
 
 // Start
 // ------------------------------------------------------------------
@@ -3122,57 +3172,16 @@ document.getElementById('clear-music-btn')?.addEventListener('click', () => {
 // Builds the /process request body from the current UI settings. Shared by the
 // single-video "Start Clipping" flow and the batch flow (which swaps in a list
 // of video_paths).
-function censorProfanity() {
-  return !!document.getElementById('censor-profanity')?.checked;
-}
-
-function censorMode() {
-  return document.getElementById('censor-mode')?.value || 'bleep';
-}
-
 function buildProcessPayload() {
-  const captionOpts = collectCaptionOptions();
-  return {
-    video_path: selectedVideo,
-    vertical_crop: document.getElementById('vertical-crop').checked,
-    aspect_ratio: document.getElementById('clip-aspect-ratio') ? document.getElementById('clip-aspect-ratio').value : '9:16',
-    caption_style: captionOpts.caption_style,
-    font_size: captionOpts.font_size,
-    font_name: captionOpts.font_name,
-    primary_color: captionOpts.primary_color,
-    highlight_color: captionOpts.highlight_color,
-    outline_color: captionOpts.outline_color,
-    outline_width: captionOpts.outline_width,
-    position: captionOpts.position,
-    chunk_size: captionOpts.chunk_size,
-    uppercase: captionOpts.uppercase,
-    bold: captionOpts.bold,
-    italic: captionOpts.italic,
-    intro_caption: captionOpts.intro_caption,
-    intro_caption_duration: captionOpts.intro_caption_duration,
-    intro_enabled: captionOpts.intro_enabled,
-    intro_font_size: captionOpts.intro_font_size,
-    max_clips: parseInt(document.getElementById('max-clips').value) || 5,
-    min_duration: parseFloat(document.getElementById('min-duration').value) || 20,
-    max_duration: parseFloat(document.getElementById('max-duration').value) || 60,
-    whisper_model: document.getElementById('whisper-model').value,
-    use_audio_energy: document.getElementById('audio-energy').checked,
-    use_llm: document.getElementById('use-llm').checked,
-    speaker_aware_selection: document.getElementById('speaker-aware-selection') ? document.getElementById('speaker-aware-selection').checked : false,
-    speaker_aware_crop: document.getElementById('speaker-aware-crop') ? document.getElementById('speaker-aware-crop').checked : false,
-    burn_captions: document.getElementById('burn-captions').checked,
-    remove_silence: document.getElementById('remove-silence') ? document.getElementById('remove-silence').checked : false,
-    // One checkbox arms censoring; the mode select picks bleep vs mute. The
-    // pipeline already implemented both, but mute_profanity was hardcoded
-    // false, so the "Mute" half of the old label was unreachable.
-    bleep_profanity: censorProfanity() && censorMode() === 'bleep',
-    mute_profanity: censorProfanity() && censorMode() === 'mute',
-    normalize_audio: document.getElementById('normalize-audio') ? document.getElementById('normalize-audio').checked : false,
-    auto_zoom: document.getElementById('auto-zoom') ? document.getElementById('auto-zoom').checked : false,
-    music_path: (document.getElementById('music-path') && document.getElementById('music-path').value) || null,
-    music_volume: parseFloat(document.getElementById('music-volume') ? document.getElementById('music-volume').value : '0.12') || 0.12,
-    duck_music: document.getElementById('duck-music') ? document.getElementById('duck-music').checked : true,
-  };
+  // The body-building logic lives in the dependency-injected, unit-tested
+  // KlipzyProcessPayload module (ui/src/process-payload.js, loaded before this
+  // script). This wrapper supplies the live document, the resolved source path,
+  // and the caption options collected from the editor.
+  return KlipzyProcessPayload.build({
+    doc: document,
+    selectedVideo,
+    captionOptions: collectCaptionOptions(),
+  });
 }
 
 // Batch processing: pick several videos and queue them with the current settings.

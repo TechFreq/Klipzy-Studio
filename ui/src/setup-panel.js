@@ -362,23 +362,33 @@ function bindInstallAll() {
   });
 }
 
+// Single source of truth for the Whisper model size.
+//
+// There are two selects for the same setting: #whisper-model (Clipping Options,
+// the one buildProcessPayload actually sends) and #ai-whisper-model (Setup
+// panel). Historically only the Setup select was restored from localStorage,
+// and the sync ran one way (Setup → clip) on change only — so on startup the
+// clip select stayed at the HTML default `base` and every run used `base` no
+// matter what the UI showed, until the user re-selected. This wires both selects
+// to one saved value with two-way mirroring so they can never drift apart.
+//
+// Idempotent: safe to call multiple times (startup + each Setup panel load).
+// The actual logic lives in the dependency-injected, unit-tested module
+// src/whisper-sync.js (KlipzyWhisperSync); this just supplies the real document,
+// localStorage and toast.
+function initWhisperModelSync() {
+  if (typeof KlipzyWhisperSync === 'undefined') return;  // module failed to load
+  KlipzyWhisperSync.syncWhisperModelSelects({
+    doc: document,
+    storage: localStorage,
+    announce: (message) => showToast(message, 'success'),
+  });
+}
+
 // Populate + wire the "Change AI models" selectors.
 async function loadAiModels(statusData) {
-  // Whisper size: keep in sync with the clip-time #whisper-model select + persist.
-  const whisperSel = document.getElementById('ai-whisper-model');
-  if (whisperSel && !whisperSel.dataset.bound) {
-    whisperSel.dataset.bound = '1';
-    const saved = localStorage.getItem('klipzy.whisperModel');
-    const clipSel = document.getElementById('whisper-model');
-    if (saved) whisperSel.value = saved;
-    else if (clipSel && clipSel.value) whisperSel.value = clipSel.value;
-    whisperSel.addEventListener('change', () => {
-      localStorage.setItem('klipzy.whisperModel', whisperSel.value);
-      const cs = document.getElementById('whisper-model');
-      if (cs) cs.value = whisperSel.value;  // the clipping run reads this select
-      showToast(`Transcription model set to ${whisperSel.value} for the next run`, 'success');
-    });
-  }
+  // Keep both Whisper selects and the saved preference in lockstep.
+  initWhisperModelSync();
 
   // Ollama model: list what's installed locally, let the user pick the active one.
   const ollamaSel = document.getElementById('ai-ollama-model');
@@ -653,7 +663,11 @@ function renderRecommendations(recs) {
     button.addEventListener('click', () => {
       if (button.dataset.modelKind === 'whisper') {
         const select = document.getElementById('whisper-model');
-        if (select) select.value = button.dataset.model;
+        if (select) {
+          select.value = button.dataset.model;
+          // Funnel through the shared sync: persists + mirrors #ai-whisper-model.
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
         // Move the highlight to the clicked whisper choice.
         button.parentElement.querySelectorAll('.rec-choice').forEach((b) => b.classList.remove('is-selected'));
         button.classList.add('is-selected');
