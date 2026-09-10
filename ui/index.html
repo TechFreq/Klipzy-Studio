@@ -725,6 +725,103 @@
           </div>
         </div>
       </div>
+      <!-- Clip Editor Modal (Phase 1: reframe / trim / zoom / music) -->
+      <div id="editor-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="editor-modal-title">
+        <div class="modal-content editor-modal-content">
+          <div class="modal-header">
+            <h3 id="editor-modal-title">✂️ Edit Clip</h3>
+            <div class="editor-header-actions">
+              <button class="btn btn-small btn-secondary" id="editor-tutorial-btn" title="Show a quick step-by-step walkthrough">❓ Tutorial</button>
+              <button class="modal-close" id="close-editor-modal" aria-label="Close editor">&times;</button>
+            </div>
+          </div>
+          <div class="modal-body">
+            <div class="editor-layout">
+              <!-- Preview -->
+              <div class="editor-preview">
+                <div class="editor-stage" id="editor-stage">
+                  <video id="editor-video" preload="metadata" playsinline></video>
+                  <div id="editor-crop-overlay" class="editor-crop-overlay hidden" aria-hidden="true"></div>
+                </div>
+                <div class="editor-transport">
+                  <button class="btn btn-small" id="editor-playpause" title="Play / pause preview">▶️</button>
+                  <span class="editor-time" id="editor-time">0:00 / 0:00</span>
+                </div>
+                <!-- Trim timeline -->
+                <div class="editor-timeline" data-tip="Drag the handles to trim the start and end of your clip.">
+                  <label class="editor-field">
+                    <span>Trim start (s)</span>
+                    <input type="range" id="editor-trim-in" min="0" max="100" step="0.1" value="0" />
+                  </label>
+                  <label class="editor-field">
+                    <span>Trim end (s)</span>
+                    <input type="range" id="editor-trim-out" min="0" max="100" step="0.1" value="100" />
+                  </label>
+                  <span class="muted small" id="editor-trim-label">Full clip</span>
+                </div>
+              </div>
+
+              <!-- Controls -->
+              <div class="editor-controls">
+                <div class="editor-group" data-tip="Reframe the clip for a platform. 'Original' keeps it as-is.">
+                  <span class="editor-group-label">📐 Reframe</span>
+                  <div class="editor-ratio-chips" id="editor-ratio-chips" role="group" aria-label="Canvas ratio">
+                    <button class="ratio-chip is-selected" data-ratio="full">Original</button>
+                    <button class="ratio-chip" data-ratio="9:16">9:16</button>
+                    <button class="ratio-chip" data-ratio="4:5">4:5</button>
+                    <button class="ratio-chip" data-ratio="1:1">1:1</button>
+                    <button class="ratio-chip" data-ratio="16:9">16:9</button>
+                  </div>
+                </div>
+
+                <div class="editor-group" data-tip="A gentle push-in for a more dynamic feel.">
+                  <label class="editor-field">
+                    <span>🔍 Zoom</span>
+                    <input type="range" id="editor-zoom" min="1" max="1.3" step="0.01" value="1" />
+                    <output id="editor-zoom-label">1.00×</output>
+                  </label>
+                </div>
+
+                <div class="editor-group" data-tip="Drop in a music bed. It automatically ducks under speech.">
+                  <span class="editor-group-label">🎵 Music</span>
+                  <label class="editor-check">
+                    <input type="checkbox" id="editor-music-enabled" /> Add background music
+                  </label>
+                  <div class="input-row">
+                    <input type="text" id="editor-music-path" placeholder="No music selected" readonly />
+                    <button class="btn btn-secondary btn-small" id="editor-pick-music">📂 Choose</button>
+                  </div>
+                  <label class="editor-field">
+                    <span>Volume</span>
+                    <input type="range" id="editor-music-volume" min="0" max="1" step="0.01" value="0.12" />
+                    <output id="editor-music-volume-label">12%</output>
+                  </label>
+                  <label class="editor-check">
+                    <input type="checkbox" id="editor-music-duck" checked /> Duck under speech
+                  </label>
+                </div>
+
+                <!-- Export + progress -->
+                <div class="editor-export-row">
+                  <button class="btn btn-primary" id="editor-export-btn" data-tip="Render your edit. Uses your GPU; nothing is uploaded.">🚀 Export edit</button>
+                  <button class="btn btn-danger btn-small hidden" id="editor-cancel-btn">🛑 Cancel</button>
+                </div>
+                <div class="editor-progress hidden" id="editor-progress">
+                  <div class="progress-header-row">
+                    <span class="progress-stage-badge" id="editor-progress-badge">Rendering</span>
+                    <span class="progress-percent" id="editor-progress-percent">0%</span>
+                  </div>
+                  <div class="progress-bar" role="progressbar" id="editor-progress-bar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                    <div id="editor-progress-fill" class="progress-fill"></div>
+                  </div>
+                  <p class="muted small" id="editor-progress-step">Starting…</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Job Queue Manager Modal -->
       <div id="queue-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="queue-modal-title">
         <div class="modal-content queue-modal-content">
@@ -1236,9 +1333,11 @@
   <script src="src/model-preflight.js"></script>
   <script src="src/process-payload.js"></script>
   <script src="src/caption-preview-math.js"></script>
+  <script src="src/editor-spec.js"></script>
   <script src="src/renderer.js"></script>
   <script src="src/caption-editor.js"></script>
   <script src="src/exports.js"></script>
+  <script src="src/editor.js"></script>
   <script src="src/setup-panel.js"></script>
 </body>
 </html>

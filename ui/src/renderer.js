@@ -2263,6 +2263,7 @@ function buildClipCard(clip, idx) {
       <button class="btn btn-small" data-action="copy-hook" title="Copy hook title / opening line to clipboard">📋 Copy Hook</button>
       <button class="btn btn-small" data-action="social-meta" title="Generate AI Social Title, Description, and Hashtags">📱 Social Post</button>
       <button class="btn btn-small" data-action="pick-thumb" title="Generate AI Thumbnail poster from current video frame">🖼️ Pick Frame</button>
+      <button class="btn btn-small btn-edit" data-action="edit" title="Open the built-in editor: reframe, trim, zoom, add music">✂️ Edit</button>
       <button class="btn btn-small" data-action="edit-captions">✏️ Edit Captions</button>
       <button class="btn btn-small" data-action="reroll-hook" title="Swap in a fresh hook for this clip and re-render it">🎣 New Hook</button>
       <button class="btn btn-small" data-action="remove-hook" title="Remove the burned-in intro hook and re-render this clip without it">🚫 Remove Hook</button>
@@ -2344,6 +2345,7 @@ function buildClipCard(clip, idx) {
       case 'copy-hook': copyClipHook(idx2); break;
       case 'social-meta': openSocialMetaModal(idx2); break;
       case 'pick-thumb': pickClipThumbnail(idx2, video); break;
+      case 'edit': openEditor(idx2); break;
       case 'edit-captions': openCaptionEditor(idx2); break;
       case 'reroll-hook': quickRerollHook(idx2, actionBtn); break;
       case 'remove-hook': quickRemoveHook(idx2, actionBtn); break;
