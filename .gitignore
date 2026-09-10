@@ -42,3 +42,19 @@ _prerestore_backup/
 
 # Internal/personal developer notes — kept locally, never pushed to the public repo
 Developer of Klipzy studio/
+
+# Local-only working docs (session handoff + dev/testing notes + resume prompt).
+# Kept local, never committed.
+SESSION_HANDOFF.md
+DEV_TESTING.md
+NEXT_SESSION_PROMPT.md
+
+# Development-only test suites & scaffolding — kept local, never shipped in the
+# public repo. Run locally with `node --test` (frontend) and pytest (backend).
+# The Python suite that used to be tracked here has been untracked (it stays on
+# disk locally); this rule keeps it and any new tests out of the public repo.
+/ui/test/
+/tests/
+
+# Internal developer notes / codebase audits.
+/dev/
