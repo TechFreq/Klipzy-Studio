@@ -205,6 +205,24 @@ def _build_multi_audio(items_with_idx, normalize: bool = False):
     return chains, "[aout]"
 
 
+def _atempo_chain(speed: float) -> List[str]:
+    """atempo only accepts 0.5..2.0 per stage, so decompose an arbitrary speed
+    into a chain of in-range factors (e.g. 4x -> 2.0,2.0; 0.25x -> 0.5,0.5)."""
+    factors: List[str] = []
+    s = float(speed)
+    if s <= 0:
+        return []
+    while s > 2.0:
+        factors.append("atempo=2.0")
+        s /= 2.0
+    while s < 0.5:
+        factors.append("atempo=0.5")
+        s /= 0.5
+    if abs(s - 1.0) > 1e-6 or not factors:
+        factors.append(f"atempo={s:.4f}")
+    return factors
+
+
 def _reframe_chain(ratio: str, x_expr: Optional[str]) -> Optional[str]:
     """The crop/letterbox filter body for a canvas ratio (no in/out labels), or
     None for a full-frame passthrough. Reuses the tested pipeline builders."""
@@ -238,10 +256,16 @@ def build_export_command(
     prim = _primary_video(spec)
     source = prim["src"] if prim else spec["source"]
     seek = prim["in"] if prim else 0.0
+    speed = float(prim.get("speed", 1.0)) if prim else 1.0
+    if speed <= 0:
+        speed = 1.0
     if prim:
-        duration = prim["out"] - prim["in"]
+        src_span = prim["out"] - prim["in"]
     else:
-        duration = spec.get("duration") or 0.0
+        src_span = spec.get("duration") or 0.0
+    # Speed compresses/stretches the output timeline; the OUTPUT -t must match so
+    # a slow-mo isn't cut short and a fast clip isn't padded.
+    duration = src_span / speed if src_span else 0.0
 
     audio_items = _all_audio(spec)
     overlays = _overlays(spec)
@@ -307,7 +331,9 @@ def build_export_command(
         graph.append(f"[{n}:v]scale=iw*{ov['scale']:.4f}:-1[ovs{n}]")
         posx = ov["pos"]["x"]
         posy = ov["pos"]["y"]
-        end = ov["end"] if ov["end"] else (duration or 0.0)
+        # Overlay/enable times are in ORIGINAL clip time; the final setpts (speed)
+        # scales the whole composited stream, so use the pre-speed span here.
+        end = ov["end"] if ov["end"] else (src_span or 0.0)
         enable = f":enable='between(t,{ov['start']:.3f},{end:.3f})'" if end else ""
         graph.append(
             f"{cur}[ovs{n}]overlay=x=(W-w)*{posx:.4f}:y=(H-h)*{posy:.4f}{enable}[ovout{n}]"
@@ -320,7 +346,23 @@ def build_export_command(
         # reference it by bare filename (a drive-letter colon breaks the filter).
         burn_cwd = os.path.dirname(os.path.abspath(subtitle_path))
         sub_rel = os.path.basename(subtitle_path).replace("'", "'\\''")
-        graph.append(f"{cur}subtitles={sub_rel}[vout]")
+        graph.append(f"{cur}subtitles={sub_rel}[vsub]")
+        cur = "[vsub]"
+
+    # Post-effects applied to the FULLY composited video, in output order:
+    #   speed (setpts) scales the whole stream — including burned overlays/subs —
+    #   uniformly; then fade to/from black in the (already sped) output timeline.
+    fade_in = float(prim.get("fadeIn", 0.0)) if prim else 0.0
+    fade_out = float(prim.get("fadeOut", 0.0)) if prim else 0.0
+    post: List[str] = []
+    if abs(speed - 1.0) > 1e-6:
+        post.append(f"setpts=PTS/{speed:.6f}")
+    if fade_in > 0:
+        post.append(f"fade=t=in:st=0:d={fade_in:.3f}")
+    if fade_out > 0 and duration > 0:
+        post.append(f"fade=t=out:st={max(0.0, duration - fade_out):.3f}:d={fade_out:.3f}")
+    if post:
+        graph.append(f"{cur}{','.join(post)}[vout]")
         cur = "[vout]"
 
     video_label = cur
@@ -347,6 +389,19 @@ def build_export_command(
             list(zip(audio_input_idx, audio_items)), normalize=normalize_audio,
         )
     graph += audio_chains
+
+    # Audio post-effects mirror the video: atempo for speed, then afade in/out.
+    apost: List[str] = []
+    if abs(speed - 1.0) > 1e-6:
+        apost += _atempo_chain(speed)
+    if fade_in > 0:
+        apost.append(f"afade=t=in:st=0:d={fade_in:.3f}")
+    if fade_out > 0 and duration > 0:
+        apost.append(f"afade=t=out:st={max(0.0, duration - fade_out):.3f}:d={fade_out:.3f}")
+    if apost:
+        a_in = audio_out if audio_out else "[0:a]"
+        graph.append(f"{a_in}{','.join(apost)}[aout]")
+        audio_out = "[aout]"
 
     # ---- assemble ---------------------------------------------------------
     cmd += ["-filter_complex", ";".join(graph)]

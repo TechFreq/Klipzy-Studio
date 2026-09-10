@@ -88,6 +88,9 @@ def _norm_video_clip(item: Any, idx: int) -> Dict[str, Any]:
         },
         "filters": filters,
         "speed": max(0.1, _num(item.get("speed"), 1.0) or 1.0),
+        # Fade to/from black at the clip's start/end (seconds). 0 = no fade.
+        "fadeIn": max(0.0, _num(item.get("fadeIn"), 0.0)),
+        "fadeOut": max(0.0, _num(item.get("fadeOut"), 0.0)),
     }
 
 

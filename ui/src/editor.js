@@ -58,6 +58,9 @@
       trimIn: parseFloat($('editor-trim-in').value) || 0,
       trimOut: parseFloat($('editor-trim-out').value) || duration,
       zoom: parseFloat($('editor-zoom').value) || 1,
+      speed: parseFloat($('editor-speed').value) || 1,
+      fadeIn: parseFloat($('editor-fade-in').value) || 0,
+      fadeOut: parseFloat($('editor-fade-out').value) || 0,
       filter: selectedFilter(),
       music: {
         enabled: $('editor-music-enabled').checked,
@@ -474,6 +477,19 @@
 
     $('editor-zoom').addEventListener('input', applyZoomPreview);
 
+    // Motion: speed previews live via playbackRate; fades apply on export.
+    $('editor-speed').addEventListener('input', function () {
+      var sp = parseFloat(this.value) || 1;
+      $('editor-speed-label').textContent = sp.toFixed(2) + '×';
+      if (vid) { try { vid.playbackRate = sp; } catch (_) { /* clamp by engine */ } }
+    });
+    $('editor-fade-in').addEventListener('input', function () {
+      $('editor-fade-in-label').textContent = (parseFloat(this.value) || 0).toFixed(1) + 's';
+    });
+    $('editor-fade-out').addEventListener('input', function () {
+      $('editor-fade-out-label').textContent = (parseFloat(this.value) || 0).toFixed(1) + 's';
+    });
+
     var trimIn = $('editor-trim-in'), trimOut = $('editor-trim-out');
     trimIn.addEventListener('input', function () {
       if (parseFloat(trimIn.value) >= parseFloat(trimOut.value)) trimIn.value = String(Math.max(0, parseFloat(trimOut.value) - 0.1));
@@ -584,6 +600,13 @@
     $('editor-zoom').value = '1';
     applyZoomPreview();
     applyFilterPreview();
+    $('editor-speed').value = '1';
+    $('editor-speed-label').textContent = '1.00×';
+    try { $('editor-video').playbackRate = 1; } catch (_) { /* ignore */ }
+    $('editor-fade-in').value = '0';
+    $('editor-fade-in-label').textContent = '0.0s';
+    $('editor-fade-out').value = '0';
+    $('editor-fade-out-label').textContent = '0.0s';
     $('editor-music-enabled').checked = false;
     $('editor-music-path').value = '';
     $('editor-music-volume').value = '0.12';

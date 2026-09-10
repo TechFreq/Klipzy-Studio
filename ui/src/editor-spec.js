@@ -56,6 +56,9 @@
           zoom: zoom,
         },
         filters: filter,
+        speed: Math.max(0.1, _num(state.speed, 1.0)),
+        fadeIn: Math.max(0, _num(state.fadeIn, 0)),
+        fadeOut: Math.max(0, _num(state.fadeOut, 0)),
       }],
     }];
 

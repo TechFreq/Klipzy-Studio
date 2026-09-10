@@ -783,6 +783,25 @@
                   </label>
                 </div>
 
+                <div class="editor-group" data-tip="Speed the clip up or slow it down; fade to/from black at the ends.">
+                  <span class="editor-group-label">🎬 Motion</span>
+                  <label class="editor-field">
+                    <span>Speed (previews live)</span>
+                    <input type="range" id="editor-speed" min="0.5" max="2" step="0.05" value="1" />
+                    <output id="editor-speed-label">1.00×</output>
+                  </label>
+                  <label class="editor-field">
+                    <span>Fade in (s)</span>
+                    <input type="range" id="editor-fade-in" min="0" max="3" step="0.1" value="0" />
+                    <output id="editor-fade-in-label">0.0s</output>
+                  </label>
+                  <label class="editor-field">
+                    <span>Fade out (s)</span>
+                    <input type="range" id="editor-fade-out" min="0" max="3" step="0.1" value="0" />
+                    <output id="editor-fade-out-label">0.0s</output>
+                  </label>
+                </div>
+
                 <div class="editor-group" data-tip="Drop in a music bed. It automatically ducks under speech.">
                   <span class="editor-group-label">🎵 Music</span>
                   <label class="editor-check">
