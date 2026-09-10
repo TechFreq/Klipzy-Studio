@@ -118,13 +118,14 @@ function updateHookPreview() {
 
   const stage = el.parentElement;
   const ratio = document.getElementById('clip-aspect-ratio')?.value || '9:16';
-  const canvasWidth = ratio === '16:9' ? 1920 : 1080;
+  const M = KlipzyCaptionPreviewMath;
+  const canvasWidth = M.canvasWidthForRatio(ratio);
   const stageStyle = stage ? getComputedStyle(stage) : null;
   const padX = stageStyle
     ? (parseFloat(stageStyle.paddingLeft) || 0) + (parseFloat(stageStyle.paddingRight) || 0)
     : 28;
-  const previewWidth = (stage && stage.clientWidth > 0 ? stage.clientWidth : 540) - padX;
-  const scale = previewWidth / canvasWidth;
+  const previewWidth = M.usableWidth(stage ? stage.clientWidth : 0, padX, 540);
+  const scale = M.scaleFor(previewWidth, canvasWidth);
   // Keep the hook overlay bounded so a long title used as a hook can't flood
   // the top of the stage and reach the caption.
   const stageMinHeight = stageStyle ? (parseFloat(stageStyle.minHeight) || 132) : 132;
@@ -132,7 +133,7 @@ function updateHookPreview() {
 
   el.style.color = primary;
   el.style.fontFamily = font;
-  el.style.fontSize = `${Math.max(10, Math.round(Math.min(hookSize * scale, maxHookFont)))}px`;
+  el.style.fontSize = `${M.boundedPx(hookSize, scale, maxHookFont, 10)}px`;
   el.style.fontWeight = document.getElementById('caption-bold')?.checked ? '900' : '800';
   const w = parseInt(document.getElementById('caption-outline-width')?.value || '3', 10);
   const o = stroke || '#000000';
@@ -165,15 +166,16 @@ function applyCaptionPreviewStyle() {
   preview.style.fontFamily = font;
   const previewStage = preview.parentElement;
   const ratio = document.getElementById('clip-aspect-ratio')?.value || '9:16';
-  const canvasWidth = ratio === '16:9' ? 1920 : 1080;
+  const M = KlipzyCaptionPreviewMath;
+  const canvasWidth = M.canvasWidthForRatio(ratio);
   // Map the caption to the stage's *usable* width (minus horizontal padding) so
   // it lands in the same 1080/1920-px coordinate space the exporter uses.
   const stageStyle = previewStage ? getComputedStyle(previewStage) : null;
   const padX = stageStyle
     ? (parseFloat(stageStyle.paddingLeft) || 0) + (parseFloat(stageStyle.paddingRight) || 0)
     : 28;
-  const previewWidth = (previewStage?.clientWidth > 0 ? previewStage.clientWidth : 540) - padX;
-  const previewScale = previewWidth / canvasWidth;
+  const previewWidth = M.usableWidth(previewStage ? previewStage.clientWidth : 0, padX, 540);
+  const previewScale = M.scaleFor(previewWidth, canvasWidth);
   // The stage is a short landscape box, so a purely width-based scale can look
   // oversized. Clamp to a fraction of the stage's *fixed* min-height (not its
   // live height, which would grow as text wraps and defeat the clamp) so the
@@ -183,8 +185,7 @@ function applyCaptionPreviewStyle() {
     ? (parseFloat(stageStyle.paddingTop) || 0) + (parseFloat(stageStyle.paddingBottom) || 0)
     : 28;
   const maxPreviewFont = Math.max(14, (stageMinHeight - padY) / 1.5);
-  const scaledFont = Math.min(captionFontSize() * previewScale, maxPreviewFont);
-  preview.style.fontSize = `${Math.max(1, Math.round(scaledFont))}px`;
+  preview.style.fontSize = `${M.boundedPx(captionFontSize(), previewScale, maxPreviewFont, 1)}px`;
   preview.style.fontWeight = isBold ? '900' : 'normal';
   preview.style.fontStyle = isItalic ? 'italic' : 'normal';
   preview.style.textTransform = isUppercase ? 'uppercase' : 'none';
@@ -253,13 +254,15 @@ function applyPortraitCaptionPreviewStyle() {
     screenEl.classList.add(alignClass, verticalClass);
   }
 
-  // Calculate proportional font size matching 1080x1920 video canvas
+  // Calculate proportional font size matching the export canvas (1080-wide for
+  // vertical/square, 1920 for 16:9).
   const containerWidth = (screenEl && screenEl.clientWidth > 0) ? screenEl.clientWidth : 200;
   const rawSize = captionFontSize();
   const ratio = document.getElementById('clip-aspect-ratio')?.value || '9:16';
-  const canvasWidth = ratio === '16:9' ? 1920 : (ratio === '1:1' ? 1080 : (ratio === '4:5' ? 1080 : 1080));
-  const scaledFontSize = Math.max(1, Math.round(rawSize * (containerWidth / canvasWidth)));
-  const scaledOutline = Math.max(0, Math.round(outlineWidth * (containerWidth / canvasWidth)));
+  const M = KlipzyCaptionPreviewMath;
+  const portraitScale = M.scaleFor(containerWidth, M.canvasWidthForRatio(ratio));
+  const scaledFontSize = M.scaledPx(rawSize, portraitScale, 1);
+  const scaledOutline = M.scaledPx(outlineWidth, portraitScale, 0);
 
   preview.style.color = textColor;
   preview.style.fontFamily = font;
