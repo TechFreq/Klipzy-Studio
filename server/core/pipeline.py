@@ -208,11 +208,16 @@ class VideoClipperEngine:
         if segments is None:
             report("Extracting audio...", 12)
             extract_audio(video_path, temp_audio)
-            # Re-create the transcriber when the requested model differs so a
-            # per-job model switch in the UI actually takes effect.
+            # Keep self.transcriber in sync for backend reporting / GPU cleanup,
+            # even though the transcription itself runs via transcribe_cancellable.
             if self.transcriber.model_size != effective_model:
                 self.transcriber = Transcriber(model_size=effective_model)
-            segments = self.transcriber.transcribe(temp_audio, language=language)
+            # Run transcription in a killable child process so a job cancel can
+            # actually interrupt Whisper (it used to run in-process and ignore
+            # the cancel until it finished). Falls back to in-process when a
+            # subprocess isn't viable (packaged app, launch error).
+            from server.core.transcribe_runner import transcribe_cancellable
+            segments = transcribe_cancellable(temp_audio, effective_model, language)
             self._save_cache(video_path, effective_model, segments)
 
         # Optional speaker diarization ("who spoke when"), shared by both the
