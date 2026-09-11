@@ -83,6 +83,11 @@ if auth_disabled():
         "Any website open in a browser can reach it. Unset it for normal use."
     )
 
+# Built-in clip editor endpoints (/editor/*) live in their own module to keep
+# this file manageable. Mounted here; behaviour is identical to before the split.
+from server.api import editor as _editor_api  # noqa: E402
+app.include_router(_editor_api.router)
+
 # In-memory job store. To avoid unbounded growth over a long session (each
 # /process stores full clip metadata + words), keep only the most recent jobs
 # and drop the oldest completed/failed ones.

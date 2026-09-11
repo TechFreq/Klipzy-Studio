@@ -1984,3 +1984,144 @@ body {
 }
 .music-picker-row .music-duck-toggle { margin: 0; }
 #batch-process-btn { margin-top: 10px; }
+
+
+/* ------------------------------------------------------------------ */
+/* Built-in clip editor (Phase 1)                                     */
+/* ------------------------------------------------------------------ */
+.editor-modal-content { max-width: 1040px; width: 94vw; }
+.editor-header-actions { display: flex; align-items: center; gap: 10px; }
+
+.editor-layout {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 20px;
+}
+@media (max-width: 820px) { .editor-layout { grid-template-columns: 1fr; } }
+
+.editor-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.editor-stage video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transform-origin: center center;
+}
+.editor-crop-overlay {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  border: 2px dashed rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  border-radius: 4px;
+}
+
+.editor-transport { display: flex; align-items: center; gap: 12px; margin: 10px 0 4px; }
+.editor-time { color: var(--text-muted, #9aa); font-variant-numeric: tabular-nums; }
+
+.editor-timeline { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.editor-controls { display: flex; flex-direction: column; gap: 16px; }
+.editor-group {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px;
+}
+.editor-group-label { font-weight: 600; }
+.editor-field { display: flex; flex-direction: column; gap: 4px; }
+.editor-field > span { font-size: 0.85em; color: var(--text-muted, #9aa); }
+.editor-check { display: flex; align-items: center; gap: 8px; font-size: 0.9em; }
+
+.editor-ratio-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.ratio-chip {
+  padding: 6px 12px; border-radius: 999px; cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.18); background: transparent; color: inherit;
+}
+.ratio-chip.is-selected {
+  background: var(--accent, #6c5ce7); border-color: var(--accent, #6c5ce7); color: #fff;
+}
+
+.editor-export-row { display: flex; align-items: center; gap: 10px; }
+.editor-progress { display: flex; flex-direction: column; gap: 6px; }
+.btn-edit { border-color: var(--accent, #6c5ce7); }
+
+
+/* Phase 2 editor controls */
+.editor-overlay-layer { position: absolute; inset: 0; pointer-events: none; }
+.editor-ov-item {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  max-width: 60%;
+}
+.editor-ov-text {
+  font-family: 'Arial Black', Arial, sans-serif;
+  font-weight: 900;
+  text-align: center;
+  text-shadow: 2px 2px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000;
+  white-space: nowrap;
+}
+
+.editor-filter-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.filter-chip {
+  padding: 5px 11px; border-radius: 999px; cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.18); background: transparent; color: inherit;
+}
+.filter-chip.is-selected { background: var(--accent, #6c5ce7); border-color: var(--accent, #6c5ce7); color: #fff; }
+
+.editor-text-form { display: flex; flex-direction: column; gap: 8px; }
+.editor-text-form input[type="text"] { width: 100%; }
+.editor-text-row { display: flex; gap: 8px; align-items: center; }
+.editor-text-row select { flex: 1; }
+
+.editor-item-list { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 4px; }
+.editor-item {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 5px 8px; border: 1px solid rgba(255,255,255,0.08); border-radius: 6px;
+  font-size: 0.85em;
+}
+.editor-item > span { flex: 1 1 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-item-num { display: inline-flex; align-items: center; gap: 4px; font-size: 0.82em; color: var(--text-muted, #9aa); }
+.editor-item-num input { width: 58px; }
+.editor-ov-item { cursor: move; }
+
+
+/* ------------------------------------------------------------------ */
+/* Clip-card action menus (progressive disclosure)                    */
+/* ------------------------------------------------------------------ */
+.clip-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.clip-export-group { display: inline-flex; align-items: center; gap: 6px; }
+
+.clip-menu { position: relative; display: inline-block; }
+.clip-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+.clip-menu > summary::-webkit-details-marker { display: none; }
+.clip-menu > summary::marker { content: ''; }
+
+.clip-menu-items {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: var(--panel, #1b1b24);
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+}
+.clip-menu-right .clip-menu-items { left: auto; right: 0; }
+.clip-menu-items .btn { width: 100%; text-align: left; }
