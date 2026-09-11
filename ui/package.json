@@ -13,8 +13,8 @@
   "author": "TechFreq Developments",
   "license": "SEE LICENSE IN ../LICENSE.md",
   "devDependencies": {
-    "electron": "^28.0.0",
-    "electron-builder": "^24.13.3"
+    "electron": "^43.7.0",
+    "electron-builder": "^26.15.3"
   },
   "//allowScripts": "npm 12+ blocks dependency install scripts by default (a supply-chain hardening change). Electron's postinstall is what DOWNLOADS the actual Electron binary, so with it blocked `npm install` appears to succeed and then `npm start` dies with 'Electron failed to install correctly'. Approving electron by name (not version-pinned) keeps that working across upgrades. Older npm ignores this field and runs the script anyway, so it is safe on every version. Deliberately minimal: only electron, never `approve --all`.",
   "allowScripts": {
