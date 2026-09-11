@@ -1,15 +1,17 @@
 /*
- * Built-in clip editor (Phase 1) — the UI behind the "✂️ Edit" button on each
- * generated clip card. Opens a modal with a live <video> preview, reframe chips,
- * a trim timeline, a zoom slider and a music bed, then compiles an Edit Spec
- * (KlipzyEditorSpec) and renders it via the backend /editor/export endpoint.
+ * Built-in clip editor — timeline UI behind the "✂️ Edit" button on each clip.
+ *
+ * Layout: a live <video> preview on top, a slim controls rail beside it, and a
+ * horizontal TIMELINE at the bottom (ruler + playhead + Video / Text / Media /
+ * Audio lanes). Trim = dragging the video block's edges; item timing = dragging
+ * blocks along their lane; selecting a block opens a small inspector for its
+ * non-timing props. Everything compiles to the same Edit Spec (KlipzyEditorSpec)
+ * and renders via /editor/export, so preview stays WYSIWYG.
  *
  * Classic script sharing renderer.js's globals (loaded AFTER it): reuses
- * serverUrl, fileUrl, showToast/showError/showAlert, revealInFolder,
- * generatedClips and window.clipperAPI.* — no duplication of that plumbing.
- *
- * Preview is fully browser-side (HTML5 video + a CSS crop-guide overlay + a CSS
- * zoom transform), so scrubbing/looking stays fluid; ffmpeg only runs on Export.
+ * serverUrl, fileUrl, showToast/showError/showAlert, generatedClips and
+ * window.clipperAPI.* — no plumbing duplicated. Preview is browser-side so
+ * scrubbing stays fluid; ffmpeg only runs on Export.
  */
 (function () {
   'use strict';
@@ -19,12 +21,14 @@
   var editorJobId = null;
   var TIP_SEEN_KEY = 'klipzy.editor.tipSeen';
 
-  // Phase 2 in-memory item lists for the open clip (reset on openEditor).
+  // Edit state for the open clip (reset on openEditor).
   var editorTexts = [];      // { text, x, y, color, size, start, end }
   var editorStickers = [];   // { path, name, x, y, scale, start, end }
   var editorSfx = [];        // { path, name, start, gain }
+  var trimIn = 0;
+  var trimOut = 0;
+  var selected = null;       // { kind, index } | { kind:'video'|'music' }
 
-  // Approximate CSS equivalents of the ffmpeg colour presets, for live preview.
   var FILTER_CSS = {
     none: '',
     warm: 'saturate(1.15) sepia(0.15)',
@@ -33,6 +37,7 @@
     bw: 'grayscale(1)',
     film: 'sepia(0.35) contrast(1.05) saturate(0.9)',
   };
+  var SFX_DISPLAY_DUR = 0.8;   // one-shot SFX have no length; show a short block
 
   function $(id) { return document.getElementById(id); }
 
@@ -43,20 +48,23 @@
 
   function clipDuration() {
     var vid = $('editor-video');
-    if (vid && isFinite(vid.duration)) return vid.duration;
+    if (vid && isFinite(vid.duration) && vid.duration > 0) return vid.duration;
     return editorClip ? Number(editorClip.duration) || 0 : 0;
   }
 
+  function selectedRatio() {
+    var chip = document.querySelector('#editor-ratio-chips .ratio-chip.is-selected');
+    return chip ? chip.dataset.ratio : 'full';
+  }
+
   function editorState() {
-    var vid = $('editor-video');
-    var duration = vid && isFinite(vid.duration) ? vid.duration : (editorClip ? Number(editorClip.duration) || 0 : 0);
-    var selChip = document.querySelector('#editor-ratio-chips .ratio-chip.is-selected');
+    var duration = clipDuration();
     return {
       source: editorClip ? editorClip.output_file : null,
       duration: duration,
-      ratio: selChip ? selChip.dataset.ratio : 'full',
-      trimIn: parseFloat($('editor-trim-in').value) || 0,
-      trimOut: parseFloat($('editor-trim-out').value) || duration,
+      ratio: selectedRatio(),
+      trimIn: trimIn,
+      trimOut: trimOut || duration,
       zoom: parseFloat($('editor-zoom').value) || 1,
       speed: parseFloat($('editor-speed').value) || 1,
       fadeIn: parseFloat($('editor-fade-in').value) || 0,
@@ -74,13 +82,12 @@
     };
   }
 
+  // ---- preview overlays (unchanged behaviour) ----------------------------
   function applyFilterPreview() {
     var vid = $('editor-video');
     if (vid) vid.style.filter = FILTER_CSS[selectedFilter()] || '';
   }
 
-  // Displayed video width inside the letterboxed stage — shared by the crop
-  // overlay and the text/sticker preview so everything lines up.
   function displayedVideoRect() {
     var vid = $('editor-video');
     if (!vid || !vid.videoWidth) return null;
@@ -94,14 +101,13 @@
 
   var _CANVAS_W = { '9:16': 1080, '4:5': 1080, '1:1': 1080, '16:9': 1920, full: 1080 };
 
-  // Rebuild the live text/sticker preview layer from the item arrays.
   function renderPreviewOverlays() {
     var layer = $('editor-overlay-layer');
     if (!layer) return;
     layer.innerHTML = '';
     var rect = displayedVideoRect();
     if (!rect) return;
-    var canvasW = _CANVAS_W[editorState().ratio] || 1080;
+    var canvasW = _CANVAS_W[selectedRatio()] || 1080;
     var scale = rect.w / canvasW;
 
     editorStickers.forEach(function (s, i) {
@@ -133,14 +139,13 @@
     syncOverlayVisibility();
   }
 
-  // Drag an overlay item to reposition it; writes back normalized x/y (0..1)
-  // to the underlying item so the export lands where the preview shows it.
   function makeDraggable(el, kind, index) {
     el.style.pointerEvents = 'auto';
     el.style.cursor = 'move';
     el.title = 'Drag to reposition';
     el.addEventListener('pointerdown', function (e) {
       e.preventDefault();
+      selectItem(kind, index);
       var rect = displayedVideoRect();
       var layer = $('editor-overlay-layer');
       if (!rect || !layer) return;
@@ -165,7 +170,6 @@
     });
   }
 
-  // Show/hide preview overlays based on the playhead so timing reads true.
   function syncOverlayVisibility() {
     var vid = $('editor-video');
     var t = vid ? vid.currentTime : 0;
@@ -177,103 +181,6 @@
     });
   }
 
-  // A compact labelled number input that writes back to item[key] on change.
-  function numField(label, item, key, opts) {
-    opts = opts || {};
-    var wrap = document.createElement('label');
-    wrap.className = 'editor-item-num';
-    wrap.textContent = label;
-    var inp = document.createElement('input');
-    inp.type = 'number';
-    inp.step = opts.step || '0.1';
-    if (opts.min !== undefined) inp.min = String(opts.min);
-    if (opts.max !== undefined) inp.max = String(opts.max);
-    inp.value = String(item[key]);
-    inp.addEventListener('change', function () {
-      var v = parseFloat(inp.value);
-      if (isFinite(v)) { item[key] = v; if (opts.onChange) opts.onChange(); }
-    });
-    // Don't let clicks/drover bubble to the video card handlers.
-    inp.addEventListener('click', function (e) { e.stopPropagation(); });
-    wrap.appendChild(inp);
-    return wrap;
-  }
-
-  function removeBtn(arr, i) {
-    var rm = document.createElement('button');
-    rm.className = 'btn btn-small btn-danger';
-    rm.textContent = '✕';
-    rm.title = 'Remove';
-    rm.addEventListener('click', function () {
-      arr.splice(i, 1);
-      renderItemLists();
-      renderPreviewOverlays();
-    });
-    return rm;
-  }
-
-  function renderItemLists() {
-    var dur = clipDuration();
-    var reflow = function () { renderPreviewOverlays(); };
-
-    // Text: label + start/end + size.
-    var tl = $('editor-text-list');
-    if (tl) {
-      tl.innerHTML = '';
-      editorTexts.forEach(function (t, i) {
-        var li = document.createElement('li');
-        li.className = 'editor-item';
-        var name = document.createElement('span');
-        name.textContent = '🅣 ' + t.text.slice(0, 18);
-        li.appendChild(name);
-        li.appendChild(numField('start', t, 'start', { min: 0, max: dur, onChange: reflow }));
-        li.appendChild(numField('end', t, 'end', { min: 0, max: dur, onChange: reflow }));
-        li.appendChild(numField('size', t, 'size', { step: '4', min: 8, onChange: reflow }));
-        li.appendChild(removeBtn(editorTexts, i));
-        tl.appendChild(li);
-      });
-    }
-
-    // Stickers: name + start/end + scale.
-    var sl = $('editor-sticker-list');
-    if (sl) {
-      sl.innerHTML = '';
-      editorStickers.forEach(function (s, i) {
-        var li = document.createElement('li');
-        li.className = 'editor-item';
-        var name = document.createElement('span');
-        name.textContent = '🖼️ ' + s.name;
-        li.appendChild(name);
-        li.appendChild(numField('start', s, 'start', { min: 0, max: dur, onChange: reflow }));
-        li.appendChild(numField('end', s, 'end', { min: 0, max: dur, onChange: reflow }));
-        li.appendChild(numField('size', s, 'scale', { step: '0.05', min: 0.02, max: 4, onChange: reflow }));
-        li.appendChild(removeBtn(editorStickers, i));
-        sl.appendChild(li);
-      });
-    }
-
-    // SFX: name + start + volume.
-    var fl = $('editor-sfx-list');
-    if (fl) {
-      fl.innerHTML = '';
-      editorSfx.forEach(function (s, i) {
-        var li = document.createElement('li');
-        li.className = 'editor-item';
-        var name = document.createElement('span');
-        name.textContent = '🔊 ' + s.name;
-        li.appendChild(name);
-        li.appendChild(numField('at', s, 'start', { min: 0, max: dur }));
-        li.appendChild(numField('vol', s, 'gain', { step: '0.05', min: 0, max: 4 }));
-        li.appendChild(removeBtn(editorSfx, i));
-        fl.appendChild(li);
-      });
-    }
-  }
-
-  function baseName(p) {
-    return String(p || '').split(/[\\/]/).pop() || p;
-  }
-
   function fmtClock(s) {
     if (!isFinite(s) || s < 0) s = 0;
     var m = Math.floor(s / 60);
@@ -281,39 +188,264 @@
     return m + ':' + String(sec).padStart(2, '0');
   }
 
-  function updateTrimLabel() {
-    var i = parseFloat($('editor-trim-in').value) || 0;
-    var o = parseFloat($('editor-trim-out').value) || 0;
-    $('editor-trim-label').textContent = 'Clip: ' + fmtClock(i) + ' → ' + fmtClock(o) + '  (' + (Math.max(0, o - i)).toFixed(1) + 's)';
+  // ---- TIMELINE ----------------------------------------------------------
+  function makeBlock(kind, index, startT, endT, label, extraClass) {
+    var dur = clipDuration() || 1;
+    var block = document.createElement('div');
+    block.className = 'tl-block ' + (extraClass || '');
+    block.style.left = (startT / dur * 100) + '%';
+    block.style.width = (Math.max(0.001, endT - startT) / dur * 100) + '%';
+    if (selected && selected.kind === kind && selected.index === index) block.classList.add('is-selected');
+    var lbl = document.createElement('span');
+    lbl.className = 'tl-block-label';
+    lbl.textContent = label;
+    block.appendChild(lbl);
+    return block;
   }
 
-  // Draw a centered crop-guide box over the video matching the target aspect.
-  // Purely a visual guide; the real crop happens on export.
-  function updateCropOverlay() {
-    var overlay = $('editor-crop-overlay');
-    var vid = $('editor-video');
-    if (!overlay || !vid) return;
-    var state = editorState();
-    var aspect = KlipzyEditorSpec.overlayAspect(state.ratio);
-    if (!aspect || !vid.videoWidth || !vid.videoHeight) {
-      overlay.classList.add('hidden');
-      return;
+  function addHandles(block) {
+    var l = document.createElement('span'); l.className = 'tl-handle tl-handle-l';
+    var r = document.createElement('span'); r.className = 'tl-handle tl-handle-r';
+    block.appendChild(l); block.appendChild(r);
+    return { l: l, r: r };
+  }
+
+  function laneWidthPx(lane) {
+    return lane.getBoundingClientRect().width || 1;
+  }
+
+  // Generic drag: mode 'move' | 'start' | 'end'. get/set operate on the item.
+  function wireDrag(handleEl, lane, mode, getSE, setSE, onChange) {
+    handleEl.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var dur = clipDuration() || 1;
+      var wpx = laneWidthPx(lane);
+      var startX = e.clientX;
+      var orig = getSE();
+      try { handleEl.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+      function onMove(ev) {
+        var dt = (ev.clientX - startX) / wpx * dur;
+        var s = orig.start, en = orig.end;
+        if (mode === 'move') { s = orig.start + dt; en = orig.end + dt; var len = orig.end - orig.start;
+          s = Math.max(0, Math.min(s, dur - len)); en = s + len; }
+        else if (mode === 'start') { s = Math.max(0, Math.min(orig.start + dt, orig.end - 0.2)); }
+        else { en = Math.min(dur, Math.max(orig.end + dt, orig.start + 0.2)); }
+        setSE(s, en);
+        onChange();
+      }
+      function onUp() {
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+      }
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+    });
+  }
+
+  function renderTimeline() {
+    var dur = clipDuration();
+    var ruler = $('editor-tl-ruler');
+    if (ruler) {
+      ruler.innerHTML = '';
+      var ticks = 4;
+      for (var k = 0; k <= ticks; k++) {
+        var tick = document.createElement('span');
+        tick.className = 'tl-tick';
+        tick.style.left = (k / ticks * 100) + '%';
+        tick.textContent = fmtClock(dur * k / ticks);
+        ruler.appendChild(tick);
+      }
     }
-    // The video is letterboxed inside its box (object-fit: contain); compute the
-    // displayed video rect, then a centered target-aspect box inside it.
-    var boxW = vid.clientWidth, boxH = vid.clientHeight;
-    var vidAspect = vid.videoWidth / vid.videoHeight;
-    var dispW, dispH;
-    if (vidAspect > boxW / boxH) { dispW = boxW; dispH = boxW / vidAspect; }
-    else { dispH = boxH; dispW = boxH * vidAspect; }
 
-    var cropW, cropH;
-    if (aspect > dispW / dispH) { cropW = dispW; cropH = dispW / aspect; }
-    else { cropH = dispH; cropW = dispH * aspect; }
+    // Video lane: one block for the kept (trimmed) region, with edge handles.
+    var lv = $('lane-video');
+    if (lv) {
+      lv.innerHTML = '';
+      var vb = makeBlock('video', -1, trimIn, trimOut || dur, '🎬 ' + fmtClock(Math.max(0, (trimOut || dur) - trimIn)), 'tl-video');
+      var vh = addHandles(vb);
+      vb.addEventListener('pointerdown', function () { selectItem('video'); });
+      wireDrag(vh.l, lv, 'start',
+        function () { return { start: trimIn, end: trimOut || dur }; },
+        function (s) { trimIn = s; seekTo(trimIn); }, function () { renderTimeline(); });
+      wireDrag(vh.r, lv, 'end',
+        function () { return { start: trimIn, end: trimOut || dur }; },
+        function (_s, e) { trimOut = e; seekTo(trimOut); }, function () { renderTimeline(); });
+      lv.appendChild(vb);
+    }
 
-    overlay.classList.remove('hidden');
-    overlay.style.width = Math.round(cropW) + 'px';
-    overlay.style.height = Math.round(cropH) + 'px';
+    // Text lane.
+    var lt = $('lane-text');
+    if (lt) {
+      lt.innerHTML = '';
+      editorTexts.forEach(function (t, i) {
+        var b = makeBlock('text', i, t.start, t.end, '🅣 ' + t.text.slice(0, 14), 'tl-text');
+        var h = addHandles(b);
+        b.addEventListener('pointerdown', function () { selectItem('text', i); });
+        wireDrag(b, lt, 'move', function () { return { start: t.start, end: t.end }; },
+          function (s, e) { t.start = s; t.end = e; }, refreshTimingLive);
+        wireDrag(h.l, lt, 'start', function () { return { start: t.start, end: t.end }; },
+          function (s) { t.start = s; }, refreshTimingLive);
+        wireDrag(h.r, lt, 'end', function () { return { start: t.start, end: t.end }; },
+          function (_s, e) { t.end = e; }, refreshTimingLive);
+        lt.appendChild(b);
+      });
+    }
+
+    // Graphics (sticker) lane.
+    var lg = $('lane-graphics');
+    if (lg) {
+      lg.innerHTML = '';
+      editorStickers.forEach(function (s, i) {
+        var b = makeBlock('sticker', i, s.start, s.end, '🖼 ' + s.name, 'tl-graphics');
+        var h = addHandles(b);
+        b.addEventListener('pointerdown', function () { selectItem('sticker', i); });
+        wireDrag(b, lg, 'move', function () { return { start: s.start, end: s.end }; },
+          function (ns, ne) { s.start = ns; s.end = ne; }, refreshTimingLive);
+        wireDrag(h.l, lg, 'start', function () { return { start: s.start, end: s.end }; },
+          function (ns) { s.start = ns; }, refreshTimingLive);
+        wireDrag(h.r, lg, 'end', function () { return { start: s.start, end: s.end }; },
+          function (_ns, ne) { s.end = ne; }, refreshTimingLive);
+        lg.appendChild(b);
+      });
+    }
+
+    // Audio lane: full-width music bed (if enabled) + one-shot SFX markers.
+    var la = $('lane-audio');
+    if (la) {
+      la.innerHTML = '';
+      if ($('editor-music-enabled').checked && $('editor-music-path').value) {
+        var mb = makeBlock('music', -1, 0, dur, '🎵 music', 'tl-music');
+        mb.addEventListener('pointerdown', function () { selectItem('music'); });
+        la.appendChild(mb);
+      }
+      editorSfx.forEach(function (sfx, i) {
+        var end = Math.min(dur, sfx.start + SFX_DISPLAY_DUR);
+        var b = makeBlock('sfx', i, sfx.start, end, '🔊', 'tl-sfx');
+        b.addEventListener('pointerdown', function () { selectItem('sfx', i); });
+        wireDrag(b, la, 'move', function () { return { start: sfx.start, end: sfx.start + SFX_DISPLAY_DUR }; },
+          function (ns) { sfx.start = ns; }, refreshTimingLive);
+        la.appendChild(b);
+      });
+    }
+    updatePlayhead();
+  }
+
+  // During a block drag, keep the timeline + preview in sync without a full
+  // re-render (which would drop the pointer capture on the dragged element).
+  function refreshTimingLive() {
+    document.querySelectorAll('#editor-overlay-layer .editor-ov-item').forEach(function () {});
+    // Update block geometry live.
+    var dur = clipDuration() || 1;
+    var apply = function (laneId, arr) {
+      var lane = $(laneId); if (!lane) return;
+      var blocks = lane.querySelectorAll('.tl-block');
+      arr.forEach(function (it, i) {
+        var b = blocks[i]; if (!b) return;
+        var en = (it.end != null) ? it.end : (it.start + SFX_DISPLAY_DUR);
+        b.style.left = (it.start / dur * 100) + '%';
+        b.style.width = (Math.max(0.001, en - it.start) / dur * 100) + '%';
+      });
+    };
+    apply('lane-text', editorTexts);
+    apply('lane-graphics', editorStickers);
+    apply('lane-audio', editorSfx.length ? editorSfx : []);
+    syncOverlayVisibility();
+    // reflect timing edits in the preview overlays' dataset for show/hide
+    var layer = $('editor-overlay-layer');
+    if (layer) {
+      var texts = layer.querySelectorAll('.editor-ov-text');
+      // simplest: rebuild overlays so dataset start/end are fresh
+    }
+    renderPreviewOverlays();
+  }
+
+  function updatePlayhead() {
+    var ph = $('editor-tl-playhead');
+    var vid = $('editor-video');
+    var dur = clipDuration();
+    if (!ph || !vid || !dur) return;
+    ph.style.left = (Math.min(vid.currentTime, dur) / dur * 100) + '%';
+  }
+
+  function seekTo(t) {
+    var vid = $('editor-video');
+    if (vid && isFinite(t)) vid.currentTime = Math.max(0, t);
+  }
+
+  // ---- selection inspector ----------------------------------------------
+  function selectItem(kind, index) {
+    selected = (index === undefined) ? { kind: kind } : { kind: kind, index: index };
+    renderTimeline();
+    renderInspector();
+  }
+
+  function inspectorRow(labelText, inputEl) {
+    var row = document.createElement('label');
+    row.className = 'editor-field';
+    var sp = document.createElement('span'); sp.textContent = labelText;
+    row.appendChild(sp); row.appendChild(inputEl);
+    return row;
+  }
+
+  function renderInspector() {
+    var box = $('editor-inspector');
+    if (!box) return;
+    box.innerHTML = '';
+    if (!selected) { box.classList.add('hidden'); return; }
+    box.classList.remove('hidden');
+
+    var title = document.createElement('div');
+    title.className = 'editor-group-label';
+    box.appendChild(title);
+
+    var mkRange = function (min, max, step, val, oninput) {
+      var r = document.createElement('input'); r.type = 'range';
+      r.min = min; r.max = max; r.step = step; r.value = val;
+      r.addEventListener('input', function () { oninput(parseFloat(r.value)); });
+      return r;
+    };
+    var removeBtn = function (fn) {
+      var b = document.createElement('button');
+      b.className = 'btn btn-small btn-danger'; b.textContent = '🗑 Remove';
+      b.addEventListener('click', fn);
+      return b;
+    };
+
+    if (selected.kind === 'text') {
+      var t = editorTexts[selected.index]; if (!t) { selected = null; return renderInspector(); }
+      title.textContent = '🅣 Text';
+      var txt = document.createElement('input'); txt.type = 'text'; txt.value = t.text; txt.maxLength = 120;
+      txt.addEventListener('input', function () { t.text = txt.value; renderPreviewOverlays(); renderTimeline(); });
+      box.appendChild(inspectorRow('Text', txt));
+      var col = document.createElement('input'); col.type = 'color'; col.value = t.color || '#ffffff';
+      col.addEventListener('input', function () { t.color = col.value; renderPreviewOverlays(); });
+      box.appendChild(inspectorRow('Colour', col));
+      box.appendChild(inspectorRow('Size', mkRange(24, 200, 2, t.size || 96, function (v) { t.size = v; renderPreviewOverlays(); })));
+      box.appendChild(removeBtn(function () { editorTexts.splice(selected.index, 1); selected = null; renderTimeline(); renderPreviewOverlays(); renderInspector(); }));
+    } else if (selected.kind === 'sticker') {
+      var s = editorStickers[selected.index]; if (!s) { selected = null; return renderInspector(); }
+      title.textContent = '🖼 ' + s.name;
+      box.appendChild(inspectorRow('Size', mkRange(0.05, 1.5, 0.01, s.scale || 0.25, function (v) { s.scale = v; renderPreviewOverlays(); })));
+      box.appendChild(removeBtn(function () { editorStickers.splice(selected.index, 1); selected = null; renderTimeline(); renderPreviewOverlays(); renderInspector(); }));
+    } else if (selected.kind === 'sfx') {
+      var fx = editorSfx[selected.index]; if (!fx) { selected = null; return renderInspector(); }
+      title.textContent = '🔊 ' + fx.name;
+      box.appendChild(inspectorRow('Volume', mkRange(0, 2, 0.05, fx.gain || 0.8, function (v) { fx.gain = v; })));
+      box.appendChild(removeBtn(function () { editorSfx.splice(selected.index, 1); selected = null; renderTimeline(); renderInspector(); }));
+    } else if (selected.kind === 'music') {
+      title.textContent = '🎵 Music bed';
+      var vol = mkRange(0, 1, 0.01, parseFloat($('editor-music-volume').value) || 0.12, function (v) {
+        $('editor-music-volume').value = v; $('editor-music-volume-label').textContent = Math.round(v * 100) + '%';
+      });
+      box.appendChild(inspectorRow('Volume', vol));
+      box.appendChild(removeBtn(function () {
+        $('editor-music-enabled').checked = false; $('editor-music-path').value = '';
+        selected = null; renderTimeline(); renderInspector();
+      }));
+    } else { // video
+      title.textContent = '🎬 Clip — drag the ends on the timeline to trim';
+    }
   }
 
   function applyZoomPreview() {
@@ -323,6 +455,26 @@
     if (vid) vid.style.transform = z > 1 ? 'scale(' + z + ')' : '';
   }
 
+  function updateCropOverlay() {
+    var overlay = $('editor-crop-overlay');
+    var vid = $('editor-video');
+    if (!overlay || !vid) return;
+    var aspect = KlipzyEditorSpec.overlayAspect(selectedRatio());
+    if (!aspect || !vid.videoWidth || !vid.videoHeight) { overlay.classList.add('hidden'); return; }
+    var boxW = vid.clientWidth, boxH = vid.clientHeight;
+    var vidAspect = vid.videoWidth / vid.videoHeight;
+    var dispW, dispH;
+    if (vidAspect > boxW / boxH) { dispW = boxW; dispH = boxW / vidAspect; }
+    else { dispH = boxH; dispW = boxH * vidAspect; }
+    var cropW, cropH;
+    if (aspect > dispW / dispH) { cropW = dispW; cropH = dispW / aspect; }
+    else { cropH = dispH; cropW = dispH * aspect; }
+    overlay.classList.remove('hidden');
+    overlay.style.width = Math.round(cropW) + 'px';
+    overlay.style.height = Math.round(cropH) + 'px';
+  }
+
+  // ---- export ------------------------------------------------------------
   function setEditorProgress(pct, step, badge) {
     var p = $('editor-progress');
     if (p) p.classList.remove('hidden');
@@ -355,10 +507,7 @@
         var res = await fetch(serverUrl + '/editor/export/' + jobId);
         if (!res.ok) {
           misses++;
-          if (res.status === 404 || misses >= 5) {
-            stopEditorPolling();
-            showError('Lost track of the export job.');
-          }
+          if (res.status === 404 || misses >= 5) { stopEditorPolling(); showError('Lost track of the export job.'); }
           return;
         }
         misses = 0;
@@ -366,14 +515,9 @@
         setEditorProgress(data.percent, data.step, data.state === 'rendering' ? 'Rendering' : data.state);
         if (data.done) {
           stopEditorPolling();
-          if (data.state === 'completed') {
-            playSuccessSound();
-            showAlert('✅ Edited clip exported!', 'Export complete', data.output || null);
-          } else if (data.state === 'cancelled') {
-            showToast('Export cancelled.', 'info');
-          } else {
-            showError(data.error || 'Export failed.');
-          }
+          if (data.state === 'completed') { playSuccessSound(); showAlert('✅ Edited clip exported!', 'Export complete', data.output || null); }
+          else if (data.state === 'cancelled') { showToast('Export cancelled.', 'info'); }
+          else { showError(data.error || 'Export failed.'); }
         }
       } catch (e) {
         misses++;
@@ -391,17 +535,13 @@
     setEditorProgress(0, 'Starting…', 'Rendering');
     try {
       var res = await fetch(serverUrl + '/editor/export', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ spec: spec }),
       });
       var data = await res.json().catch(function () { return {}; });
       if (!res.ok) throw new Error(data.detail || ('Server returned ' + res.status));
       pollEditorExport(data.job_id);
-    } catch (e) {
-      stopEditorPolling();
-      showError(e.message);
-    }
+    } catch (e) { stopEditorPolling(); showError(e.message); }
   }
 
   async function cancelExport() {
@@ -411,26 +551,23 @@
     try {
       await fetch(serverUrl + '/editor/export/' + editorJobId + '/cancel', { method: 'POST' });
       showToast('Cancellation requested.', 'info');
-    } catch (e) {
-      showToast('Failed to cancel: ' + e.message, 'error');
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '🛑 Cancel'; }
-    }
+    } catch (e) { showToast('Failed to cancel: ' + e.message, 'error'); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = '🛑 Cancel'; } }
   }
 
   function showTutorial() {
     showAlert(
       '1. Reframe — pick a ratio (or keep Original).\n' +
-      '2. Trim — drag the start/end handles.\n' +
-      '3. Zoom — add a gentle push-in if you like.\n' +
-      '4. Text / graphics — add them, then DRAG them on the preview to position; set start/end in the list.\n' +
-      '5. Music / SFX — add a track; music ducks under speech.\n' +
+      '2. Trim — drag the ends of the 🎬 Video block on the timeline.\n' +
+      '3. Add text / graphics / SFX — they appear as blocks; drag to move, drag edges to time them, drag on the preview to position.\n' +
+      '4. Click a block to tweak it (text, colour, size, volume) in the panel.\n' +
+      '5. Zoom / speed / fades — in the controls rail.\n' +
       '6. Export — renders on your GPU; nothing is uploaded.',
       '✂️ Editor — quick tour'
     );
   }
 
-  // Bind all controls once (idempotent via a dataset guard on the modal).
+  // ---- wiring ------------------------------------------------------------
   function bindEditorOnce() {
     var modal = $('editor-modal');
     if (!modal || modal.dataset.editorBound) return;
@@ -448,111 +585,95 @@
     vid.addEventListener('play', function () { $('editor-playpause').textContent = '⏸️'; });
     vid.addEventListener('pause', function () { $('editor-playpause').textContent = '▶️'; });
     vid.addEventListener('loadedmetadata', function () {
-      var dur = isFinite(vid.duration) ? vid.duration : (Number(editorClip && editorClip.duration) || 0);
-      ['editor-trim-in', 'editor-trim-out'].forEach(function (id) { $(id).max = String(dur.toFixed(1)); });
-      $('editor-trim-in').value = '0';
-      $('editor-trim-out').value = String(dur.toFixed(1));
-      updateTrimLabel();
+      var dur = clipDuration();
+      trimIn = 0; trimOut = dur;
       updateCropOverlay();
       renderPreviewOverlays();
+      renderTimeline();
       $('editor-time').textContent = fmtClock(0) + ' / ' + fmtClock(dur);
     });
     vid.addEventListener('timeupdate', function () {
-      var i = parseFloat($('editor-trim-in').value) || 0;
-      var o = parseFloat($('editor-trim-out').value) || vid.duration;
-      // Loop playback within the trimmed window so the preview reflects the cut.
-      if (vid.currentTime > o) vid.currentTime = i;
+      var o = trimOut || vid.duration;
+      if (vid.currentTime > o) vid.currentTime = trimIn;   // loop within trim
       $('editor-time').textContent = fmtClock(vid.currentTime) + ' / ' + fmtClock(vid.duration);
       syncOverlayVisibility();
+      updatePlayhead();
     });
 
+    // Seek by clicking/dragging the timeline tracks (but not while dragging a block).
+    var tracks = $('editor-tl-tracks');
+    if (tracks) {
+      var seekFromEvent = function (ev) {
+        if (ev.target.closest('.tl-block')) return;   // let block drags win
+        var dur = clipDuration(); if (!dur) return;
+        var r = tracks.getBoundingClientRect();
+        var pct = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width));
+        seekTo(pct * dur); updatePlayhead();
+      };
+      tracks.addEventListener('pointerdown', function (ev) {
+        seekFromEvent(ev);
+        var move = function (e2) { if (e2.buttons) seekFromEvent(e2); };
+        var up = function () { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); };
+        document.addEventListener('pointermove', move);
+        document.addEventListener('pointerup', up);
+      });
+    }
+
     $('editor-ratio-chips').addEventListener('click', function (e) {
-      var chip = e.target.closest('.ratio-chip');
-      if (!chip) return;
+      var chip = e.target.closest('.ratio-chip'); if (!chip) return;
       document.querySelectorAll('#editor-ratio-chips .ratio-chip').forEach(function (c) { c.classList.remove('is-selected'); });
       chip.classList.add('is-selected');
-      updateCropOverlay();
-      renderPreviewOverlays();
+      updateCropOverlay(); renderPreviewOverlays();
     });
 
     $('editor-zoom').addEventListener('input', applyZoomPreview);
-
-    // Motion: speed previews live via playbackRate; fades apply on export.
     $('editor-speed').addEventListener('input', function () {
       var sp = parseFloat(this.value) || 1;
       $('editor-speed-label').textContent = sp.toFixed(2) + '×';
-      if (vid) { try { vid.playbackRate = sp; } catch (_) { /* clamp by engine */ } }
+      if (vid) { try { vid.playbackRate = sp; } catch (_) { /* clamp */ } }
     });
-    $('editor-fade-in').addEventListener('input', function () {
-      $('editor-fade-in-label').textContent = (parseFloat(this.value) || 0).toFixed(1) + 's';
-    });
-    $('editor-fade-out').addEventListener('input', function () {
-      $('editor-fade-out-label').textContent = (parseFloat(this.value) || 0).toFixed(1) + 's';
-    });
-
-    var trimIn = $('editor-trim-in'), trimOut = $('editor-trim-out');
-    trimIn.addEventListener('input', function () {
-      if (parseFloat(trimIn.value) >= parseFloat(trimOut.value)) trimIn.value = String(Math.max(0, parseFloat(trimOut.value) - 0.1));
-      if (vid) vid.currentTime = parseFloat(trimIn.value) || 0;
-      updateTrimLabel();
-    });
-    trimOut.addEventListener('input', function () {
-      if (parseFloat(trimOut.value) <= parseFloat(trimIn.value)) trimOut.value = String(parseFloat(trimIn.value) + 0.1);
-      updateTrimLabel();
-    });
+    $('editor-fade-in').addEventListener('input', function () { $('editor-fade-in-label').textContent = (parseFloat(this.value) || 0).toFixed(1) + 's'; });
+    $('editor-fade-out').addEventListener('input', function () { $('editor-fade-out-label').textContent = (parseFloat(this.value) || 0).toFixed(1) + 's'; });
 
     $('editor-music-enabled').addEventListener('change', function () {
-      if (this.checked && !$('editor-music-path').value) pickEditorMusic();
+      if (this.checked && !$('editor-music-path').value) pickEditorMusic(); else renderTimeline();
     });
     $('editor-pick-music').addEventListener('click', pickEditorMusic);
     $('editor-music-volume').addEventListener('input', function () {
       $('editor-music-volume-label').textContent = Math.round((parseFloat(this.value) || 0) * 100) + '%';
     });
 
-    // Filters — live CSS preview + re-scale text overlays.
     $('editor-filter-chips').addEventListener('click', function (e) {
-      var chip = e.target.closest('.filter-chip');
-      if (!chip) return;
+      var chip = e.target.closest('.filter-chip'); if (!chip) return;
       document.querySelectorAll('#editor-filter-chips .filter-chip').forEach(function (c) { c.classList.remove('is-selected'); });
       chip.classList.add('is-selected');
       applyFilterPreview();
     });
 
-    // Text — add a title from the inline form.
     $('editor-add-text').addEventListener('click', function () {
       var input = $('editor-text-input');
       var txt = (input.value || '').trim();
       if (!txt) { showToast('Type some text first.', 'info'); return; }
-      editorTexts.push({
-        text: txt,
-        x: 0.5,
-        y: parseFloat($('editor-text-pos').value) || 0.85,
-        color: $('editor-text-color').value || '#ffffff',
-        size: 96,
-        start: 0,
-        end: clipDuration(),
-      });
+      var dur = clipDuration();
+      editorTexts.push({ text: txt, x: 0.5, y: 0.85, color: $('editor-text-color').value || '#ffffff', size: 96, start: 0, end: dur });
       input.value = '';
-      renderItemLists();
-      renderPreviewOverlays();
+      renderPreviewOverlays(); renderTimeline();
+      selectItem('text', editorTexts.length - 1);
     });
-
     $('editor-add-sticker').addEventListener('click', addEditorSticker);
     $('editor-add-sfx').addEventListener('click', addEditorSfx);
 
-    var reflow = function () { updateCropOverlay(); renderPreviewOverlays(); };
-    window.addEventListener('resize', reflow);
+    window.addEventListener('resize', function () { updateCropOverlay(); renderPreviewOverlays(); });
   }
 
   async function addEditorSticker() {
     var file = null;
-    // Reuse the camera-clip picker (images/video) if present, else prompt.
     if (window.clipperAPI && window.clipperAPI.selectCameraClip) file = await window.clipperAPI.selectCameraClip();
     else file = window.prompt('Paste the full path to an image/sticker (png/jpg):');
     if (!file) return;
     editorStickers.push({ path: file, name: baseName(file), x: 0.5, y: 0.5, scale: 0.25, start: 0, end: clipDuration() });
-    renderItemLists();
-    renderPreviewOverlays();
+    renderPreviewOverlays(); renderTimeline();
+    selectItem('sticker', editorStickers.length - 1);
   }
 
   async function addEditorSfx() {
@@ -561,7 +682,8 @@
     else file = window.prompt('Paste the full path to a sound effect (mp3/wav):');
     if (!file) return;
     editorSfx.push({ path: file, name: baseName(file), start: 0, gain: 0.8 });
-    renderItemLists();
+    renderTimeline();
+    selectItem('sfx', editorSfx.length - 1);
   }
 
   async function pickEditorMusic() {
@@ -571,9 +693,12 @@
     if (file) {
       $('editor-music-path').value = file;
       $('editor-music-enabled').checked = true;
+      renderTimeline();
       showToast('🎵 Music added — it ducks under speech on export.', 'success');
     }
   }
+
+  function baseName(p) { return String(p || '').split(/[\\/]/).pop() || p; }
 
   function closeEditor() {
     var vid = $('editor-video');
@@ -583,59 +708,41 @@
     $('editor-modal').classList.add('hidden');
   }
 
-  // Public entry point, called from the clip card's ✂️ Edit action.
   window.openEditor = function (clipIndex) {
     var clip = generatedClips[clipIndex];
     if (!clip) return;
     editorClip = clip;
     bindEditorOnce();
 
-    // Reset controls + item lists to defaults for this clip.
-    document.querySelectorAll('#editor-ratio-chips .ratio-chip').forEach(function (c) {
-      c.classList.toggle('is-selected', c.dataset.ratio === 'full');
-    });
-    document.querySelectorAll('#editor-filter-chips .filter-chip').forEach(function (c) {
-      c.classList.toggle('is-selected', c.dataset.filter === 'none');
-    });
-    $('editor-zoom').value = '1';
-    applyZoomPreview();
-    applyFilterPreview();
-    $('editor-speed').value = '1';
-    $('editor-speed-label').textContent = '1.00×';
+    document.querySelectorAll('#editor-ratio-chips .ratio-chip').forEach(function (c) { c.classList.toggle('is-selected', c.dataset.ratio === 'full'); });
+    document.querySelectorAll('#editor-filter-chips .filter-chip').forEach(function (c) { c.classList.toggle('is-selected', c.dataset.filter === 'none'); });
+    $('editor-zoom').value = '1'; applyZoomPreview(); applyFilterPreview();
+    $('editor-speed').value = '1'; $('editor-speed-label').textContent = '1.00×';
     try { $('editor-video').playbackRate = 1; } catch (_) { /* ignore */ }
-    $('editor-fade-in').value = '0';
-    $('editor-fade-in-label').textContent = '0.0s';
-    $('editor-fade-out').value = '0';
-    $('editor-fade-out-label').textContent = '0.0s';
-    $('editor-music-enabled').checked = false;
-    $('editor-music-path').value = '';
-    $('editor-music-volume').value = '0.12';
-    $('editor-music-volume-label').textContent = '12%';
+    $('editor-fade-in').value = '0'; $('editor-fade-in-label').textContent = '0.0s';
+    $('editor-fade-out').value = '0'; $('editor-fade-out-label').textContent = '0.0s';
+    $('editor-music-enabled').checked = false; $('editor-music-path').value = '';
+    $('editor-music-volume').value = '0.12'; $('editor-music-volume-label').textContent = '12%';
     $('editor-music-duck').checked = true;
-    editorTexts = [];
-    editorStickers = [];
-    editorSfx = [];
-    renderItemLists();
-    var layer = $('editor-overlay-layer');
-    if (layer) layer.innerHTML = '';
+    editorTexts = []; editorStickers = []; editorSfx = [];
+    trimIn = 0; trimOut = Number(clip.duration) || 0;
+    selected = null;
+    renderInspector();
+    var layer = $('editor-overlay-layer'); if (layer) layer.innerHTML = '';
+    renderTimeline();
     $('editor-progress').classList.add('hidden');
     $('editor-crop-overlay').classList.add('hidden');
 
     var vid = $('editor-video');
-    vid.src = fileUrl(clip.output_file);
-    vid.muted = false;
-    vid.load();
+    vid.src = fileUrl(clip.output_file); vid.muted = false; vid.load();
 
     $('editor-modal').classList.remove('hidden');
 
-    // First-run coach tip (once).
     try {
       if (!localStorage.getItem(TIP_SEEN_KEY)) {
         localStorage.setItem(TIP_SEEN_KEY, '1');
-        setTimeout(function () {
-          showToast('Tip: pick a ratio, trim the ends, add music — then Export. Tap ❓ Tutorial any time.', 'info');
-        }, 400);
+        setTimeout(function () { showToast('Tip: drag the 🎬 block ends to trim, add text/graphics, then Export. Tap ❓ Tutorial any time.', 'info'); }, 400);
       }
-    } catch (_) { /* localStorage unavailable — non-fatal */ }
+    } catch (_) { /* localStorage unavailable */ }
   };
 })();
