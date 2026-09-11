@@ -2364,6 +2364,36 @@ function buildClipCard(clip, idx) {
 
   const closeClipMenus = () => card.querySelectorAll('details.clip-menu[open]').forEach((d) => d.removeAttribute('open'));
 
+  // The menu panels are position:fixed (so they escape the card's
+  // overflow:hidden). Position each under its summary when it opens, clamped to
+  // the viewport, right-aligning the Manage menu and flipping above if there's
+  // no room below.
+  const positionClipMenu = (details) => {
+    const summary = details.querySelector('summary');
+    const items = details.querySelector('.clip-menu-items');
+    if (!summary || !items) return;
+    const r = summary.getBoundingClientRect();
+    items.style.visibility = 'hidden';       // measure without flicker
+    items.style.top = '0px';
+    items.style.left = '0px';
+    const mw = items.offsetWidth || 180;
+    const mh = items.offsetHeight || 0;
+    const gap = 4;
+    let left = details.classList.contains('clip-menu-right') ? r.right - mw : r.left;
+    left = Math.max(8, Math.min(left, window.innerWidth - mw - 8));
+    let top = r.bottom + gap;
+    if (top + mh > window.innerHeight - 8) {
+      const above = r.top - gap - mh;         // flip above if it would overflow
+      top = above > 8 ? above : Math.max(8, window.innerHeight - mh - 8);
+    }
+    items.style.left = `${Math.round(left)}px`;
+    items.style.top = `${Math.round(top)}px`;
+    items.style.visibility = '';
+  };
+  card.querySelectorAll('details.clip-menu').forEach((d) => {
+    d.addEventListener('toggle', () => { if (d.open) positionClipMenu(d); });
+  });
+
   card.addEventListener('click', (e) => {
     // Accordion: opening one action menu closes the others on this card.
     const summary = e.target.closest('summary');
@@ -2410,7 +2440,9 @@ function buildClipCard(clip, idx) {
     }
   });
 
-  // Close any open clip action menu when clicking outside it (bound once).
+  // Close any open clip action menu when clicking outside it, or on scroll
+  // (the panels are position:fixed, so they'd otherwise detach from the card).
+  // Bound once.
   if (!window.__clipMenuOutsideBound) {
     window.__clipMenuOutsideBound = true;
     document.addEventListener('click', (e) => {
@@ -2418,6 +2450,10 @@ function buildClipCard(clip, idx) {
         if (!d.contains(e.target)) d.removeAttribute('open');
       });
     });
+    // Capture-phase so it fires for scrolls on any inner scroll container.
+    document.addEventListener('scroll', () => {
+      document.querySelectorAll('details.clip-menu[open]').forEach((d) => d.removeAttribute('open'));
+    }, true);
   }
 
   const deleteBtn = card.querySelector('[data-action="delete"]');
