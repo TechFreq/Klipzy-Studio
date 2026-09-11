@@ -2188,3 +2188,6 @@ body {
 .tl-block.is-selected { outline: 2px solid #fff; outline-offset: -1px; }
 .tl-handle { position: absolute; top: 0; width: 9px; height: 100%; cursor: ew-resize; z-index: 2; }
 .tl-handle-l { left: 0; } .tl-handle-r { right: 0; }
+
+.editor-inspector-actions { display: flex; gap: 6px; margin-top: 6px; }
+.editor-rail select { width: 100%; }

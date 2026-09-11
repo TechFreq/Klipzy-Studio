@@ -162,7 +162,7 @@ def text_items_to_ass(spec: Dict[str, Any]) -> Optional[str]:
     return "\n".join(lines) + "\n"
 
 
-def _build_multi_audio(items_with_idx, normalize: bool = False):
+def _build_multi_audio(items_with_idx, normalize: bool = False, speech_label: str = "0:a"):
     """Mix speech + N music/SFX beds into one track. Each bed gets its own gain
     and optional start delay; if ANY bed asks to duck, the whole bed mix is
     sidechain-compressed under the speech. Returns (chains, out_label).
@@ -195,7 +195,7 @@ def _build_multi_audio(items_with_idx, normalize: bool = False):
     if normalize:
         sp_ops.append("loudnorm=I=-14.0:TP=-1.5:LRA=11")
     sp_ops.append(stereo)
-    chains.append(f"[0:a]{','.join(sp_ops)}[sp]")
+    chains.append(f"[{speech_label}]{','.join(sp_ops)}[sp]")
     if any_duck:
         chains.append("[sp]asplit=2[spmain][spsc]")
         chains.append(f"{bed}[spsc]sidechaincompress=threshold=0.05:ratio=8:attack=5:release=250[bedduck]")
@@ -354,13 +354,15 @@ def build_export_command(
     #   uniformly; then fade to/from black in the (already sped) output timeline.
     fade_in = float(prim.get("fadeIn", 0.0)) if prim else 0.0
     fade_out = float(prim.get("fadeOut", 0.0)) if prim else 0.0
+    fade_in_color = (prim.get("fadeInColor", "black") if prim else "black")
+    fade_out_color = (prim.get("fadeOutColor", "black") if prim else "black")
     post: List[str] = []
     if abs(speed - 1.0) > 1e-6:
         post.append(f"setpts=PTS/{speed:.6f}")
     if fade_in > 0:
-        post.append(f"fade=t=in:st=0:d={fade_in:.3f}")
+        post.append(f"fade=t=in:st=0:d={fade_in:.3f}:color={fade_in_color}")
     if fade_out > 0 and duration > 0:
-        post.append(f"fade=t=out:st={max(0.0, duration - fade_out):.3f}:d={fade_out:.3f}")
+        post.append(f"fade=t=out:st={max(0.0, duration - fade_out):.3f}:d={fade_out:.3f}:color={fade_out_color}")
     if post:
         graph.append(f"{cur}{','.join(post)}[vout]")
         cur = "[vout]"
@@ -372,13 +374,21 @@ def build_export_command(
         video_label = "[vout]"
 
     # ---- audio graph ------------------------------------------------------
+    # Clip audio level: pre-scale the source audio so "clip volume" affects the
+    # original speech only (music/SFX keep their own gains).
+    clip_vol = float(prim.get("volume", 1.0)) if prim else 1.0
+    speech_label = "0:a"
+    if abs(clip_vol - 1.0) > 1e-6:
+        graph.append(f"[0:a]volume={clip_vol:.3f}[spv]")
+        speech_label = "spv"
+
     # 0 or 1 bed → reuse the tested single-music builder (Phase-1 behaviour);
     # 2+ beds → the multi-track mixer below (music + layered SFX).
     if len(audio_items) <= 1:
         music = audio_items[0] if audio_items else None
         music_idx = audio_input_idx[0] if audio_items else None
         audio_chains, audio_out = build_audio_filter_chain(
-            speech_label="0:a",
+            speech_label=speech_label,
             music_label=(f"{music_idx}:a" if music_idx is not None else None),
             normalize=normalize_audio,
             music_volume=(music["gain"] if music else 0.12),
@@ -387,8 +397,12 @@ def build_export_command(
     else:
         audio_chains, audio_out = _build_multi_audio(
             list(zip(audio_input_idx, audio_items)), normalize=normalize_audio,
+            speech_label=speech_label,
         )
     graph += audio_chains
+    # If only clip-volume was applied (no music mix), map the scaled speech out.
+    if audio_out is None and speech_label != "0:a":
+        audio_out = "[" + speech_label + "]" if not speech_label.startswith("[") else speech_label
 
     # Audio post-effects mirror the video: atempo for speed, then afade in/out.
     apost: List[str] = []

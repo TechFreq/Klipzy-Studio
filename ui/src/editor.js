@@ -67,8 +67,12 @@
       trimOut: trimOut || duration,
       zoom: parseFloat($('editor-zoom').value) || 1,
       speed: parseFloat($('editor-speed').value) || 1,
-      fadeIn: parseFloat($('editor-fade-in').value) || 0,
-      fadeOut: parseFloat($('editor-fade-out').value) || 0,
+      volume: parseFloat($('editor-clip-volume').value),
+      // Transitions map to fade duration + colour (Flash = white).
+      fadeIn: ($('editor-trans-in').value !== 'none') ? (parseFloat($('editor-trans-dur').value) || 0.5) : 0,
+      fadeOut: ($('editor-trans-out').value !== 'none') ? (parseFloat($('editor-trans-dur').value) || 0.5) : 0,
+      fadeInColor: ($('editor-trans-in').value === 'flash') ? 'white' : 'black',
+      fadeOutColor: ($('editor-trans-out').value === 'flash') ? 'white' : 'black',
       filter: selectedFilter(),
       music: {
         enabled: $('editor-music-enabled').checked,
@@ -189,175 +193,9 @@
   }
 
   // ---- TIMELINE ----------------------------------------------------------
-  function makeBlock(kind, index, startT, endT, label, extraClass) {
-    var dur = clipDuration() || 1;
-    var block = document.createElement('div');
-    block.className = 'tl-block ' + (extraClass || '');
-    block.style.left = (startT / dur * 100) + '%';
-    block.style.width = (Math.max(0.001, endT - startT) / dur * 100) + '%';
-    if (selected && selected.kind === kind && selected.index === index) block.classList.add('is-selected');
-    var lbl = document.createElement('span');
-    lbl.className = 'tl-block-label';
-    lbl.textContent = label;
-    block.appendChild(lbl);
-    return block;
-  }
-
-  function addHandles(block) {
-    var l = document.createElement('span'); l.className = 'tl-handle tl-handle-l';
-    var r = document.createElement('span'); r.className = 'tl-handle tl-handle-r';
-    block.appendChild(l); block.appendChild(r);
-    return { l: l, r: r };
-  }
-
-  function laneWidthPx(lane) {
-    return lane.getBoundingClientRect().width || 1;
-  }
-
-  // Generic drag: mode 'move' | 'start' | 'end'. get/set operate on the item.
-  function wireDrag(handleEl, lane, mode, getSE, setSE, onChange) {
-    handleEl.addEventListener('pointerdown', function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      var dur = clipDuration() || 1;
-      var wpx = laneWidthPx(lane);
-      var startX = e.clientX;
-      var orig = getSE();
-      try { handleEl.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
-      function onMove(ev) {
-        var dt = (ev.clientX - startX) / wpx * dur;
-        var s = orig.start, en = orig.end;
-        if (mode === 'move') { s = orig.start + dt; en = orig.end + dt; var len = orig.end - orig.start;
-          s = Math.max(0, Math.min(s, dur - len)); en = s + len; }
-        else if (mode === 'start') { s = Math.max(0, Math.min(orig.start + dt, orig.end - 0.2)); }
-        else { en = Math.min(dur, Math.max(orig.end + dt, orig.start + 0.2)); }
-        setSE(s, en);
-        onChange();
-      }
-      function onUp() {
-        document.removeEventListener('pointermove', onMove);
-        document.removeEventListener('pointerup', onUp);
-      }
-      document.addEventListener('pointermove', onMove);
-      document.addEventListener('pointerup', onUp);
-    });
-  }
-
-  function renderTimeline() {
-    var dur = clipDuration();
-    var ruler = $('editor-tl-ruler');
-    if (ruler) {
-      ruler.innerHTML = '';
-      var ticks = 4;
-      for (var k = 0; k <= ticks; k++) {
-        var tick = document.createElement('span');
-        tick.className = 'tl-tick';
-        tick.style.left = (k / ticks * 100) + '%';
-        tick.textContent = fmtClock(dur * k / ticks);
-        ruler.appendChild(tick);
-      }
-    }
-
-    // Video lane: one block for the kept (trimmed) region, with edge handles.
-    var lv = $('lane-video');
-    if (lv) {
-      lv.innerHTML = '';
-      var vb = makeBlock('video', -1, trimIn, trimOut || dur, '🎬 ' + fmtClock(Math.max(0, (trimOut || dur) - trimIn)), 'tl-video');
-      var vh = addHandles(vb);
-      vb.addEventListener('pointerdown', function () { selectItem('video'); });
-      wireDrag(vh.l, lv, 'start',
-        function () { return { start: trimIn, end: trimOut || dur }; },
-        function (s) { trimIn = s; seekTo(trimIn); }, function () { renderTimeline(); });
-      wireDrag(vh.r, lv, 'end',
-        function () { return { start: trimIn, end: trimOut || dur }; },
-        function (_s, e) { trimOut = e; seekTo(trimOut); }, function () { renderTimeline(); });
-      lv.appendChild(vb);
-    }
-
-    // Text lane.
-    var lt = $('lane-text');
-    if (lt) {
-      lt.innerHTML = '';
-      editorTexts.forEach(function (t, i) {
-        var b = makeBlock('text', i, t.start, t.end, '🅣 ' + t.text.slice(0, 14), 'tl-text');
-        var h = addHandles(b);
-        b.addEventListener('pointerdown', function () { selectItem('text', i); });
-        wireDrag(b, lt, 'move', function () { return { start: t.start, end: t.end }; },
-          function (s, e) { t.start = s; t.end = e; }, refreshTimingLive);
-        wireDrag(h.l, lt, 'start', function () { return { start: t.start, end: t.end }; },
-          function (s) { t.start = s; }, refreshTimingLive);
-        wireDrag(h.r, lt, 'end', function () { return { start: t.start, end: t.end }; },
-          function (_s, e) { t.end = e; }, refreshTimingLive);
-        lt.appendChild(b);
-      });
-    }
-
-    // Graphics (sticker) lane.
-    var lg = $('lane-graphics');
-    if (lg) {
-      lg.innerHTML = '';
-      editorStickers.forEach(function (s, i) {
-        var b = makeBlock('sticker', i, s.start, s.end, '🖼 ' + s.name, 'tl-graphics');
-        var h = addHandles(b);
-        b.addEventListener('pointerdown', function () { selectItem('sticker', i); });
-        wireDrag(b, lg, 'move', function () { return { start: s.start, end: s.end }; },
-          function (ns, ne) { s.start = ns; s.end = ne; }, refreshTimingLive);
-        wireDrag(h.l, lg, 'start', function () { return { start: s.start, end: s.end }; },
-          function (ns) { s.start = ns; }, refreshTimingLive);
-        wireDrag(h.r, lg, 'end', function () { return { start: s.start, end: s.end }; },
-          function (_ns, ne) { s.end = ne; }, refreshTimingLive);
-        lg.appendChild(b);
-      });
-    }
-
-    // Audio lane: full-width music bed (if enabled) + one-shot SFX markers.
-    var la = $('lane-audio');
-    if (la) {
-      la.innerHTML = '';
-      if ($('editor-music-enabled').checked && $('editor-music-path').value) {
-        var mb = makeBlock('music', -1, 0, dur, '🎵 music', 'tl-music');
-        mb.addEventListener('pointerdown', function () { selectItem('music'); });
-        la.appendChild(mb);
-      }
-      editorSfx.forEach(function (sfx, i) {
-        var end = Math.min(dur, sfx.start + SFX_DISPLAY_DUR);
-        var b = makeBlock('sfx', i, sfx.start, end, '🔊', 'tl-sfx');
-        b.addEventListener('pointerdown', function () { selectItem('sfx', i); });
-        wireDrag(b, la, 'move', function () { return { start: sfx.start, end: sfx.start + SFX_DISPLAY_DUR }; },
-          function (ns) { sfx.start = ns; }, refreshTimingLive);
-        la.appendChild(b);
-      });
-    }
-    updatePlayhead();
-  }
-
-  // During a block drag, keep the timeline + preview in sync without a full
-  // re-render (which would drop the pointer capture on the dragged element).
-  function refreshTimingLive() {
-    document.querySelectorAll('#editor-overlay-layer .editor-ov-item').forEach(function () {});
-    // Update block geometry live.
-    var dur = clipDuration() || 1;
-    var apply = function (laneId, arr) {
-      var lane = $(laneId); if (!lane) return;
-      var blocks = lane.querySelectorAll('.tl-block');
-      arr.forEach(function (it, i) {
-        var b = blocks[i]; if (!b) return;
-        var en = (it.end != null) ? it.end : (it.start + SFX_DISPLAY_DUR);
-        b.style.left = (it.start / dur * 100) + '%';
-        b.style.width = (Math.max(0.001, en - it.start) / dur * 100) + '%';
-      });
-    };
-    apply('lane-text', editorTexts);
-    apply('lane-graphics', editorStickers);
-    apply('lane-audio', editorSfx.length ? editorSfx : []);
-    syncOverlayVisibility();
-    // reflect timing edits in the preview overlays' dataset for show/hide
-    var layer = $('editor-overlay-layer');
-    if (layer) {
-      var texts = layer.querySelectorAll('.editor-ov-text');
-      // simplest: rebuild overlays so dataset start/end are fresh
-    }
-    renderPreviewOverlays();
+  function seekTo(t) {
+    var vid = $('editor-video');
+    if (vid && isFinite(t)) vid.currentTime = Math.max(0, t);
   }
 
   function updatePlayhead() {
@@ -368,9 +206,133 @@
     ph.style.left = (Math.min(vid.currentTime, dur) / dur * 100) + '%';
   }
 
-  function seekTo(t) {
-    var vid = $('editor-video');
-    if (vid && isFinite(t)) vid.currentTime = Math.max(0, t);
+  // Current [start,end] for a timeline item (video/text/sticker/sfx/music).
+  function getSE(kind, index) {
+    var dur = clipDuration() || 1;
+    if (kind === 'video') return { start: trimIn, end: trimOut || dur };
+    if (kind === 'music') return { start: 0, end: dur };
+    if (kind === 'text') { var t = editorTexts[index]; return { start: t.start, end: t.end }; }
+    if (kind === 'sticker') { var s = editorStickers[index]; return { start: s.start, end: s.end }; }
+    var f = editorSfx[index]; return { start: f.start, end: Math.min(dur, f.start + SFX_DISPLAY_DUR) };
+  }
+
+  function writeSE(kind, index, s, e) {
+    if (kind === 'video') { trimIn = s; trimOut = e; }
+    else if (kind === 'text') { editorTexts[index].start = s; editorTexts[index].end = e; }
+    else if (kind === 'sticker') { editorStickers[index].start = s; editorStickers[index].end = e; }
+    else if (kind === 'sfx') { editorSfx[index].start = s; }   // one-shot: move only
+  }
+
+  function blockGeom(startT, endT) {
+    var dur = clipDuration() || 1;
+    return { left: (startT / dur * 100) + '%', width: (Math.max(0.001, endT - startT) / dur * 100) + '%' };
+  }
+
+  function makeBlock(kind, index, label, extraClass, withHandles) {
+    var se = getSE(kind, index);
+    var g = blockGeom(se.start, se.end);
+    var block = document.createElement('div');
+    block.className = 'tl-block ' + (extraClass || '');
+    block.style.left = g.left; block.style.width = g.width;
+    if (selected && selected.kind === kind && (selected.index === index || (index === -1 && selected.index === undefined))) {
+      block.classList.add('is-selected');
+    }
+    var lbl = document.createElement('span'); lbl.className = 'tl-block-label'; lbl.textContent = label;
+    block.appendChild(lbl);
+    if (withHandles) {
+      var l = document.createElement('span'); l.className = 'tl-handle tl-handle-l';
+      var r = document.createElement('span'); r.className = 'tl-handle tl-handle-r';
+      block.appendChild(l); block.appendChild(r);
+    }
+    block.addEventListener('pointerdown', function (e) { beginDrag(e, block, kind, index); });
+    return block;
+  }
+
+  // ONE drag path for every block. Updates geometry + state LIVE (no full
+  // re-render, which would destroy the block mid-drag — the bug this fixes),
+  // then does a clean renderTimeline() only on release.
+  function beginDrag(e, block, kind, index) {
+    e.preventDefault();
+    e.stopPropagation();
+    // Select immediately (highlight without rebuilding, so the drag survives).
+    selected = (index === -1) ? { kind: kind } : { kind: kind, index: index };
+    document.querySelectorAll('#editor-timeline .tl-block.is-selected').forEach(function (b) { b.classList.remove('is-selected'); });
+    block.classList.add('is-selected');
+    renderInspector();
+
+    if (kind === 'music') return;   // bed spans the whole clip; not draggable
+
+    var lane = block.parentElement;
+    var dur = clipDuration() || 1;
+    var wpx = lane.getBoundingClientRect().width || 1;
+    var mode = e.target.classList.contains('tl-handle-l') ? 'start'
+      : e.target.classList.contains('tl-handle-r') ? 'end' : 'move';
+    var orig = getSE(kind, index);
+    var startX = e.clientX;
+    try { block.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+
+    function onMove(ev) {
+      var dt = (ev.clientX - startX) / wpx * dur;
+      var s = orig.start, en = orig.end, len = orig.end - orig.start;
+      if (mode === 'move') { s = Math.max(0, Math.min(orig.start + dt, dur - len)); en = s + len; }
+      else if (mode === 'start') { s = Math.max(0, Math.min(orig.start + dt, orig.end - 0.2)); }
+      else { en = Math.max(orig.start + 0.2, Math.min(orig.end + dt, dur)); }
+      writeSE(kind, index, s, en);
+      var se = getSE(kind, index);
+      var g = blockGeom(se.start, se.end);
+      block.style.left = g.left; block.style.width = g.width;
+      if (kind === 'video') seekTo(mode === 'start' ? s : en);
+      if (kind === 'text' || kind === 'sticker') renderPreviewOverlays();
+      else syncOverlayVisibility();
+    }
+    function onUp() {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      renderTimeline();
+      renderInspector();
+    }
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+  }
+
+  function renderTimeline() {
+    var dur = clipDuration();
+    var ruler = $('editor-tl-ruler');
+    if (ruler) {
+      ruler.innerHTML = '';
+      for (var k = 0; k <= 4; k++) {
+        var tick = document.createElement('span');
+        tick.className = 'tl-tick';
+        tick.style.left = (k / 4 * 100) + '%';
+        tick.textContent = fmtClock(dur * k / 4);
+        ruler.appendChild(tick);
+      }
+    }
+
+    var lv = $('lane-video');
+    if (lv) {
+      lv.innerHTML = '';
+      lv.appendChild(makeBlock('video', -1, '🎬 ' + fmtClock(Math.max(0, (trimOut || dur) - trimIn)), 'tl-video', true));
+    }
+    var lt = $('lane-text');
+    if (lt) {
+      lt.innerHTML = '';
+      editorTexts.forEach(function (t, i) { lt.appendChild(makeBlock('text', i, '🅣 ' + t.text.slice(0, 14), 'tl-text', true)); });
+    }
+    var lg = $('lane-graphics');
+    if (lg) {
+      lg.innerHTML = '';
+      editorStickers.forEach(function (s, i) { lg.appendChild(makeBlock('sticker', i, '🖼 ' + s.name, 'tl-graphics', true)); });
+    }
+    var la = $('lane-audio');
+    if (la) {
+      la.innerHTML = '';
+      if ($('editor-music-enabled').checked && $('editor-music-path').value) {
+        la.appendChild(makeBlock('music', -1, '🎵 music', 'tl-music', false));
+      }
+      editorSfx.forEach(function (_s, i) { la.appendChild(makeBlock('sfx', i, '🔊', 'tl-sfx', false)); });
+    }
+    updatePlayhead();
   }
 
   // ---- selection inspector ----------------------------------------------
@@ -411,6 +373,13 @@
       b.addEventListener('click', fn);
       return b;
     };
+    var dupBtn = function (fn) {
+      var b = document.createElement('button');
+      b.className = 'btn btn-small btn-secondary'; b.textContent = '⧉ Duplicate';
+      b.addEventListener('click', fn);
+      return b;
+    };
+    var actionRow = function () { var d = document.createElement('div'); d.className = 'editor-inspector-actions'; return d; };
 
     if (selected.kind === 'text') {
       var t = editorTexts[selected.index]; if (!t) { selected = null; return renderInspector(); }
@@ -422,17 +391,35 @@
       col.addEventListener('input', function () { t.color = col.value; renderPreviewOverlays(); });
       box.appendChild(inspectorRow('Colour', col));
       box.appendChild(inspectorRow('Size', mkRange(24, 200, 2, t.size || 96, function (v) { t.size = v; renderPreviewOverlays(); })));
-      box.appendChild(removeBtn(function () { editorTexts.splice(selected.index, 1); selected = null; renderTimeline(); renderPreviewOverlays(); renderInspector(); }));
+      var tRow = actionRow();
+      tRow.appendChild(dupBtn(function () {
+        var c = Object.assign({}, t); c.start = Math.min(clipDuration(), t.start + 0.3); c.y = Math.min(1, t.y + 0.06);
+        editorTexts.push(c); selectItem('text', editorTexts.length - 1); renderPreviewOverlays();
+      }));
+      tRow.appendChild(removeBtn(function () { editorTexts.splice(selected.index, 1); selected = null; renderTimeline(); renderPreviewOverlays(); renderInspector(); }));
+      box.appendChild(tRow);
     } else if (selected.kind === 'sticker') {
       var s = editorStickers[selected.index]; if (!s) { selected = null; return renderInspector(); }
       title.textContent = '🖼 ' + s.name;
       box.appendChild(inspectorRow('Size', mkRange(0.05, 1.5, 0.01, s.scale || 0.25, function (v) { s.scale = v; renderPreviewOverlays(); })));
-      box.appendChild(removeBtn(function () { editorStickers.splice(selected.index, 1); selected = null; renderTimeline(); renderPreviewOverlays(); renderInspector(); }));
+      var sRow = actionRow();
+      sRow.appendChild(dupBtn(function () {
+        var c = Object.assign({}, s); c.start = Math.min(clipDuration(), s.start + 0.3); c.x = Math.min(1, s.x + 0.05);
+        editorStickers.push(c); selectItem('sticker', editorStickers.length - 1); renderPreviewOverlays();
+      }));
+      sRow.appendChild(removeBtn(function () { editorStickers.splice(selected.index, 1); selected = null; renderTimeline(); renderPreviewOverlays(); renderInspector(); }));
+      box.appendChild(sRow);
     } else if (selected.kind === 'sfx') {
       var fx = editorSfx[selected.index]; if (!fx) { selected = null; return renderInspector(); }
       title.textContent = '🔊 ' + fx.name;
       box.appendChild(inspectorRow('Volume', mkRange(0, 2, 0.05, fx.gain || 0.8, function (v) { fx.gain = v; })));
-      box.appendChild(removeBtn(function () { editorSfx.splice(selected.index, 1); selected = null; renderTimeline(); renderInspector(); }));
+      var fRow = actionRow();
+      fRow.appendChild(dupBtn(function () {
+        var c = Object.assign({}, fx); c.start = Math.min(clipDuration(), fx.start + 0.3);
+        editorSfx.push(c); selectItem('sfx', editorSfx.length - 1);
+      }));
+      fRow.appendChild(removeBtn(function () { editorSfx.splice(selected.index, 1); selected = null; renderTimeline(); renderInspector(); }));
+      box.appendChild(fRow);
     } else if (selected.kind === 'music') {
       title.textContent = '🎵 Music bed';
       var vol = mkRange(0, 1, 0.01, parseFloat($('editor-music-volume').value) || 0.12, function (v) {
@@ -561,7 +548,7 @@
       '2. Trim — drag the ends of the 🎬 Video block on the timeline.\n' +
       '3. Add text / graphics / SFX — they appear as blocks; drag to move, drag edges to time them, drag on the preview to position.\n' +
       '4. Click a block to tweak it (text, colour, size, volume) in the panel.\n' +
-      '5. Zoom / speed / fades — in the controls rail.\n' +
+      '5. Zoom / speed / clip volume / transitions — in the controls rail.\n' +
       '6. Export — renders on your GPU; nothing is uploaded.',
       '✂️ Editor — quick tour'
     );
@@ -632,8 +619,8 @@
       $('editor-speed-label').textContent = sp.toFixed(2) + '×';
       if (vid) { try { vid.playbackRate = sp; } catch (_) { /* clamp */ } }
     });
-    $('editor-fade-in').addEventListener('input', function () { $('editor-fade-in-label').textContent = (parseFloat(this.value) || 0).toFixed(1) + 's'; });
-    $('editor-fade-out').addEventListener('input', function () { $('editor-fade-out-label').textContent = (parseFloat(this.value) || 0).toFixed(1) + 's'; });
+    $('editor-trans-dur').addEventListener('input', function () { $('editor-trans-dur-label').textContent = (parseFloat(this.value) || 0).toFixed(1) + 's'; });
+    $('editor-clip-volume').addEventListener('input', function () { $('editor-clip-volume-label').textContent = Math.round((parseFloat(this.value) || 0) * 100) + '%'; });
 
     $('editor-music-enabled').addEventListener('change', function () {
       if (this.checked && !$('editor-music-path').value) pickEditorMusic(); else renderTimeline();
@@ -719,8 +706,9 @@
     $('editor-zoom').value = '1'; applyZoomPreview(); applyFilterPreview();
     $('editor-speed').value = '1'; $('editor-speed-label').textContent = '1.00×';
     try { $('editor-video').playbackRate = 1; } catch (_) { /* ignore */ }
-    $('editor-fade-in').value = '0'; $('editor-fade-in-label').textContent = '0.0s';
-    $('editor-fade-out').value = '0'; $('editor-fade-out-label').textContent = '0.0s';
+    $('editor-clip-volume').value = '1'; $('editor-clip-volume-label').textContent = '100%';
+    $('editor-trans-in').value = 'none'; $('editor-trans-out').value = 'none';
+    $('editor-trans-dur').value = '0.5'; $('editor-trans-dur-label').textContent = '0.5s';
     $('editor-music-enabled').checked = false; $('editor-music-path').value = '';
     $('editor-music-volume').value = '0.12'; $('editor-music-volume-label').textContent = '12%';
     $('editor-music-duck').checked = true;

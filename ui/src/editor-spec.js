@@ -59,6 +59,9 @@
         speed: Math.max(0.1, _num(state.speed, 1.0)),
         fadeIn: Math.max(0, _num(state.fadeIn, 0)),
         fadeOut: Math.max(0, _num(state.fadeOut, 0)),
+        fadeInColor: state.fadeInColor === 'white' ? 'white' : 'black',
+        fadeOutColor: state.fadeOutColor === 'white' ? 'white' : 'black',
+        volume: Math.max(0, Math.min(4, _num(state.volume, 1.0))),
       }],
     }];
 
