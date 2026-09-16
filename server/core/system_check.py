@@ -333,13 +333,13 @@ def _detect_cpu_name() -> Optional[str]:
 def detect_torch() -> Dict[str, bool]:
     try:
         import torch
-        cuda_ok = torch.cuda.is_available() or bool(getattr(torch.version, "cuda", None))
+        cuda_ok = torch.cuda.is_available()
         return {
             "installed": True,
             "cuda": cuda_ok,
             "mps": getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available(),
         }
-    except ImportError:
+    except (ImportError, OSError):
         return {"installed": False, "cuda": False, "mps": False}
 
 

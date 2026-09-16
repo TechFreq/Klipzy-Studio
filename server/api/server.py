@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from server.models import (
     ChatRequest, ChatResponse, ProcessRequest, ProcessResponse, ClipResult,
     ExportProjectRequest, ExportProjectResponse, SubtitleRegenRequest,
-    TrimRequest, TrimResponse, CustomRenderRequest,
+    TrimRequest, TrimResponse, TrimPosterRequest, TrimPosterResponse, CustomRenderRequest,
     ExportMediaRequest, ExportMediaResponse, ExportCompileRequest, ExportCompileResponse,
     ExportStandaloneRequest, ExportStandaloneResponse, ClipBundleRequest, ClipBundleResponse, DeleteProjectRequest,
     DetectSilenceRequest, DetectSilenceResponse, RemoveSilenceRequest, RemoveSilenceResponse,
@@ -38,7 +38,7 @@ from server.core.ffmpeg_tools import (
     check_ffmpeg, get_media_info, get_video_duration, detect_hw_encoder, render_clip,
     export_clip_as, concat_clips, export_standalone_audio,
     extract_best_thumbnail, extract_candidate_thumbnails, extract_audio,
-    render_cropped_frame,
+    render_cropped_frame, extract_trim_poster,
 )
 from server.logging_setup import setup_logging
 from server.auth import (
@@ -329,6 +329,7 @@ def _run_job(job_id: str) -> None:
             vertical_crop=req.vertical_crop,
             aspect_ratio=req.aspect_ratio,
             max_clips=req.max_clips,
+            auto_clip_count=req.auto_clip_count,
             min_duration=req.min_duration,
             max_duration=req.max_duration,
             whisper_model=req.whisper_model,
@@ -361,6 +362,7 @@ def _run_job(job_id: str) -> None:
             intro_caption_duration=req.intro_caption_duration,
             intro_enabled=req.intro_enabled,
             intro_font_size=req.intro_font_size,
+            intro_style=req.intro_style,
             remove_silence=req.remove_silence,
             bleep_profanity=req.bleep_profanity,
             mute_profanity=req.mute_profanity,
@@ -936,6 +938,7 @@ def regenerate_subtitles(req: SubtitleRegenRequest):
         intro_caption=effective_intro,
         intro_caption_duration=req.intro_caption_duration,
         intro_font_size=req.intro_font_size,
+        intro_style=req.intro_style,
     )
 
     # If requested and video context is provided, re-render the clip to burn updated captions.
@@ -1052,6 +1055,76 @@ class SuggestMomentsRequest(BaseModel):
     min_duration: float = 15.0
     max_duration: float = 45.0
     max_moments: int = 6
+
+
+class GPUCheckRequest(BaseModel):
+    """Preflight check: is torch + a GPU available before starting a job?"""
+    pass  # Stateless — reads live system state.
+
+
+class GPUCheckResponse(BaseModel):
+    """Result of the GPU/torch preflight check."""
+    ready: bool
+    gpu_name: Optional[str] = None
+    vram_gb: Optional[float] = None
+    torch_installed: bool = False
+    cuda_available: bool = False
+    accelerated: bool = False
+    message: str = ""
+
+
+@app.post("/tools/trim-poster", response_model=TrimPosterResponse)
+def api_trim_poster(req: TrimPosterRequest):
+    """Extract a poster thumbnail for the trim preview at a given timestamp."""
+    if not os.path.exists(req.video_path):
+        raise HTTPException(status_code=400, detail=f"Video not found: {req.video_path}")
+    try:
+        image_path = extract_trim_poster(req.video_path, timestamp=req.timestamp,
+                                         out_dir=str(_ensure_output_root() / ".cache" / "posters"))
+        return {"image_path": image_path}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Poster extraction failed: {e}")
+
+
+@app.post("/tools/gpu-check", response_model=GPUCheckResponse)
+def api_gpu_check(req: GPUCheckRequest):
+    """Preflight check: is torch + a GPU available before starting a job?
+    Reports acceleration separately from readiness. CPU processing is supported;
+    readiness depends on an installed/configured transcription backend."""
+    from server.core import system_check as sc
+    try:
+        gpu = sc.detect_gpu()
+        torch_info = sc.detect_torch()
+        torch_installed = bool(torch_info.get("installed"))
+        cuda_available = bool(torch_info.get("cuda"))
+        mps_available = bool(torch_info.get("mps"))
+        directml = sc._directml_available() if hasattr(sc, "_directml_available") else False
+        xpu = sc._xpu_available() if hasattr(sc, "_xpu_available") else False
+        accelerated = cuda_available or mps_available or directml or xpu
+        from server.core.transcriber import detect_active_backend
+        ready = bool(detect_active_backend().get("active"))
+        name = gpu.get("name")
+        vram = gpu.get("vram_gb")
+        if not ready:
+            message = "Install Faster-Whisper or Whisper in Setup > AI models to transcribe. CPU mode is supported; GPU acceleration is optional."
+        elif not accelerated:
+            message = "CPU processing is available. GPU acceleration is optional."
+        else:
+            message = "GPU acceleration is available."
+        return {
+            "ready": ready,
+            "gpu_name": name,
+            "vram_gb": vram,
+            "torch_installed": torch_installed,
+            "accelerated": accelerated,
+            "cuda_available": cuda_available,
+            "message": message,
+        }
+    except Exception as e:  # noqa: BLE001
+        return {
+            "ready": False,
+            "message": f"GPU check failed: {e}",
+        }
 
 
 @app.post("/tools/suggest-moments")
@@ -1407,6 +1480,7 @@ def api_speaker_captions(req: SubtitleRegenRequest):
         intro_caption=req.intro_caption,
         intro_caption_duration=req.intro_caption_duration,
         intro_font_size=req.intro_font_size,
+        intro_style=req.intro_style,
     )
 
     re_rendered = _reburn_clip_with_subs(req, ass_path, first_start, last_end)
@@ -1935,7 +2009,7 @@ def get_output_folder():
 
     Empty string = unset, in which case renders go to the disposable built-in
     ./output working dir (temporary scratch space)."""
-    return {"folder": EXPORT_DEFAULT_DIR, "is_default": EXPORT_DEFAULT_DIR == ""}
+    return {"folder": str(_ensure_output_root()), "default_folder": str(DEFAULT_OUTPUT_ROOT), "is_default": EXPORT_DEFAULT_DIR == ""}
 
 
 @app.post("/output-folder")
@@ -1966,7 +2040,7 @@ def set_output_folder(req: OutputFolderRequest):
     else:
         EXPORT_DEFAULT_DIR = ""
         _sync_output_root(DEFAULT_OUTPUT_ROOT)  # revert to the temp ./output working dir
-    return {"folder": EXPORT_DEFAULT_DIR, "is_default": EXPORT_DEFAULT_DIR == ""}
+    return {"folder": str(_ensure_output_root()), "default_folder": str(DEFAULT_OUTPUT_ROOT), "is_default": EXPORT_DEFAULT_DIR == ""}
 
 
 # ----------------------------------------------------------------------

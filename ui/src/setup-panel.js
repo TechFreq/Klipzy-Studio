@@ -480,10 +480,10 @@ function renderHardware(data) {
   const torch = data.torch || {};
   const py = data.python || {};
   const gpuName = gpu.name ? `${gpu.name}${gpu.vram_gb ? ` (${gpu.vram_gb} GB VRAM)` : ''}` : 'No discrete GPU detected';
-  const accel = torch.cuda ? 'CUDA ✓' : (torch.mps ? 'Apple Silicon (MPS) ✓' : 'CPU only — GPU build of PyTorch not installed');
+  const accel = torch.cuda ? 'CUDA ✓' : (torch.mps ? 'Apple Silicon (MPS) ✓' : 'CPU mode — supported');
   const accelHint = torch.cuda ? '(RTX-class GPU — full GPU speed)'
     : (torch.mps ? '(Apple Silicon Metal)'
-    : (gpu.name ? `Detected ${escapeHtml(gpu.name)} — install CUDA PyTorch to unlock` : 'Install PyTorch to enable GPU'));
+    : (gpu.name ? `Detected ${gpu.name}. CPU processing is available; compatible GPU acceleration is optional (see Setup).` : 'CPU processing is supported. GPU acceleration is optional.'));
   document.getElementById('setup-hardware').innerHTML = `
     <div class="hw-grid">
       <div class="hw-item"><span class="hw-label">OS</span><strong>${escapeHtml(data.os || 'unknown')}</strong></div>

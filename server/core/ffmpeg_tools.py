@@ -799,6 +799,45 @@ def extract_best_thumbnail(
     return out_path
 
 
+def extract_trim_poster(video_path: str, timestamp: float = 1.0, out_dir: Optional[str] = None) -> str:
+    """Extract a poster thumbnail for the trim preview at a given timestamp.
+
+    Uses the fast `-ss before -i` seek (input seek) for speed, then grabs one
+    frame (`-vframes 1`). Falls back to frame 0 if the timestamp seek fails.
+    Returns the absolute path to the JPEG image file.
+    """
+    out_dir = out_dir or os.path.dirname(video_path) or "."
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    import hashlib
+    source = Path(video_path).resolve()
+    key = hashlib.sha256(f"{source}:{source.stat().st_mtime_ns}:{timestamp}".encode()).hexdigest()[:24]
+    out_path = os.path.join(out_dir, f"trim-poster-{key}.jpg")
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(max(0.0, timestamp)),
+        "-i", video_path,
+        "-vframes", "1",
+        "-q:v", "2",
+        out_path,
+    ]
+    res = proc.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if res.returncode != 0 or not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+        # Fallback to frame 0 (no seek)
+        cmd_fb = [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-vframes", "1",
+            "-q:v", "2",
+            out_path,
+        ]
+        proc.run(cmd_fb, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+        raise RuntimeError(f"Trim poster extraction failed for {video_path}")
+    return out_path
+
+
 def _score_frame(frame) -> float:
     """Score a BGR frame for thumbnail suitability: sharper + well-exposed is
     better. Uses the Laplacian variance (focus measure) scaled down when the

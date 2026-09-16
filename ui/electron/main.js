@@ -16,7 +16,7 @@ let serverProcess = null;
 // X-Klipzy-Token header on every request, which stops arbitrary web pages from
 // driving the local API (it can trigger installers and touch the filesystem).
 // Generated here, handed to Python via env, and given to the renderer through
-// the preload bridge. It never touches disk.
+// the preload bridge. The backend stores it locally for authenticated reconnects.
 const API_TOKEN = crypto.randomBytes(32).toString('hex');
 
 // Set when the backend was already running before we launched, so we know the
@@ -79,7 +79,16 @@ async function startServer() {
   if (!(await isPortFree(SERVER_PORT))) {
     console.log('Server already running on port', SERVER_PORT);
     reusedExistingServer = true;
-    reportServerStatus('ready', 'Connected to a backend that was already running.');
+    try {
+      const token = await getEffectiveApiToken();
+      const response = await fetch('http://127.0.0.1:' + SERVER_PORT + '/output-folder', {
+        headers: { 'X-Klipzy-Token': token }, signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) throw new Error('Connection rejected');
+      reportServerStatus('ready', 'Connected to the existing local engine.');
+    } catch (_) {
+      reportServerStatus('failed', 'An existing backend could not be authenticated. Close all Klipzy windows and any separately started Klipzy backend, then reopen Klipzy Studio. This is a connection issue, not a CPU/GPU requirement.');
+    }
     return;
   }
 
@@ -229,21 +238,15 @@ ipcMain.handle('select-video', async () => {
 
 ipcMain.handle('server-url', () => `http://127.0.0.1:${SERVER_PORT}`);
 
-ipcMain.handle('api-token', () => {
-  // Normal path: the token we generated and passed to our own child process.
+async function getEffectiveApiToken() {
   if (!reusedExistingServer) return API_TOKEN;
-
-  // We attached to a backend somebody else started, so its token is whatever
-  // that process wrote to logs/api_token.txt.
+  const fs = require('fs');
+  const root = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', '..');
   try {
-    const fs = require('fs');
-    const root = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', '..');
     return fs.readFileSync(path.join(root, 'logs', 'api_token.txt'), 'utf8').trim();
-  } catch (e) {
-    console.error('Could not read the token of the already-running server:', e.message);
-    return '';
-  }
-});
+  } catch (_) { return ''; }
+}
+ipcMain.handle('api-token', getEffectiveApiToken);
 
 ipcMain.handle('select-output-folder', async (_event, defaultPath) => {
   const opts = {

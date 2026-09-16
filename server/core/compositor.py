@@ -298,14 +298,53 @@ def build_export_command(
     reframe = _reframe_chain(ratio, x_expr)
 
     cur = "[0:v]"
-    if reframe:
+    transform = prim["transform"] if prim else {}
+    crop = transform.get("crop")
+    facecam = transform.get("facecam")
+    if crop and src_dims:
+        sw, sh, _ = src_dims
+        def even(n): return max(2, int(n) // 2 * 2)
+        def crop_filter(rect):
+            cw, ch = even(sw * rect["w"]), even(sh * rect["h"])
+            cx = max(0, min(sw - cw, int(sw * rect["x"]))) // 2 * 2
+            cy = max(0, min(sh - ch, int(sh * rect["y"]))) // 2 * 2
+            return f"crop={cw}:{ch}:{cx}:{cy}"
+        ratios = {"9:16": (1080, 1920), "4:5": (1080, 1350), "1:1": (1080, 1080), "16:9": (1920, 1080)}
+        ow, oh = ratios.get(ratio, (even(sw), even(sh)))
+        main_h = oh
+        if facecam and facecam["layout"] != "pip":
+            cam_h = even(oh * facecam["size"])
+            main_h = oh - cam_h
+        if facecam:
+            graph.append("[0:v]split=2[mainraw][camraw]")
+            cur = "[mainraw]"
+        graph.append(f"{cur}{crop_filter(crop)},scale={ow}:{main_h}:force_original_aspect_ratio=increase,crop={ow}:{main_h},setsar=1[vmain]")
+        cur = "[vmain]"
+        if facecam:
+            if facecam["layout"] == "pip":
+                cw = even(ow * facecam["size"])
+                ch = min(even(oh * 0.45), even(cw * sh * facecam["crop"]["h"] / (sw * facecam["crop"]["w"])))
+            else:
+                cw, ch = ow, cam_h
+            graph.append(f"[camraw]{crop_filter(facecam['crop'])},scale={cw}:{ch}:force_original_aspect_ratio=increase,crop={cw}:{ch},setsar=1[camout]")
+            if facecam["layout"] == "pip":
+                x = "W-w" if "right" in facecam["corner"] else "0"
+                y = "H-h" if "bottom" in facecam["corner"] else "0"
+                graph.append(f"{cur}[camout]overlay={x}:{y}[vcomposed]")
+            else:
+                order = "[camout]" + cur if facecam["layout"] == "top" else cur + "[camout]"
+                graph.append(f"{order}vstack=inputs=2[vcomposed]")
+            cur = "[vcomposed]"
+    elif reframe:
         graph.append(f"{cur}{reframe}[vref]")
         cur = "[vref]"
 
     zoom = prim["transform"]["zoom"] if prim else 1.0
     if zoom and zoom > 1.0 and src_dims:
         sw, sh, sfps = src_dims
-        if ratio in CROP_RATIOS:
+        if crop and src_dims:
+            zw, zh = ow, oh
+        elif ratio in CROP_RATIOS:
             num, den = CROP_RATIOS[ratio]
             zw, zh = int(sh * num / den), sh
         elif ratio == "1:1":
@@ -442,7 +481,7 @@ def render(
 
     src_dims = None
     prim = _primary_video(ns)
-    if prim and prim["transform"].get("zoom", 1.0) > 1.0:
+    if prim and (prim["transform"].get("zoom", 1.0) > 1.0 or prim["transform"].get("crop")):
         src_dims = probe_video_dims(prim["src"])
 
     # Free-floating text items become an ASS file burned via the subtitles

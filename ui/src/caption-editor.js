@@ -92,6 +92,7 @@ function collectCaptionOptions() {
     // Flag so the backend auto-generates a hook per clip when the toggle is on
     // but the optional custom text is left blank.
     intro_enabled: introEnabled,
+    intro_style: collectIntroStyle(),
     // Optional bigger font for the intro hook (from the caption editor's slider).
     intro_font_size: parseInt(document.getElementById('generated-intro-font-size')?.value || '', 10) || undefined,
   };
@@ -314,15 +315,15 @@ function refreshIntroPreview() {
   el.classList.remove('hidden');
 
   const raw = (document.getElementById('caption-intro-text')?.value || '').trim() || 'Your hook here';
-  const isUppercase = document.getElementById('caption-uppercase')?.checked;
+  const isUppercase = document.getElementById('intro-uppercase')?.checked;
   el.textContent = isUppercase ? raw.toUpperCase() : raw;
 
-  const presetId = document.getElementById('generated-caption-preset')?.value || 'viral_yellow';
+  const presetId = document.getElementById('intro-preset')?.value || 'viral_yellow';
   const baseStyle = CAPTION_PREVIEW[presetId] || CAPTION_PREVIEW.viral_yellow;
-  const fontName = document.getElementById('caption-font-name')?.value || baseStyle.font;
-  const accentColor = document.getElementById('caption-highlight-color')?.value || baseStyle.accent;
-  const strokeColor = document.getElementById('caption-outline-color')?.value || baseStyle.back;
-  const outlineWidth = parseInt(document.getElementById('caption-outline-width')?.value || '3', 10);
+  const fontName = document.getElementById('intro-font-name')?.value || baseStyle.font;
+  const accentColor = document.getElementById('intro-color')?.value || baseStyle.accent;
+  const strokeColor = document.getElementById('intro-outline-color')?.value || baseStyle.back;
+  const outlineWidth = parseInt(document.getElementById('intro-outline-width')?.value || '3', 10);
 
   const screenEl = el.parentElement;
   const containerWidth = (screenEl && screenEl.clientWidth > 0) ? screenEl.clientWidth : 200;
@@ -335,11 +336,40 @@ function refreshIntroPreview() {
   el.style.color = accentColor;        // hooks pop in the highlight color
   el.style.fontFamily = fontName;
   el.style.fontSize = `${scaled}px`;
-  el.style.fontWeight = '900';
+  el.style.fontWeight = document.getElementById('intro-bold').checked ? '900' : '400';
+  el.style.fontStyle = document.getElementById('intro-italic').checked ? 'italic' : 'normal';
+  const position = document.getElementById('intro-position').value;
+  el.style.top = position === '8' ? '12%' : position === '5' ? '45%' : '78%';
+  el.style.animation = document.getElementById('intro-animation').value === 'none' ? 'none' : 'headline-' + document.getElementById('intro-animation').value + ' 1.5s infinite';
   el.style.textShadow = w > 0
     ? `${w}px 0 0 ${strokeColor}, -${w}px 0 0 ${strokeColor}, 0 ${w}px 0 ${strokeColor}, 0 -${w}px 0 ${strokeColor}, 0 0 14px ${accentColor}55`
     : `0 0 14px ${accentColor}55`;
 }
+
+const INTRO_STYLE_FIELDS = {preset:'intro-preset',font_name:'intro-font-name',primary_color:'intro-color',outline_color:'intro-outline-color',outline_width:'intro-outline-width',position:'intro-position',animation:'intro-animation',bold:'intro-bold',italic:'intro-italic',uppercase:'intro-uppercase'};
+function collectIntroStyle() {
+  const style = {};
+  Object.entries(INTRO_STYLE_FIELDS).forEach(([key,id]) => {
+    const el = document.getElementById(id);
+    style[key] = el.type === 'checkbox' ? el.checked : el.value;
+  });
+  return style;
+}
+function restoreIntroStyle(style) {
+  Object.entries(INTRO_STYLE_FIELDS).forEach(([key,id]) => {
+    const el = document.getElementById(id);
+    if (el.type === 'checkbox') el.checked = style?.[key] ?? el.defaultChecked;
+    else el.value = style?.[key] ?? (el.tagName === 'SELECT' ? el.options[0].value : el.defaultValue);
+  });
+}
+Object.values(INTRO_STYLE_FIELDS).forEach(id => document.getElementById(id)?.addEventListener('input', refreshIntroPreview));
+document.getElementById('intro-preset')?.addEventListener('change', event => {
+  const preset = CAPTION_PREVIEW[event.target.value] || CAPTION_PREVIEW.viral_yellow;
+  document.getElementById('intro-color').value = preset.text;
+  document.getElementById('intro-outline-color').value = preset.back;
+  document.getElementById('intro-font-name').value = '';
+  refreshIntroPreview();
+});
 
 // Wire the intro-hook controls to the live preview (runs once at load).
 (function wireIntroHookPreview() {

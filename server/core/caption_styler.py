@@ -43,6 +43,7 @@ def generate_karaoke_captions(
     intro_caption: Optional[str] = None,
     intro_caption_duration: float = 3.0,
     intro_font_size: Optional[int] = None,
+    intro_style: Optional[dict] = None,
 ) -> str:
     """
     Generates an animated karaoke subtitle file (Advanced SubStation Alpha)
@@ -95,21 +96,28 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     event_lines = []
     if intro_caption:
-        intro_text = case(intro_caption).replace("{", "").replace("}", "")
-        # Pin the intro hook to the TOP-CENTER for its first few seconds, like
-        # CapCut / Opus Clip — the {\an8} override places it above the regular
-        # captions (which sit at the chosen position) so the two never overlap.
+        opts = intro_style or {}
+        ip = CAPTION_PRESETS.get(opts.get("preset"), preset)
+        def iv(key, default):
+            return opts.get(key) if opts.get(key) not in (None, "") else ip.get(key, default)
+        name = str(iv("font_name", f_name)).replace(",", "").replace("\n", "")
+        color = _to_ass_color(iv("primary_color", p_color), p_color)
+        outline = _to_ass_color(iv("outline_color", o_color), o_color)
+        width = max(0, min(12, float(iv("outline_width", o_width))))
+        align = int(opts.get("position") or 8)
+        if align not in (2, 5, 8): align = 8
+        size = max(8, min(200, int(intro_font_size or 64)))
+        ib = -1 if iv("bold", True) else 0
+        ii = -1 if iv("italic", False) else 0
+        style_line = f"Style: Intro,{name},{size},{color},{color},{outline},{b_color},{ib},{ii},0,0,100,100,1,0,1,{width},2,{align},40,40,180,1\n"
+        header = header.replace("[Events]", style_line + "\n[Events]")
+        intro_text = str(intro_caption).replace("{", "").replace("}", "").replace(chr(92), "").replace("\n", " ")
+        if iv("uppercase", False): intro_text = intro_text.upper()
         intro_end = max(0.1, float(intro_caption_duration))
-        # Top-center ({\an8}); optionally a bigger font via \fs so the hook can
-        # stand out from the body captions (CapCut/Opus-style).
-        size_tag = f"\\fs{int(intro_font_size)}" if intro_font_size else ""
-        # NOTE: the Name field is set to "intro" (Dialogue: Layer,Start,End,
-        # Style,Name,...). This is authored in CLIP-RELATIVE time (0..duration),
-        # so the clip-offset rebasing in ffmpeg_tools._shift_subtitle_times must
-        # NOT shift it — the "intro" tag is how that step recognises and skips it.
-        event_lines.append(
-            f"Dialogue: 0,0:00:00.00,0:00:{intro_end:05.2f},Default,intro,0,0,0,,{{\\an8{size_tag}}}{intro_text}"
-        )
+        animation = {"fade": r"\fad(200,150)", "pop": r"\fscx80\fscy80\t(0,180,\fscx100\fscy100)"}.get(opts.get("animation"), "")
+        # The intro name keeps this event clip-relative during subtitle rebasing.
+        alignment_tag = chr(92) + "an" + str(align)
+        event_lines.append(f"Dialogue: 0,0:00:00.00,{fmt_ass_time(intro_end)},Intro,intro,0,0,0,,{{{alignment_tag}{animation}}}{intro_text}")
 
     for seg in segments:
         words = getattr(seg, "words", []) or []

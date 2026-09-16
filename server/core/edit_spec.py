@@ -59,6 +59,29 @@ def _norm_canvas(canvas: Any) -> Dict[str, Any]:
     return {"ratio": ratio, "fps": fps}
 
 
+def _norm_crop(value):
+    if not isinstance(value, dict):
+        return None
+    import math
+    vals = {k: float(value.get(k, d)) for k, d in (("x", 0), ("y", 0), ("w", 1), ("h", 1))}
+    if not all(math.isfinite(v) for v in vals.values()):
+        raise ValueError("Crop coordinates must be finite")
+    vals["w"] = max(0.01, min(1, vals["w"]))
+    vals["h"] = max(0.01, min(1, vals["h"]))
+    vals["x"] = max(0, min(1 - vals["w"], vals["x"]))
+    vals["y"] = max(0, min(1 - vals["h"], vals["y"]))
+    return vals
+
+
+def _norm_facecam(value):
+    if not isinstance(value, dict) or not value.get("crop"):
+        return None
+    return {"crop": _norm_crop(value["crop"]),
+            "layout": value.get("layout") if value.get("layout") in ("top", "bottom", "pip") else "pip",
+            "size": max(0.15, min(0.45, _num(value.get("size"), 0.3))),
+            "corner": value.get("corner") if value.get("corner") in ("top-left", "top-right", "bottom-left", "bottom-right") else "bottom-right"}
+
+
 def _norm_video_clip(item: Any, idx: int) -> Dict[str, Any]:
     if not isinstance(item, dict) or not item.get("src"):
         raise ValueError(f"video clip #{idx} needs a 'src'")
@@ -85,6 +108,8 @@ def _norm_video_clip(item: Any, idx: int) -> Dict[str, Any]:
             "cropRatio": transform.get("cropRatio"),
             "x": transform.get("x"),            # active-speaker offset (px) or None
             "zoom": max(1.0, zoom),
+            "crop": _norm_crop(transform.get("crop")),
+            "facecam": _norm_facecam(transform.get("facecam")),
         },
         "filters": filters,
         "speed": max(0.1, _num(item.get("speed"), 1.0) or 1.0),

@@ -71,6 +71,8 @@
       intro_caption_duration: captionOpts.intro_caption_duration,
       intro_enabled: captionOpts.intro_enabled,
       intro_font_size: captionOpts.intro_font_size,
+      intro_style: captionOpts.intro_style,
+      auto_clip_count: !!doc.getElementById('auto-clip-count')?.checked,
       max_clips: parseInt(doc.getElementById('max-clips').value, 10) || 5,
       min_duration: parseFloat(doc.getElementById('min-duration').value) || 20,
       max_duration: parseFloat(doc.getElementById('max-duration').value) || 60,

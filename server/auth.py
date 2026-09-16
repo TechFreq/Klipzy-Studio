@@ -64,15 +64,15 @@ def resolve_token() -> str:
     """
     Return the shared secret for this run.
 
-    Prefers a token handed down by the parent process (Electron). Otherwise
-    generates one and persists it to logs/api_token.txt for local scripts.
+    Prefers a token handed down by the parent process (Electron), otherwise
+    generates one. Persists the effective token for desktop reconnects and scripts.
     """
     supplied = os.environ.get(TOKEN_ENV_VAR, "").strip()
-    if supplied:
-        return supplied
-
-    token = secrets.token_urlsafe(32)
+    # Persist the effective token for reconnecting desktop instances too.
+    token = supplied or secrets.token_urlsafe(32)
     os.environ[TOKEN_ENV_VAR] = token
+    if auth_disabled():
+        return token  # Tests/headless auth-off runs must not replace a live token file.
 
     try:
         path = _token_file()
@@ -83,7 +83,7 @@ def resolve_token() -> str:
             os.chmod(path, 0o600)
         except OSError:
             pass
-        logger.info("Generated a local API token; wrote it to %s", path)
+        logger.info("Stored the local API token for reconnecting clients at %s", path)
     except OSError as exc:
         logger.warning("Could not persist the API token: %s", exc)
 

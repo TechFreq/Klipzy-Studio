@@ -136,6 +136,7 @@ class VideoClipperEngine:
         vertical_crop: bool = True,
         aspect_ratio: Optional[str] = "9:16",
         max_clips: int = 5,
+        auto_clip_count: bool = False,
         min_duration: float = 20.0,
         max_duration: float = 60.0,
         whisper_model: str = "base",
@@ -174,6 +175,7 @@ class VideoClipperEngine:
         intro_caption_duration: float = 3.0,
         intro_enabled: Optional[bool] = None,
         intro_font_size: Optional[int] = None,
+        intro_style: Optional[dict] = None,
         progress_callback=None,
     ) -> List[ClipResult]:
         """
@@ -261,7 +263,7 @@ class VideoClipperEngine:
             from server.core.audio_energy import detect_action_highlights
             candidates = detect_action_highlights(
                 temp_audio, min_duration=min_duration, max_duration=max_duration,
-                top_k=max_clips, video_path=video_path,
+                top_k=20 if auto_clip_count else max_clips, video_path=video_path,
             )
 
         # Sanity floor: never emit a degenerate sub-clip regardless of source.
@@ -307,7 +309,11 @@ class VideoClipperEngine:
                 continue
             seen_hooks.add(key)
             unique.append(c)
-        candidates = unique[:max_clips]
+        if auto_clip_count:
+            candidates = select_auto_candidates(unique)
+            report(f"Auto selected {len(candidates)} of {len(unique)} distinct moments (limit 20)", 49)
+        else:
+            candidates = unique[:max_clips]
 
         # Viral copywriting pass (opt-in via use_llm): rewrite each FINAL clip's
         # hook + title and add an engaging 1-2 sentence description — the
@@ -366,6 +372,7 @@ class VideoClipperEngine:
                 intro_caption=intro_caption,
                 intro_caption_duration=intro_caption_duration,
                 intro_font_size=intro_font_size,
+                intro_style=intro_style,
             )
         except Exception:
             ass_path = None
@@ -447,6 +454,7 @@ class VideoClipperEngine:
                         intro_caption=effective_intro,
                         intro_caption_duration=intro_caption_duration,
                         intro_font_size=intro_font_size,
+                        intro_style=intro_style,
                     )
                 except Exception:
                     clip_ass = None
@@ -527,6 +535,7 @@ class VideoClipperEngine:
                     duration=clip.duration,
                     hook_text=clip.hook_text,
                     output_file=output_clip_path,
+                    source_file=video_path,
                     description=getattr(clip, "description", "") or "",
                     full_text=getattr(clip, "full_text", "") or "",
                     virality=clip.virality,
@@ -553,3 +562,11 @@ class VideoClipperEngine:
 
         report("Done!", 100)
         return results
+
+def select_auto_candidates(candidates, limit=20):
+    """Choose distinct ranked moments within 65% of the strongest score."""
+    if not candidates:
+        return []
+    ordered = sorted(candidates, key=lambda candidate: candidate.score, reverse=True)
+    threshold = max(0.0, ordered[0].score * 0.65)
+    return [candidate for candidate in ordered if candidate.score >= threshold][:limit]

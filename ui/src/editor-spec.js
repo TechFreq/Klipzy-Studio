@@ -47,13 +47,15 @@
       kind: 'video',
       clips: [{
         src: src,
-        in: trimIn,
-        out: trimOut,
+        in: trimIn + _num(state.sourceOffset, 0),
+        out: trimOut + _num(state.sourceOffset, 0),
         start: 0,
         transform: {
           // 'full' means no re-crop; a concrete ratio re-frames the clip.
           cropRatio: ratio === 'full' ? null : ratio,
           zoom: zoom,
+          crop: state.crop || null,
+          facecam: state.facecam || null,
         },
         filters: filter,
         speed: Math.max(0.1, _num(state.speed, 1.0)),

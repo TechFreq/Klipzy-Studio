@@ -9,16 +9,28 @@ let apiToken = '';
 // ~30 fetch call sites, wrap fetch once here so the header is attached to any
 // request aimed at our own server - including any added later.
 const nativeFetch = window.fetch.bind(window);
-window.fetch = function klipzyFetch(resource, options) {
+window.fetch = async function klipzyFetch(resource, options) {
   const url = typeof resource === 'string' ? resource : (resource && resource.url) || '';
-  if (!apiToken || !url.startsWith(serverUrl)) {
-    return nativeFetch(resource, options);
+  // Match the exact local API origin; never send credentials to other services.
+  let local = false;
+  try { local = new URL(url, serverUrl).origin === new URL(serverUrl).origin; } catch (_) {}
+  if (!local) return nativeFetch(resource, options);
+  const send = () => {
+    const opts = { ...(options || {}) };
+    const headers = new Headers(opts.headers || (resource instanceof Request ? resource.headers : {}));
+    if (apiToken) headers.set('X-Klipzy-Token', apiToken);
+    opts.headers = headers;
+    return nativeFetch(resource, opts);
+  };
+  if (!apiToken && window.clipperAPI?.getApiToken) apiToken = await window.clipperAPI.getApiToken();
+  let response = await send();
+  if (response.status === 401 && window.clipperAPI?.getApiToken) {
+    // A rejected request has not executed. Refresh after a backend restart and retry once.
+    apiToken = await window.clipperAPI.getApiToken();
+    response = await send();
   }
-  const opts = { ...(options || {}) };
-  const headers = new Headers(opts.headers || {});
-  if (!headers.has('X-Klipzy-Token')) headers.set('X-Klipzy-Token', apiToken);
-  opts.headers = headers;
-  return nativeFetch(resource, opts);
+  if (response.status === 401) throw new Error('The app could not reconnect securely to its local engine. Close all Klipzy Studio windows and any separately started Klipzy backend, then reopen the app. CPU and GPU modes both work; no GPU installation is needed to fix this connection error.');
+  return response;
 };
 let selectedVideo = null;
 let pollTimer = null;
@@ -33,6 +45,7 @@ const PROJECTS_KEY = 'klipzy.projects.v1';
 
 function setWizardStep(stepNum) {
   currentWizardStep = stepNum;
+  document.querySelector('.main')?.scrollTo?.({ top: 0, behavior: 'instant' });
   for (let i = 1; i <= 4; i++) {
     const stepBtn = document.getElementById(`wizard-step-btn-${i}`);
     const panel = document.getElementById(`step-panel-${i}`);
@@ -84,6 +97,9 @@ function resetWizardToStep1() {
   hide('project-bar');
   setVal('project-name', '');
   hide('trim-panel');
+  hide('source-preview');
+  sourceFiles = [];
+  for (const id of ['trim-video', 'trim-sideby-orig-vid', 'trim-sideby-out-vid']) document.getElementById(id)?.pause();
   const grid = document.getElementById('clips-grid');
   if (grid) grid.innerHTML = '';
   const nextBtn = document.getElementById('step1-next-btn');
@@ -390,13 +406,13 @@ function renderResourceFooter(r) {
 const OUTPUT_MODE_PRESETS = {
   shorts:   { hint: 'Vertical 9:16, clips up to 60s — TikTok / Reels / Shorts.',
               set: { 'clip-aspect-ratio': '9:16', 'min-duration': 20, 'max-duration': 60 },
-              check: { 'vertical-crop': true } },
+              check: { 'vertical-crop': true, 'remove-silence': false } },
   x:        { hint: 'Square 1:1, clips up to 140s — X / Twitter.',
               set: { 'clip-aspect-ratio': '1:1', 'min-duration': 30, 'max-duration': 140 },
-              check: { 'vertical-crop': true } },
+              check: { 'vertical-crop': true, 'remove-silence': false } },
   longform: { hint: 'Landscape 16:9, longer highlights up to 90s — YouTube.',
               set: { 'clip-aspect-ratio': '16:9', 'min-duration': 30, 'max-duration': 90 },
-              check: { 'vertical-crop': false } },
+              check: { 'vertical-crop': false, 'remove-silence': false } },
   tight:    { hint: 'Vertical 9:16 up to 60s with dead-air removed — punchy edits.',
               set: { 'clip-aspect-ratio': '9:16', 'min-duration': 20, 'max-duration': 60 },
               check: { 'vertical-crop': true, 'remove-silence': true } },
@@ -420,6 +436,8 @@ function applyOutputPreset() {
     if (node && node.type === 'checkbox') node.checked = !!val;
   });
   if (hintEl) hintEl.textContent = preset.hint;
+  updateSourceAspect();
+  refreshPortraitCaptionPreview();
 }
 
 document.getElementById('output-mode-preset')?.addEventListener('change', applyOutputPreset);
@@ -461,7 +479,7 @@ async function loadOutputFolder() {
       const data = await res.json();
       input.value = data.folder || '';
       const isDefault = !!data.is_default || !data.folder;
-      input.dataset.default = data.folder || DEFAULT_OUTPUT_ROOT;
+      input.dataset.default = data.default_folder || DEFAULT_OUTPUT_ROOT;
       document.getElementById('output-folder-row')?.classList.toggle('is-default', isDefault);
     }
   } catch (_) { /* server offline: leave path blank; browse will still work */ }
@@ -492,7 +510,7 @@ async function saveOutputFolder(folder) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || data.message || 'Failed to save output folder');
     if (input) input.value = data.folder || folderValue;
-    const isDefault = !data.is_default || data.is_default === true || data.folder === (input?.dataset.default || '');
+    const isDefault = data.is_default === true;
     document.getElementById('output-folder-row')?.classList.toggle('is-default', !!isDefault);
     showToast('Output folder updated ✅', 'success');
   } catch (err) {
@@ -502,7 +520,7 @@ async function saveOutputFolder(folder) {
 
 async function resetOutputFolder() {
   const input = document.getElementById('output-folder-input');
-  const defaultPath = input?.dataset.default || DEFAULT_OUTPUT_ROOT;
+  const defaultPath = ''; // Reset to the built-in folder.
   await saveOutputFolder(defaultPath);
 }
 
@@ -604,7 +622,7 @@ function bindEvents() {
   const fileInput = document.getElementById('file-input');
 
   if (dropZone && fileInput) {
-  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('click', () => { sourceSelectionMode = 'add'; fileInput.value = ''; fileInput.click(); });
   // Keyboard access: the drop zone is role="button", so Enter/Space open the picker.
   dropZone.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
@@ -614,24 +632,25 @@ function bindEvents() {
   dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('dragover');
+    sourceSelectionMode = 'add';
     const files = Array.from(e.dataTransfer.files || []).filter(f => f.type.startsWith('video/') || /\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(f.name));
     if (files.length === 1) {
-      selectVideoFile(files[0]);
+      addSourceFiles(files);
     } else if (files.length > 1) {
-      handleBatchVideoDrop(files);
+      addSourceFiles(files);
     }
   });
   fileInput.addEventListener('change', (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 1) {
-      selectVideoFile(files[0]);
+      addSourceFiles(files);
     } else if (files.length > 1) {
-      handleBatchVideoDrop(files);
+      addSourceFiles(files);
     }
   });
   }
 
-  document.getElementById('change-file')?.addEventListener('click', () => fileInput && fileInput.click());
+  document.getElementById('change-file')?.addEventListener('click', () => { sourceSelectionMode = 'replace'; if (fileInput) { fileInput.value = ''; fileInput.click(); } });
   document.getElementById('save-project')?.addEventListener('click', saveCurrentProject);
   document.getElementById('project-list')?.addEventListener('change', (e) => {
     if (e.target.value === '__new__') { e.target.value = ''; goToNewProject(); return; }
@@ -682,6 +701,34 @@ function bindEvents() {
   // Start clipping
   document.getElementById('start-clipping')?.addEventListener('click', startClipping);
 
+  document.getElementById('manual-trim-toggle')?.addEventListener('click', () => {
+    const panel = document.getElementById('trim-panel'); const open = panel.classList.contains('hidden');
+    panel.classList.toggle('hidden', !open);
+    document.getElementById('manual-trim-toggle').setAttribute('aria-expanded', String(open));
+    if (open) document.getElementById('trim-sideby-orig-vid').pause();
+  });
+  document.getElementById('source-aspect')?.addEventListener('change', (event) => {
+    document.getElementById('clip-aspect-ratio').value = event.target.value;
+    document.getElementById('vertical-crop').checked = true; updateSourceAspect();
+  });
+  for (const id of ['clip-aspect-ratio', 'vertical-crop']) document.getElementById(id)?.addEventListener('change', updateSourceAspect);
+  const original = document.getElementById('trim-sideby-orig-vid');
+  const output = document.getElementById('trim-sideby-out-vid');
+  const syncPreview = () => { if (output.readyState && Math.abs(output.currentTime - original.currentTime) > 0.15) output.currentTime = original.currentTime; };
+  for (const event of ['seeking', 'seeked', 'timeupdate']) original?.addEventListener(event, syncPreview);
+  original?.addEventListener('play', () => { syncPreview(); output.play().catch(() => {}); });
+  original?.addEventListener('pause', () => output.pause());
+  original?.addEventListener('ratechange', () => { output.playbackRate = original.playbackRate; });
+  original?.addEventListener('loadeddata', () => { updateSourceAspect(); document.getElementById('source-preview-status').textContent = ''; });
+  for (const video of [original, output, document.getElementById('trim-video')]) video?.addEventListener('error', () => {
+    document.getElementById('source-preview-status').textContent = 'This video cannot play in the preview. A still frame is shown when available; try an H.264 MP4 for playback.';
+  });
+  for (const id of ['clip-aspect-ratio', 'min-duration', 'max-duration', 'vertical-crop', 'remove-silence', 'source-aspect']) {
+    document.getElementById(id)?.addEventListener('change', () => {
+      document.getElementById('output-mode-preset').value = 'custom';
+      document.getElementById('output-mode-hint').textContent = 'Custom settings — your selections are used for processing.';
+    });
+  }
   // Manual trim
   document.getElementById('add-trim-btn')?.addEventListener('click', addTrimmedClip);
   document.getElementById('trim-preview-btn')?.addEventListener('click', previewTrimSelection);
@@ -887,21 +934,15 @@ function bindEvents() {
     step2Back.addEventListener('click', () => setWizardStep(1));
   }
 
-  const captionToggleBtn = document.getElementById('caption-style-toggle-btn');
-  const captionWrap = document.getElementById('generated-caption-settings-wrap');
-  if (captionToggleBtn && captionWrap) {
-    captionToggleBtn.addEventListener('click', () => {
-      const isOpen = !captionWrap.classList.contains('hidden');
-      if (isOpen) {
-        captionWrap.classList.add('hidden');
-        captionToggleBtn.classList.remove('open');
-      } else {
-        captionWrap.classList.remove('hidden');
-        captionToggleBtn.classList.add('open');
-        refreshPortraitCaptionPreview();
-      }
-    });
-  }
+  document.getElementById('caption-options-section')?.addEventListener('toggle', (event) => {
+    if (event.target.open) {
+      document.getElementById('output-options-section').open = false;
+      refreshPortraitCaptionPreview();
+    }
+  });
+  document.getElementById('auto-clip-count')?.addEventListener('change', event => {
+    document.getElementById('max-clips').disabled = event.target.checked;
+  });
 
   const step4Restart = document.getElementById('step4-restart-btn');
   if (step4Restart) {
@@ -941,41 +982,101 @@ async function checkHealth() {
 // ------------------------------------------------------------------
 // File selection
 // ------------------------------------------------------------------
-function selectVideoFile(file) {
-  selectedVideo = file.path;
-  generatedClips = [];
-  // Keep the current project id when adding a video to a freshly created
-  // project draft (New Project flow); otherwise start a fresh unsaved session.
-  if (!pendingNewProject) currentProjectId = null;
+function selectVideoFile(file, replace = false) {
+  const sourcePath = file.path || window.clipperAPI?.getPathForFile?.(file);
+  if (!sourcePath) { showToast('Could not resolve the video path. Open the video in the desktop app.', 'error'); return; }
+  const previousPath = selectedVideo;
+  if (previousPath) {
+    const previous = sourceFiles.find(item => item.path === previousPath);
+    if (previous) previous.clips = generatedClips;
+  }
+  if (replace) sourceFiles = sourceFiles.filter(item => item.path !== previousPath || item.path === sourcePath);
+  selectedVideo = sourcePath;
+  if (!sourceFiles.some(item => item.path === sourcePath)) sourceFiles.push({ path: sourcePath, name: file.name });
+  generatedClips = sourceFiles.find(item => item.path === sourcePath)?.clips || [];
+  // Changing or adding a source never changes project identity.
   emojiSuggestionCache.clear();
   document.getElementById('file-name').textContent = file.name;
   document.getElementById('file-info').classList.remove('hidden');
   document.getElementById('project-bar').classList.remove('hidden');
   // Use the name from the New Project modal if one is pending; otherwise fall
   // back to the video's filename.
-  const projName = pendingNewProject?.name || file.name.replace(/\.[^.]+$/, '');
+  const projName = document.getElementById('project-name').value.trim() || pendingNewProject?.name || file.name.replace(/\.[^.]+$/, '');
   document.getElementById('project-name').value = projName;
   updateCurrentProjectUI(projName);
   // If this video is being added to a project draft (or a re-opened project),
   // persist the source now so the entry stops being an empty stub.
-  if (currentProjectId) saveProjectManifest(false);
+  saveProjectManifest(false);
   renderProjectGrid();  // a video is loaded now — hide the step-1 recents
   document.getElementById('start-clipping').disabled = false;
   const nextBtn = document.getElementById('step1-next-btn');
   if (nextBtn) nextBtn.disabled = false;
   document.getElementById('clips-grid').innerHTML = '';
-  document.getElementById('results').classList.add('hidden');
+  document.getElementById('results').classList.toggle('hidden', !generatedClips.length);
+  if (generatedClips.length) renderClipsGrid();
 
-  // Initialize the manual trimmer with this source.
-  const video = document.getElementById('trim-video');
-  video.src = fileUrl(selectedVideo);
   trimState.camVideo = null;
-  document.getElementById('trim-panel').classList.remove('hidden');
   document.getElementById('cam-path').value = '';
+  initializeSourcePreview();
   setWizardStep(1);
+}
 
-  // Auto-detect gameplay + facecam and switch to the reaction layout for the user.
-  autoDetectLayout(selectedVideo);
+// ------------------------------------------------------------------
+
+let sourceSelectionMode = 'add';
+let sourceFiles = [];
+let previewGeneration = 0;
+function renderSourceLibrary() {
+  const library = document.getElementById('source-library');
+  library.replaceChildren();
+  for (const file of sourceFiles) {
+    const button = document.createElement('button');
+    button.className = 'btn btn-secondary'; button.textContent = file.name;
+    button.setAttribute('aria-pressed', String(file.path === selectedVideo));
+    button.onclick = () => { if (file.path !== selectedVideo) selectVideoFile(file); };
+    library.appendChild(button);
+  }
+  const add = document.createElement('button');
+  add.className = 'add-clip-zone'; add.textContent = '+ Add another video';
+  add.onclick = () => { sourceSelectionMode = 'add'; const input = document.getElementById('file-input'); input.value = ''; input.click(); };
+  library.appendChild(add);
+}
+function initializeSourcePreview() {
+  const generation = ++previewGeneration;
+  document.getElementById('source-preview').classList.remove('hidden');
+  document.getElementById('trim-panel').classList.add('hidden');
+  document.getElementById('manual-trim-toggle').setAttribute('aria-expanded', 'false');
+  document.getElementById('source-preview-status').textContent = 'Loading video…';
+  trimState.duration = 0; trimState.start = 0; trimState.end = 0;
+  for (const id of ['trim-video', 'trim-sideby-orig-vid', 'trim-sideby-out-vid']) {
+    const video = document.getElementById(id);
+    video.pause(); video.poster = ''; video.src = fileUrl(selectedVideo); video.load();
+  }
+  renderSourceLibrary(); updateSourceAspect(); loadTrimPoster(selectedVideo, generation);
+}
+function updateSourceAspect() {
+  const aspect = document.getElementById('clip-aspect-ratio').value || '9:16';
+  document.getElementById('source-aspect').value = aspect;
+  const video = document.getElementById('trim-sideby-out-vid');
+  const original = document.getElementById('trim-sideby-orig-vid');
+  const ratio = aspect === 'full' ? (original.videoWidth || 16) + ':' + (original.videoHeight || 9) : aspect;
+  video.style.aspectRatio = ratio.replace(':', ' / ');
+  const [width, height] = ratio.split(':').map(Number);
+  video.style.width = (360 * width / height) + 'px';
+  video.style.objectFit = document.getElementById('vertical-crop').checked ? 'cover' : 'contain';
+  document.getElementById('trim-sideby-out-label').textContent = 'Output preview · ' + aspect;
+}
+async function loadTrimPoster(videoPath, generation) {
+  try {
+    const res = await fetch(serverUrl + '/tools/trim-poster', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video_path: videoPath, timestamp: 0 }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (generation !== previewGeneration || videoPath !== selectedVideo) return;
+    if (data.image_path) for (const id of ['trim-video', 'trim-sideby-orig-vid', 'trim-sideby-out-vid']) document.getElementById(id).poster = fileUrl(data.image_path);
+  } catch (_) { /* Native video playback remains available. */ }
 }
 
 // Ask the backend whether this looks like gameplay with a corner webcam. If so,
@@ -1001,6 +1102,14 @@ async function autoDetectLayout(videoPath) {
     document.getElementById('suggested-moments')?.classList.remove('hidden');
     showToast(`🎮 Gaming + facecam detected (${Math.round((d.confidence || 0) * 100)}%) — switched to Reaction layout`, 'info');
   } catch (_) { /* detection is optional */ }
+}
+
+function addSourceFiles(files) {
+  const resolved = files.map(file => ({name: file.name, path: file.path || window.clipperAPI?.getPathForFile?.(file)})).filter(file => file.path);
+  for (const file of resolved) if (!sourceFiles.some(item => item.path === file.path)) sourceFiles.push(file);
+  if (resolved.length) selectVideoFile(resolved[0], sourceSelectionMode === 'replace');
+  sourceSelectionMode = 'add';
+  document.getElementById('file-input').value = '';
 }
 
 async function handleBatchVideoDrop(files) {
@@ -1364,6 +1473,20 @@ function saveEditProject() {
   showToast('Project updated', 'success');
 }
 
+function collectProcessingOptions() {
+  const settings = {};
+  document.querySelectorAll('#output-options-section input[id], #output-options-section select[id]').forEach(el => {
+    settings[el.id] = el.type === 'checkbox' ? el.checked : el.value;
+  });
+  return settings;
+}
+function restoreProcessingOptions(settings) {
+  Object.entries(settings || {}).forEach(([id, value]) => {
+    const el = document.getElementById(id);
+    if (!el || !el.closest('#output-options-section')) return;
+    if (el.type === 'checkbox') el.checked = value; else el.value = value;
+  });
+}
 function saveProjectManifest(showMessage = false) {
   if (!selectedVideo) return;
   const name = document.getElementById('project-name').value.trim() || 'Untitled project';
@@ -1377,6 +1500,8 @@ function saveProjectManifest(showMessage = false) {
     // Prefer an existing description, then one entered in the New Project modal.
     description: existing?.description || pendingNewProject?.description || '',
     source: selectedVideo,
+    sources: sourceFiles.map(file => file.path === selectedVideo ? { ...file, clips: generatedClips } : file),
+    processingOptions: collectProcessingOptions(),
     sourceName: document.getElementById('file-name').textContent,
     clips: generatedClips,
     captionStyle: document.getElementById('generated-caption-preset')?.value || 'viral_yellow',
@@ -1423,7 +1548,10 @@ function openProject(id) {
   pendingNewProject = null;  // opening an existing project cancels any pending "new project"
   currentProjectId = project.id;
   selectedVideo = project.source;
+  sourceFiles = (project.sources || []).map(file => ({ ...file }));
   if (project.outputFolder) saveOutputFolder(project.outputFolder);
+  restoreProcessingOptions(project.processingOptions);
+  document.getElementById('max-clips').disabled = document.getElementById('auto-clip-count').checked;
   // Restore the output layout/aspect the project was created with.
   const aspectSel = document.getElementById('clip-aspect-ratio');
   if (aspectSel && project.aspectRatio) aspectSel.value = project.aspectRatio;
@@ -1446,13 +1574,18 @@ function openProject(id) {
   document.getElementById('project-name').value = project.name || '';
   updateCurrentProjectUI(project.name || '');
   document.getElementById('start-clipping').disabled = !selectedVideo;
-  const video = document.getElementById('trim-video');
-  video.src = fileUrl(selectedVideo);
-  document.getElementById('trim-panel').classList.remove('hidden');
+  if (!sourceFiles.some(item => item.path === selectedVideo)) sourceFiles.push({path: selectedVideo, name: project.sourceName || project.name});
+  initializeSourcePreview();
 
   // Restore caption options if present
   if (project.captionOptions) {
     const o = project.captionOptions;
+    restoreIntroStyle(o.intro_style);
+    document.getElementById('caption-intro-text').value = o.intro_caption || '';
+    document.getElementById('caption-intro-enabled').checked = !!o.intro_enabled;
+    document.getElementById('caption-intro-duration').value = o.intro_caption_duration ?? 3;
+    document.getElementById('generated-intro-font-size').value = o.intro_font_size ?? 64;
+    document.getElementById('generated-intro-font-size-label').textContent = o.intro_font_size ?? 64;
     if (o.caption_style) {
       const preset = document.getElementById('generated-caption-preset');
       if (preset) preset.value = o.caption_style;
@@ -1877,6 +2010,8 @@ async function addTrimmedClip() {
     };
     generatedClips.push(clip);
     appendClipCard(clip, generatedClips.length - 1);
+    // Update side-by-side output pane to show the rendered clip.
+    updateSidebyOutput(data.clip_path, layout);
     saveCurrentProjectSilently();
     document.getElementById('results').classList.remove('hidden');
     setWizardStep(4);
@@ -1946,7 +2081,9 @@ async function ensureWhisperModelReady(model) {
 
 async function startClipping() {
   if (!selectedVideo) return;
+  const jobContext = { projectId: currentProjectId, source: selectedVideo };
 
+  // GPU acceleration is optional; the transcription backend handles CPU fallback.
   const btn = document.getElementById('start-clipping');
   btn.disabled = true;
   btn.textContent = '⏳ Processing...';
@@ -2000,7 +2137,7 @@ async function startClipping() {
       throw new Error(data.detail || `Server returned ${res.status}`);
     }
     if (data.job_id) {
-      pollJob(data.job_id);
+      pollJob(data.job_id, jobContext);
     } else {
       throw new Error(data.detail || 'Failed to start job');
     }
@@ -2015,7 +2152,51 @@ async function startClipping() {
 
 let currentActiveJobId = null;
 
-function pollJob(jobId) {
+// Associate background jobs with their owning project, even while another view is open.
+const jobContexts = JSON.parse(localStorage.getItem('klipzy.job-contexts') || '{}');
+const unreadJobs = new Set(JSON.parse(localStorage.getItem('klipzy.unread-jobs') || '[]'));
+const completedJobs = new Set(JSON.parse(localStorage.getItem('klipzy.completed-jobs') || '[]'));
+const finishingJobs = new Set();
+function rememberJob(jobId, context) {
+  if (!jobContexts[jobId]) jobContexts[jobId] = context || {projectId:currentProjectId, source:selectedVideo};
+  localStorage.setItem('klipzy.job-contexts', JSON.stringify(jobContexts));
+}
+async function finishBackgroundJob(jobId, data) {
+  if (completedJobs.has(jobId) || finishingJobs.has(jobId)) return;
+  finishingJobs.add(jobId);
+  try {
+    if (!data?.clips) {
+      const response = await fetch(serverUrl + '/job/' + jobId);
+      if (!response.ok) return;
+      data = await response.json();
+    }
+    const context = jobContexts[jobId];
+    if (context) {
+      const projects = readProjects(), project = projects.find(p => p.id === context.projectId);
+      if (project) {
+        if (project.source === context.source) project.clips = data.clips || [];
+        const sources = project.sources || [{path:project.source,name:project.sourceName}];
+        if (!sources.some(source => source.path === context.source)) sources.push({path:context.source,name:context.source.split(/[\\/]/).pop()});
+        project.sources = sources.map(source => source.path === context.source ? {...source,clips:data.clips || []} : source);
+        project.updatedAt = new Date().toISOString(); writeProjects(projects);
+      }
+      if (currentProjectId === context.projectId && selectedVideo === context.source) {
+        generatedClips = data.clips || [];
+        const source = sourceFiles.find(s => s.path === selectedVideo); if (source) source.clips = generatedClips;
+        renderClipsGrid(); document.getElementById('results').classList.remove('hidden');
+        if (document.getElementById('view-clipper').classList.contains('active')) setWizardStep(4);
+      }
+    }
+    completedJobs.add(jobId); unreadJobs.add(jobId);
+    localStorage.setItem('klipzy.completed-jobs', JSON.stringify([...completedJobs].slice(-200)));
+    localStorage.setItem('klipzy.unread-jobs', JSON.stringify([...unreadJobs]));
+    showToast('Clips ready — open the Queue to review ' + (data.clips || []).length + ' clip(s).', 'success');
+    updateQueueBadges(0);
+  } finally { finishingJobs.delete(jobId); }
+}
+
+function pollJob(jobId, context) {
+  rememberJob(jobId, context);
   if (pollTimer) clearInterval(pollTimer);
   currentActiveJobId = jobId;
   setProcessingActive(true);
@@ -2096,7 +2277,7 @@ function pollJob(jobId) {
       if (data.status === 'completed') {
         stopPolling();
         logActivity(`✅ Done — ${(data.clips || []).length} clip(s) generated`, 'ok');
-        showResults(data.clips);
+        await finishBackgroundJob(jobId, data);
       } else if (data.status === 'cancelled') {
         stopPolling();
         logActivity('🛑 Job cancelled', 'err');
@@ -3543,6 +3724,8 @@ let queuePollerInterval = null;
 let queueBadgeInterval = null;
 
 function openQueueModal() {
+  unreadJobs.clear();
+  localStorage.setItem('klipzy.unread-jobs', '[]');
   const modal = document.getElementById('queue-modal');
   if (modal) modal.classList.remove('hidden');
   refreshQueueList();
@@ -3655,6 +3838,13 @@ async function refreshQueueList() {
           const jobData = await r.json();
           if (jobData.clips) {
             closeQueueModal();
+            const context = jobContexts[jobId];
+            if (context?.projectId) {
+              openProject(context.projectId);
+              const source = sourceFiles.find(s => s.path === context.source);
+              if (source && selectedVideo !== source.path) selectVideoFile(source);
+            }
+            document.querySelector('.nav-item[data-view="clipper"]')?.click();
             showResults(jobData.clips);
           }
         } catch (_) { /* server offline */ }
@@ -3672,6 +3862,7 @@ queueBadgeInterval = setInterval(async () => {
     if (!res.ok) return;
     const data = await res.json();
     const jobs = data.jobs || [];
+    for (const job of jobs) if (job.status === 'completed' && jobContexts[job.job_id]) await finishBackgroundJob(job.job_id);
     const activeCount = jobs.filter(j => j.status === 'queued' || j.status === 'processing').length;
     updateQueueBadges(activeCount);
   } catch (e) {}
@@ -3682,8 +3873,9 @@ function updateQueueBadges(activeCount) {
   ['queue-badge', 'sidebar-queue-badge'].forEach((id) => {
     const badge = document.getElementById(id);
     if (badge) {
-      badge.textContent = String(activeCount);
-      badge.classList.toggle('hidden', activeCount === 0);
+      badge.textContent = unreadJobs.size ? activeCount + ' · ' + unreadJobs.size + ' new' : String(activeCount);
+      badge.title = activeCount + ' active jobs; ' + unreadJobs.size + ' completed jobs to review';
+      badge.classList.toggle('hidden', activeCount === 0 && unreadJobs.size === 0);
     }
   });
 }
