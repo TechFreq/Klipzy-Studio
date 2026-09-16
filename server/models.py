@@ -66,6 +66,7 @@ class ClipResult(BaseModel):
     duration: float
     hook_text: str
     output_file: str
+    source_file: Optional[str] = None
     # AI-written social caption/description shown on the clip card (may be empty
     # when the LLM copywriting step didn't run or Ollama wasn't available).
     description: str = ""
@@ -94,6 +95,7 @@ class ProcessRequest(BaseModel):
     vertical_crop: bool = True
     aspect_ratio: Optional[str] = "9:16"  # "9:16" | "1:1" | "4:5" | "16:9" | "full"
     max_clips: int = 5
+    auto_clip_count: bool = False
     min_duration: float = 20.0
     max_duration: float = 60.0
     whisper_model: str = "base"
@@ -134,6 +136,7 @@ class ProcessRequest(BaseModel):
     intro_enabled: Optional[bool] = None
     # Optional bigger font size for the intro hook (defaults to the caption size).
     intro_font_size: Optional[int] = None
+    intro_style: Optional[dict] = None
 
 
 class ProcessResponse(BaseModel):
@@ -183,6 +186,7 @@ class SubtitleRegenRequest(BaseModel):
     intro_enabled: Optional[bool] = None
     # Optional bigger font size for the intro hook.
     intro_font_size: Optional[int] = None
+    intro_style: Optional[dict] = None
     source_video: Optional[str] = None
     clip_output_file: Optional[str] = None
     start_seconds: Optional[float] = None
@@ -251,6 +255,16 @@ class TrimResponse(BaseModel):
     end_seconds: float
     duration: float
     words: List[WordTimestamp] = Field(default_factory=list)
+
+
+class TrimPosterRequest(BaseModel):
+    """Request a poster thumbnail for the trim preview at a given timestamp."""
+    video_path: str
+    timestamp: float = 1.0
+
+
+class TrimPosterResponse(BaseModel):
+    image_path: str
 
 
 class CustomRenderRequest(BaseModel):
@@ -532,6 +546,12 @@ class EditorExportRequest(BaseModel):
     filename: Optional[str] = None
     subtitle_path: Optional[str] = None
     normalize_audio: bool = False
+    # When burning captions straight from the editor, the client sends the
+    # (output-timeline-rebased) word timings + style here instead of a prebuilt
+    # subtitle file; the server generates the karaoke ASS and burns it.
+    burn_captions: bool = False
+    caption_words: Optional[List[dict]] = None
+    caption_style: Optional[dict] = None
 
 
 class EditorExportResponse(BaseModel):

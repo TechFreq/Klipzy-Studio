@@ -76,16 +76,77 @@ def editor_export(req: EditorExportRequest):
     filename = req.filename or f"{stem}_edited.mp4"
     output_path = str((out_dir / filename).resolve())
 
+    # If the client asked to burn captions, generate a karaoke ASS from the
+    # (already output-timeline-rebased) word timings and burn that. This takes
+    # precedence over any prebuilt subtitle_path.
+    subtitle_path = req.subtitle_path
+    if req.burn_captions and req.caption_words:
+        try:
+            subtitle_path = _build_caption_ass(req, ns, output_path) or subtitle_path
+        except Exception as e:  # noqa: BLE001 — bad caption data must not fail the render
+            print(f"[editor] caption ASS generation failed, skipping burn: {e}")
+
     job_id = uuid.uuid4().hex[:8]
     with _EDITOR_LOCK:
         _EDITOR_JOBS[job_id] = {"state": "rendering", "percent": 0, "step": "Starting…",
                                 "done": False, "error": None, "output": None}
     threading.Thread(
         target=_editor_export_worker,
-        args=(job_id, ns, output_path, req.subtitle_path, req.normalize_audio),
+        args=(job_id, ns, output_path, subtitle_path, req.normalize_audio),
         daemon=True,
     ).start()
     return EditorExportResponse(job_id=job_id, status="started")
+
+
+# Canvas ratio -> ASS PlayRes (matches the compositor's caption coordinate space).
+_ASS_PLAYRES = {
+    "9:16": (1080, 1920),
+    "4:5": (1080, 1350),
+    "1:1": (1080, 1080),
+    "16:9": (1920, 1080),
+    "full": (1080, 1920),
+}
+
+
+def _build_caption_ass(req: EditorExportRequest, ns: dict, output_path: str) -> Optional[str]:
+    """Turn the request's word timings + style into a karaoke ASS file next to
+    the output, returning its path (or None if there are no usable words)."""
+    from server.core.caption_styler import generate_karaoke_captions
+    from server.models import TranscriptSegment, WordTimestamp
+
+    words = []
+    for w in (req.caption_words or []):
+        text = str((w or {}).get("word") or "").strip()
+        if not text:
+            continue
+        start = float((w or {}).get("start") or 0.0)
+        end = float((w or {}).get("end") or start)
+        if end <= start:
+            end = start + 0.04
+        words.append(WordTimestamp(word=text, start=start, end=end))
+    if not words:
+        return None
+
+    seg = TranscriptSegment(
+        id=0, start=words[0].start, end=words[-1].end,
+        text=" ".join(w.word for w in words), words=words,
+    )
+    style = req.caption_style or {}
+    ratio = (ns.get("canvas") or {}).get("ratio", "9:16")
+    play_res_x, play_res_y = _ASS_PLAYRES.get(ratio, (1080, 1920))
+    ass_path = str(Path(output_path).with_suffix(".captions.ass"))
+    generate_karaoke_captions(
+        segments=[seg],
+        output_ass_path=ass_path,
+        primary_color=style.get("primary_color"),
+        highlight_color=style.get("highlight_color"),
+        font_size=style.get("font_size"),
+        chunk_size=int(style.get("chunk_size") or 4),
+        position=style.get("position"),
+        play_res_x=play_res_x,
+        play_res_y=play_res_y,
+    )
+    return ass_path
 
 
 @router.get("/editor/export/{job_id}")

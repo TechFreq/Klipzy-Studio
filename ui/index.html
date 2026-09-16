@@ -117,7 +117,7 @@
             <div class="drop-content">
               <span class="drop-icon" aria-hidden="true">🎞️</span>
               <h3>Drop video(s) here or click to browse</h3>
-              <p class="muted">MP4, MOV, MKV, WebM — single video or batch multi-video drop</p>
+              <p class="muted">MP4, MOV, MKV, WebM — add one or more videos, then choose how to clip them</p>
             </div>
             <input type="file" id="file-input" accept="video/*" multiple hidden aria-hidden="true" tabindex="-1" />
           </div>
@@ -148,12 +148,23 @@
           <div id="output-folder-row" class="card output-folder-row">
             <label for="output-folder-input" class="output-folder-label">📁 Default export folder:</label>
             <div class="output-folder-controls">
-              <input id="output-folder-input" type="text" placeholder="Where exported clips are saved (optional)…" readonly />
+              <input id="output-folder-input" type="text" placeholder="Loading export folder…" readonly />
               <button class="btn btn-small btn-secondary" id="browse-output-folder">📂 Browse…</button>
-              <button class="btn btn-small" id="reset-output-folder" title="Clear the default export folder">↺ Reset</button>
+              <button class="btn btn-small" id="reset-output-folder" title="Restore the built-in output folder">↺ Reset</button>
             </div>
-            <p class="muted small">Generated clips are kept as temporary working files inside the app; only clips you export are saved here.</p>
+            <p class="muted small">New renders and exports use this folder. The selected path is included when you save a project.</p>
           </div>
+
+          <section id="source-preview" class="card hidden">
+<div class="source-preview-header"><h3>Video &amp; output preview</h3><div class="source-preview-actions"><label class="option"><span>Output format</span><select id="source-aspect"><option value="9:16">Vertical · 9:16</option><option value="16:9">Wide · 16:9</option><option value="1:1">Square · 1:1</option><option value="4:5">Portrait · 4:5</option><option value="full">Original · No crop</option></select></label><button id="manual-trim-toggle" class="btn btn-secondary" aria-expanded="false">✂️ Trim manually</button></div></div><div id="source-library" class="source-library"></div>
+<div class="source-comparison">
+<div><h4>Original video</h4><video id="trim-sideby-orig-vid" controls playsinline preload="auto"></video></div>
+<div><h4 id="trim-sideby-out-label">Output preview · 9:16</h4><video id="trim-sideby-out-vid" muted playsinline preload="auto"></video></div>
+</div><p id="source-preview-status" class="muted small" role="status"></p>
+
+<p class="muted small">Framing preview uses a center crop. Automatic speaker tracking and captions are applied during processing.</p>
+
+</section>
 
         <!-- Manual Clip Trimmer -->
         <div id="trim-panel" class="card trim-panel hidden">
@@ -233,6 +244,7 @@
                 <p class="muted small" id="suggested-moments-hint">Auto-find the most clippable moments (loud + high-motion) so you don't have to hunt for them.</p>
                 <div id="suggested-moments-list" class="suggested-moments-list"></div>
               </div>
+
             </div>
           </div>
         </div>
@@ -249,6 +261,7 @@
             <h3>✂️ Clipping Options</h3>
             <button class="btn btn-small btn-secondary" id="step2-back-btn">⬅️ Back to Project/Video</button>
           </div>
+<details id="output-options-section" class="options-section" open><summary>Output mode &amp; clipping options</summary>
           <!-- Output-mode presets: one pick sets aspect ratio + durations +
                reframing to match a target platform. "Custom" leaves the manual
                controls below untouched. -->
@@ -265,6 +278,8 @@
             </label>
             <p class="output-mode-hint muted small" id="output-mode-hint">Or fine-tune everything manually below.</p>
           </div>
+<label class="toggle"><input type="checkbox" id="auto-clip-count" /> Auto-select clip count</label>
+<p class="muted small">Find strong, distinct moments instead of using a fixed count (up to 20). Your duration limits still apply. The processing log reports how many were selected.</p>
           <div class="options-grid">
             <label class="option">
               <span>Max clips</span>
@@ -415,20 +430,14 @@
             </label>
           </div>
 
-          <!-- Button Toggle for Caption Styling Menu -->
-          <div class="caption-toggle-action-bar">
-            <button type="button" class="btn btn-secondary caption-style-toggle-btn" id="caption-style-toggle-btn">
-              <span>🎨 Customize Caption Style & Live Preview</span>
-              <span class="toggle-icon" id="caption-toggle-icon">▼</span>
-            </button>
-          </div>
-
+</details>
+<details id="caption-options-section" class="options-section"><summary id="caption-style-toggle-btn">Captions &amp; headline settings</summary>
           <!-- Collapsible Caption Customization Card -->
-          <div class="generated-caption-settings-wrap hidden" id="generated-caption-settings-wrap">
+          <div class="generated-caption-settings-wrap" id="generated-caption-settings-wrap">
             <div class="card generated-caption-settings" aria-label="Generated clip caption settings">
               <div class="caption-settings-header">
-                <strong>🎨 CapCut-Style Caption Customization</strong>
-                <span class="muted small">Customize presets, fonts, colors, outline, position, and text styling.</span>
+                <strong>Spoken captions</strong>
+                <span class="muted small">Style the spoken transcript here. The opening headline has its own controls below.</span>
               </div>
 
               <!-- Brand Kits: save/apply this whole look as a reusable template -->
@@ -492,22 +501,6 @@
                   <input type="color" id="caption-outline-color" value="#000000" />
                 </label>
                 <label class="caption-field">
-                  <span>Top hook (optional)</span>
-                  <input id="caption-intro-text" type="text" maxlength="90" placeholder="e.g. The truth about..." />
-                </label>
-                <div class="toggle-with-number">
-                  <label class="toggle">
-                    <input type="checkbox" id="caption-intro-enabled" />
-                    <span>Show intro hook for first</span>
-                  </label>
-                  <input id="caption-intro-duration" class="inline-number" type="number" min="1" max="8" step="0.5" value="3" aria-label="Intro hook duration in seconds" />
-                  <span>seconds</span>
-                </div>
-                <label class="caption-field">
-                  <span>Intro hook size (<output id="generated-intro-font-size-label" for="generated-intro-font-size">64</output>)</span>
-                  <input type="range" id="generated-intro-font-size" min="24" max="140" step="2" value="64" />
-                </label>
-                <label class="caption-field">
                   <span>Position</span>
                   <select id="caption-position">
                     <option value="2" selected>Bottom Center</option>
@@ -544,6 +537,43 @@
                   <span><i>I</i> Italic</span>
                 </label>
               </div>
+<fieldset class="headline-settings"><legend>Opening headline / hook</legend><p class="muted small">An optional title above the spoken captions for the opening seconds.</p>                <label class="caption-field">
+                  <span>Top hook (optional)</span>
+                  <input id="caption-intro-text" type="text" maxlength="90" placeholder="e.g. The truth about..." />
+                </label>
+                <div class="toggle-with-number">
+                  <label class="toggle">
+                    <input type="checkbox" id="caption-intro-enabled" />
+                    <span>Show intro hook for first</span>
+                  </label>
+                  <input id="caption-intro-duration" class="inline-number" type="number" min="1" max="8" step="0.5" value="3" aria-label="Intro hook duration in seconds" />
+                  <span>seconds</span>
+                </div>
+                <label class="caption-field">
+                  <span>Intro hook size (<output id="generated-intro-font-size-label" for="generated-intro-font-size">64</output>)</span>
+                  <input type="range" id="generated-intro-font-size" min="24" max="140" step="2" value="64" />
+                </label>
+<div class="caption-grid"><label class="caption-field"><span>Headline preset</span><select id="intro-preset"><option value="viral_yellow">Viral yellow</option><option value="neon_green">Neon green</option><option value="bold_white">Bold white</option><option value="cyberpunk_cyan">Cyberpunk cyan</option><option value="fire_red">Fire red</option></select></label>
+<label class="caption-field"><span>Headline font</span><select id="intro-font-name">
+                        <option value="" selected>Default (from preset)</option>
+                        <option value="Arial Black">Arial Black</option>
+                        <option value="Impact">Impact (Viral / Memes)</option>
+                        <option value="Montserrat">Montserrat</option>
+                        <option value="Inter">Inter (Clean)</option>
+                        <option value="Komika Axis">Komika Axis (Comic / MrBeast)</option>
+                        <option value="The Bold Font">The Bold Font</option>
+                        <option value="Bebas Neue">Bebas Neue</option>
+                        <option value="Rubik">Rubik</option>
+                        <option value="Futura">Futura</option>
+                        <option value="Proxima Nova">Proxima Nova</option>
+                        <option value="Roboto">Roboto</option>
+                      </select></label>
+<label class="caption-field"><span>Text color</span><input type="color" id="intro-color" value="#ffffff" /></label>
+<label class="caption-field"><span>Outline color</span><input type="color" id="intro-outline-color" value="#000000" /></label>
+<label class="caption-field"><span>Outline width</span><input type="number" id="intro-outline-width" min="0" max="12" value="3" /></label>
+<label class="caption-field"><span>Position</span><select id="intro-position"><option value="8">Top</option><option value="5">Middle</option><option value="2">Bottom</option></select></label>
+<label class="caption-field"><span>Entrance</span><select id="intro-animation"><option value="none">None</option><option value="fade">Fade</option><option value="pop">Pop</option></select></label></div>
+<div class="caption-toggles-row"><label class="toggle"><input type="checkbox" id="intro-bold" checked />Bold</label><label class="toggle"><input type="checkbox" id="intro-italic" />Italic</label><label class="toggle"><input type="checkbox" id="intro-uppercase" />ALL CAPS</label></div></fieldset>
             </div>
 
             <div class="portrait-preview-col">
@@ -563,6 +593,7 @@
             </div>
           </div>
 
+</details>
           <div class="step-actions">
             <button class="btn btn-primary btn-large" id="start-clipping">🚀 Start Clipping & Transcribing</button>
             <button class="btn btn-secondary btn-large" id="batch-process-btn" title="Pick several videos and queue them with these same settings">📦 Batch process multiple videos</button>
@@ -742,13 +773,14 @@
                 <div class="editor-stage" id="editor-stage">
                   <video id="editor-video" preload="metadata" playsinline></video>
                   <div id="editor-overlay-layer" class="editor-overlay-layer" aria-hidden="true"></div>
-                  <div id="editor-crop-overlay" class="editor-crop-overlay hidden" aria-hidden="true"></div>
+                  <div id="editor-crop-overlay" class="editor-crop-overlay hidden" tabindex="0" role="slider" aria-label="Main crop position"><span>Main crop · drag to move</span></div><div id="editor-facecam-overlay" class="editor-facecam-overlay hidden" tabindex="0" role="slider" aria-label="Facecam crop position">Facecam · drag to move</div>
                 </div>
+<p id="editor-source-note" class="muted small"></p><div class="editor-output-preview"><span class="muted small">Output framing</span><canvas id="editor-output-canvas"></canvas></div>
                 <div class="editor-transport">
                   <button class="btn btn-small" id="editor-playpause" title="Play / pause preview">▶️</button>
                   <span class="editor-time" id="editor-time">0:00 / 0:00</span>
                   <span class="editor-transport-spacer"></span>
-                  <button class="btn btn-primary btn-small" id="editor-export-btn" title="Render your edit. Uses your GPU; nothing is uploaded.">🚀 Export</button>
+                  <button class="btn btn-primary btn-small" id="editor-export-btn" title="Render your edit locally using the available hardware.">🚀 Export</button>
                   <button class="btn btn-danger btn-small hidden" id="editor-cancel-btn">🛑 Cancel</button>
                 </div>
                 <div class="editor-progress hidden" id="editor-progress">
@@ -765,6 +797,7 @@
 
               <!-- Controls rail -->
               <div class="editor-rail">
+<div class="editor-group"><label class="editor-field"><span>Editing source</span><select id="editor-source-mode"><option value="rendered">Rendered clip (keep baked effects)</option><option value="original">Original video (rebuild framing)</option></select></label></div>
                 <div class="editor-group">
                   <span class="editor-group-label">📐 Reframe</span>
                   <div class="editor-ratio-chips" id="editor-ratio-chips" role="group" aria-label="Canvas ratio">
@@ -776,6 +809,12 @@
                   </div>
                 </div>
 
+<div class="editor-group"><label class="editor-check"><input type="checkbox" id="editor-facecam-enabled" /> Add facecam crop from this video</label>
+<label class="editor-field"><span>Crop width (% of source)</span><input type="range" id="editor-facecam-width" min="5" max="70" value="25" /></label>
+<label class="editor-field"><span>Crop height (% of source)</span><input type="range" id="editor-facecam-height" min="5" max="70" value="25" /></label>
+<label class="editor-field"><span>Layout order</span><select id="editor-facecam-layout"><option value="pip">Facecam over main</option><option value="top">Facecam above main</option><option value="bottom">Facecam below main</option></select></label>
+<label class="editor-field"><span>Facecam output size</span><input type="range" id="editor-facecam-size" min="15" max="45" value="30" /></label>
+<label class="editor-field"><span>Overlay corner</span><select id="editor-facecam-corner"><option value="bottom-right">Bottom right</option><option value="bottom-left">Bottom left</option><option value="top-right">Top right</option><option value="top-left">Top left</option></select></label></div>
                 <div class="editor-group">
                   <span class="editor-group-label">🎨 Filter</span>
                   <div class="editor-filter-chips" id="editor-filter-chips" role="group" aria-label="Colour filter">
@@ -853,12 +892,48 @@
                   </label>
                 </div>
 
+                <div class="editor-group" id="editor-captions-group">
+                  <span class="editor-group-label">💬 Captions</span>
+                  <p class="muted small hidden" id="editor-captions-none">No word-level captions for this clip. Generate captions during processing to preview them here.</p>
+                  <div id="editor-captions-controls">
+                    <label class="editor-check">
+                      <input type="checkbox" id="editor-captions-show" /> Show captions in preview
+                    </label>
+                    <label class="editor-check">
+                      <input type="checkbox" id="editor-captions-burn" /> 🔥 Burn into exported video
+                    </label>
+                    <p class="muted small">Preview only, unless burning is on — then they're baked into the export.</p>
+                    <label class="editor-field"><span>Position</span>
+                      <select id="editor-captions-position">
+                        <option value="bottom" selected>Bottom</option>
+                        <option value="middle">Middle</option>
+                        <option value="top">Top</option>
+                      </select>
+                    </label>
+                    <label class="editor-field"><span>Words per line</span>
+                      <input type="range" id="editor-captions-chunk" min="1" max="6" step="1" value="4" />
+                      <output id="editor-captions-chunk-label">4</output>
+                    </label>
+                    <label class="editor-field"><span>Font size</span>
+                      <input type="range" id="editor-captions-size" min="24" max="140" step="2" value="72" />
+                      <output id="editor-captions-size-label">72</output>
+                    </label>
+                    <label class="editor-field"><span>Text colour</span>
+                      <input type="color" id="editor-captions-color" value="#ffffff" aria-label="Caption text colour" />
+                    </label>
+                    <label class="editor-field"><span>Highlight colour</span>
+                      <input type="color" id="editor-captions-highlight" value="#ffe000" aria-label="Active-word highlight colour" />
+                    </label>
+                  </div>
+                </div>
+
                 <!-- Selected-item inspector (populated when a timeline block is clicked) -->
                 <div class="editor-group editor-inspector hidden" id="editor-inspector"></div>
               </div>
             </div>
 
             <!-- Timeline -->
+<div class="editor-timeline-tools"><label>Timeline zoom <input type="range" id="editor-timeline-zoom" min="1" max="12" step="1" value="1" /></label><label>In (s) <input id="editor-trim-in" type="number" min="0" step="0.01" value="0" /></label><label>Out (s) <input id="editor-trim-out" type="number" min="0" step="0.01" value="0" /></label><output id="editor-trim-feedback" aria-live="polite"></output><span class="muted small">Drop images or audio here to add them at the playhead.</span></div>
             <div class="editor-timeline" id="editor-timeline">
               <div class="editor-tl-labels">
                 <div class="editor-tl-label editor-tl-ruler-spacer"></div>
@@ -867,13 +942,13 @@
                 <div class="editor-tl-label">🖼 Media</div>
                 <div class="editor-tl-label">🎵 Audio</div>
               </div>
-              <div class="editor-tl-tracks" id="editor-tl-tracks">
+              <div class="editor-tl-scroll"><div class="editor-tl-tracks" id="editor-tl-tracks">
                 <div class="editor-tl-ruler" id="editor-tl-ruler"></div>
                 <div class="editor-tl-lane" id="lane-video"></div>
                 <div class="editor-tl-lane" id="lane-text"></div>
                 <div class="editor-tl-lane" id="lane-graphics"></div>
                 <div class="editor-tl-lane" id="lane-audio"></div>
-                <div class="editor-tl-playhead" id="editor-tl-playhead"></div>
+                <div class="editor-tl-playhead" id="editor-tl-playhead"></div><div id="editor-trim-guide" class="editor-trim-guide hidden"></div></div>
               </div>
             </div>
           </div>

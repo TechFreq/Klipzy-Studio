@@ -25,9 +25,22 @@
   var editorTexts = [];      // { text, x, y, color, size, start, end }
   var editorStickers = [];   // { path, name, x, y, scale, start, end }
   var editorSfx = [];        // { path, name, start, gain }
+  var sourceOffset = 0, sourceSpan = 0, editorSource = null;
+  var cropPosition = {x:0.5,y:0.5}, facecamCrop = {x:0.7,y:0.05,w:0.25,h:0.25};
+  var activeCrop = null;
+  var previewFrame = null;
   var trimIn = 0;
   var trimOut = 0;
   var selected = null;       // { kind, index } | { kind:'video'|'music' }
+
+  // Live ASR captions shown on the preview (decoupled from burn-in). `chunks`
+  // are built from editorClip.words, rebased to CLIP-LOCAL time so they line up
+  // with the playhead in both "rendered" and "original" source modes. They are
+  // only baked into the export when `burn` is on.
+  var editorCaptions = {
+    show: false, burn: false, position: 'bottom', chunk: 4, size: 72,
+    color: '#ffffff', highlight: '#ffe000', chunks: [],
+  };
 
   var FILTER_CSS = {
     none: '',
@@ -47,6 +60,7 @@
   }
 
   function clipDuration() {
+    if (sourceSpan > 0) return sourceSpan;
     var vid = $('editor-video');
     if (vid && isFinite(vid.duration) && vid.duration > 0) return vid.duration;
     return editorClip ? Number(editorClip.duration) || 0 : 0;
@@ -60,7 +74,10 @@
   function editorState() {
     var duration = clipDuration();
     return {
-      source: editorClip ? editorClip.output_file : null,
+      source: editorSource,
+      sourceOffset: sourceOffset,
+      crop: activeCrop,
+      facecam: facecamState(),
       duration: duration,
       ratio: selectedRatio(),
       trimIn: trimIn,
@@ -140,7 +157,92 @@
       makeDraggable(el, 'text', i);
       layer.appendChild(el);
     });
+
+    // Live caption line (single element, content swapped on each timeupdate so
+    // the active word can highlight). Positioned over the shown video rect.
+    if (editorCaptions.show && editorCaptions.chunks.length) {
+      var cap = document.createElement('div');
+      cap.id = 'editor-caption-live';
+      cap.className = 'editor-ov-caption';
+      var fs = Math.max(10, (editorCaptions.size || 72) * scale);
+      var ow = Math.max(1, Math.round(fs * 0.06));
+      var o = '#000';
+      cap.style.position = 'absolute';
+      cap.style.textAlign = 'center';
+      cap.style.left = rect.left + 'px';
+      cap.style.width = rect.w + 'px';
+      cap.style.padding = '0 ' + (rect.w * 0.06) + 'px';
+      cap.style.boxSizing = 'border-box';
+      cap.style.pointerEvents = 'none';
+      cap.style.fontFamily = '"Arial Black", Arial, sans-serif';
+      cap.style.fontWeight = '800';
+      cap.style.lineHeight = '1.15';
+      cap.style.fontSize = fs + 'px';
+      cap.style.color = editorCaptions.color || '#fff';
+      cap.style.textShadow = [
+        ow + 'px 0 0 ' + o, '-' + ow + 'px 0 0 ' + o, '0 ' + ow + 'px 0 ' + o, '0 -' + ow + 'px 0 ' + o,
+        ow + 'px ' + ow + 'px 0 ' + o, '-' + ow + 'px -' + ow + 'px 0 ' + o,
+        ow + 'px -' + ow + 'px 0 ' + o, '-' + ow + 'px ' + ow + 'px 0 ' + o,
+      ].join(', ');
+      var pos = editorCaptions.position || 'bottom';
+      var topFrac = pos === 'top' ? 0.08 : (pos === 'middle' ? 0.45 : 0.72);
+      cap.style.top = (rect.top + rect.h * topFrac) + 'px';
+      layer.appendChild(cap);
+      syncCaptionOverlay();
+    }
+
     syncOverlayVisibility();
+  }
+
+  function escapeCap(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  // Rebuild caption chunks from the clip's word timings, grouped `chunk` words
+  // at a time and rebased to clip-local seconds (word times are absolute source
+  // times; the clip starts at editorClip.start_time).
+  function buildCaptionChunks() {
+    editorCaptions.chunks = [];
+    var words = (editorClip && editorClip.words) || [];
+    if (!words.length) return;
+    var base = Number(editorClip.start_time) || 0;
+    var n = Math.max(1, Math.min(6, parseInt(editorCaptions.chunk, 10) || 4));
+    for (var i = 0; i < words.length; i += n) {
+      var group = words.slice(i, i + n).map(function (w) {
+        var s = Number(w.start); var e = Number(w.end);
+        if (!isFinite(s)) s = 0;
+        if (!isFinite(e)) e = s;
+        return { word: String(w.word || '').trim(), start: Math.max(0, s - base), end: Math.max(0, e - base) };
+      }).filter(function (w) { return w.word; });
+      if (!group.length) continue;
+      editorCaptions.chunks.push({ start: group[0].start, end: group[group.length - 1].end, words: group });
+    }
+  }
+
+  // Swap the live caption text for the current playhead time, highlighting the
+  // word being spoken (matches the exporter's active-word highlight).
+  function syncCaptionOverlay() {
+    var el = document.getElementById('editor-caption-live');
+    if (!el) return;
+    var vid = $('editor-video');
+    var t = vid ? vid.currentTime - sourceOffset : 0;
+    var chunk = null;
+    for (var i = 0; i < editorCaptions.chunks.length; i++) {
+      var c = editorCaptions.chunks[i];
+      if (t >= c.start && t <= c.end + 0.05) { chunk = c; break; }
+    }
+    if (!chunk) { el.style.visibility = 'hidden'; el.innerHTML = ''; return; }
+    el.style.visibility = 'visible';
+    var active = 0;
+    for (var j = 0; j < chunk.words.length; j++) { if (chunk.words[j].start <= t) active = j; }
+    el.innerHTML = chunk.words.map(function (w, k) {
+      var safe = escapeCap(w.word);
+      return k === active
+        ? '<span style="color:' + (editorCaptions.highlight || '#ffe000') + '">' + safe + '</span>'
+        : '<span>' + safe + '</span>';
+    }).join(' ');
   }
 
   function makeDraggable(el, kind, index) {
@@ -176,7 +278,7 @@
 
   function syncOverlayVisibility() {
     var vid = $('editor-video');
-    var t = vid ? vid.currentTime : 0;
+    var t = vid ? vid.currentTime - sourceOffset : 0;
     document.querySelectorAll('#editor-overlay-layer .editor-ov-item').forEach(function (el) {
       var s = parseFloat(el.dataset.start) || 0;
       var e = parseFloat(el.dataset.end);
@@ -189,13 +291,13 @@
     if (!isFinite(s) || s < 0) s = 0;
     var m = Math.floor(s / 60);
     var sec = Math.floor(s % 60);
-    return m + ':' + String(sec).padStart(2, '0');
+    return m + ':' + String(sec).padStart(2, '0') + '.' + String(Math.floor((s % 1) * 100)).padStart(2, '0');
   }
 
   // ---- TIMELINE ----------------------------------------------------------
   function seekTo(t) {
     var vid = $('editor-video');
-    if (vid && isFinite(t)) vid.currentTime = Math.max(0, t);
+    if (vid && isFinite(t)) vid.currentTime = sourceOffset + Math.max(0, Math.min(clipDuration(), t));
   }
 
   function updatePlayhead() {
@@ -203,7 +305,7 @@
     var vid = $('editor-video');
     var dur = clipDuration();
     if (!ph || !vid || !dur) return;
-    ph.style.left = (Math.min(vid.currentTime, dur) / dur * 100) + '%';
+    ph.style.left = (Math.min(vid.currentTime - sourceOffset, dur) / dur * 100) + '%';
   }
 
   // Current [start,end] for a timeline item (video/text/sticker/sfx/music).
@@ -268,6 +370,12 @@
     var mode = e.target.classList.contains('tl-handle-l') ? 'start'
       : e.target.classList.contains('tl-handle-r') ? 'end' : 'move';
     var orig = getSE(kind, index);
+    var guide = $('editor-trim-guide');
+    if (mode !== 'move') {
+      guide.classList.remove('hidden');
+      guide.style.left = ((mode === 'start' ? orig.start : orig.end) / dur * 100) + '%';
+      $('editor-trim-feedback').textContent = 'Dragging ' + (mode === 'start' ? 'in' : 'out') + ' edge';
+    }
     var startX = e.clientX;
     try { block.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
 
@@ -278,6 +386,9 @@
       else if (mode === 'start') { s = Math.max(0, Math.min(orig.start + dt, orig.end - 0.2)); }
       else { en = Math.max(orig.start + 0.2, Math.min(orig.end + dt, dur)); }
       writeSE(kind, index, s, en);
+      if (mode !== 'move') guide.style.left = ((mode === 'start' ? s : en) / dur * 100) + '%';
+      $('editor-trim-feedback').textContent = fmtClock(s) + ' → ' + fmtClock(en);
+      $('editor-trim-in').value = trimIn.toFixed(2); $('editor-trim-out').value = trimOut.toFixed(2);
       var se = getSE(kind, index);
       var g = blockGeom(se.start, se.end);
       block.style.left = g.left; block.style.width = g.width;
@@ -288,23 +399,28 @@
     function onUp() {
       document.removeEventListener('pointermove', onMove);
       document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onUp);
+      guide.classList.add('hidden');
       renderTimeline();
       renderInspector();
     }
     document.addEventListener('pointermove', onMove);
     document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onUp);
   }
 
   function renderTimeline() {
     var dur = clipDuration();
+    $('editor-trim-in').value = trimIn.toFixed(2); $('editor-trim-out').value = trimOut.toFixed(2);
     var ruler = $('editor-tl-ruler');
     if (ruler) {
       ruler.innerHTML = '';
-      for (var k = 0; k <= 4; k++) {
+      var ticks = 4 * Number($('editor-timeline-zoom').value || 1);
+      for (var k = 0; k <= ticks; k++) {
         var tick = document.createElement('span');
         tick.className = 'tl-tick';
-        tick.style.left = (k / 4 * 100) + '%';
-        tick.textContent = fmtClock(dur * k / 4);
+        tick.style.left = (k / ticks * 100) + '%';
+        tick.textContent = fmtClock(dur * k / ticks);
         ruler.appendChild(tick);
       }
     }
@@ -442,23 +558,82 @@
     if (vid) vid.style.transform = z > 1 ? 'scale(' + z + ')' : '';
   }
 
+  function facecamState() {
+    if (!$('editor-facecam-enabled').checked) return null;
+    return {crop: {...facecamCrop}, layout:$('editor-facecam-layout').value, size:Number($('editor-facecam-size').value)/100, corner:$('editor-facecam-corner').value};
+  }
   function updateCropOverlay() {
-    var overlay = $('editor-crop-overlay');
-    var vid = $('editor-video');
-    if (!overlay || !vid) return;
-    var aspect = KlipzyEditorSpec.overlayAspect(selectedRatio());
-    if (!aspect || !vid.videoWidth || !vid.videoHeight) { overlay.classList.add('hidden'); return; }
-    var boxW = vid.clientWidth, boxH = vid.clientHeight;
-    var vidAspect = vid.videoWidth / vid.videoHeight;
-    var dispW, dispH;
-    if (vidAspect > boxW / boxH) { dispW = boxW; dispH = boxW / vidAspect; }
-    else { dispH = boxH; dispW = boxH * vidAspect; }
-    var cropW, cropH;
-    if (aspect > dispW / dispH) { cropW = dispW; cropH = dispW / aspect; }
-    else { cropH = dispH; cropW = dispH * aspect; }
-    overlay.classList.remove('hidden');
-    overlay.style.width = Math.round(cropW) + 'px';
-    overlay.style.height = Math.round(cropH) + 'px';
+    var overlay = $('editor-crop-overlay'), vid = $('editor-video'), rect = displayedVideoRect();
+    if (!rect) return;
+    var aspect = KlipzyEditorSpec.overlayAspect(selectedRatio()) || vid.videoWidth / vid.videoHeight;
+    var face = facecamState();
+    if (face && face.layout !== 'pip') aspect /= (1 - face.size);
+    var cropW = Math.min(rect.w, rect.h * aspect), cropH = cropW / aspect;
+    activeCrop = {x: (rect.w - cropW) * cropPosition.x / rect.w, y:(rect.h - cropH) * cropPosition.y / rect.h, w:cropW/rect.w, h:cropH/rect.h};
+    overlay.classList.toggle('hidden', selectedRatio() === 'full' && !face);
+    paintCrop(overlay, activeCrop, rect);
+    var cam = $('editor-facecam-overlay'); cam.classList.toggle('hidden', !face);
+    if (face) paintCrop(cam, facecamCrop, rect);
+    drawOutputPreview();
+  }
+  function paintCrop(el, crop, rect) {
+    el.style.left = (rect.left + rect.w * crop.x) + 'px'; el.style.top = (rect.top + rect.h * crop.y) + 'px';
+    el.style.width = rect.w * crop.w + 'px'; el.style.height = rect.h * crop.h + 'px';
+  }
+  function bindCropDrag(id, camera) {
+    var el = $(id);
+    el.addEventListener('pointerdown', function (event) {
+      event.preventDefault(); event.stopPropagation(); el.setPointerCapture(event.pointerId);
+      var rect = displayedVideoRect(); if (!rect) return;
+      var start = {x:event.clientX,y:event.clientY}, initial = {...(camera ? facecamCrop : activeCrop)};
+      function move(e) {
+        var x = Math.max(0, Math.min(1-initial.w, initial.x + (e.clientX-start.x)/rect.w));
+        var y = Math.max(0, Math.min(1-initial.h, initial.y + (e.clientY-start.y)/rect.h));
+        if (camera) { facecamCrop.x=x; facecamCrop.y=y; }
+        else { cropPosition.x = x / (1-initial.w || 1); cropPosition.y = y / (1-initial.h || 1); }
+        updateCropOverlay();
+      }
+      function up() { el.removeEventListener('pointermove',move); el.removeEventListener('pointerup',up); el.removeEventListener('pointercancel',up); }
+      el.addEventListener('pointermove',move); el.addEventListener('pointerup',up); el.addEventListener('pointercancel',up);
+    });
+    el.addEventListener('keydown', function(e) {
+      if (!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) return;
+      e.preventDefault(); var dx = e.key === 'ArrowLeft' ? -.01 : e.key === 'ArrowRight' ? .01 : 0;
+      var dy = e.key === 'ArrowUp' ? -.01 : e.key === 'ArrowDown' ? .01 : 0;
+      if (camera) {facecamCrop.x=Math.max(0,Math.min(1-facecamCrop.w,facecamCrop.x+dx));facecamCrop.y=Math.max(0,Math.min(1-facecamCrop.h,facecamCrop.y+dy));}
+      else {cropPosition.x=Math.max(0,Math.min(1,cropPosition.x+dx));cropPosition.y=Math.max(0,Math.min(1,cropPosition.y+dy));}
+      updateCropOverlay();
+    });
+  }
+  function drawOutputPreview() {
+    var vid=$('editor-video'), canvas=$('editor-output-canvas');
+    if (!vid.videoWidth || vid.readyState < 2 || !activeCrop) return;
+    var ratio=KlipzyEditorSpec.overlayAspect(selectedRatio()) || vid.videoWidth/vid.videoHeight;
+    canvas.width=320; canvas.height=Math.round(320/ratio);
+    var ctx=canvas.getContext('2d'), face=facecamState(), w=canvas.width,h=canvas.height;
+    function draw(crop,x,y,dw,dh) {
+      var sx=crop.x*vid.videoWidth,sy=crop.y*vid.videoHeight,sw=crop.w*vid.videoWidth,sh=crop.h*vid.videoHeight;
+      var target=dw/dh;
+      if(sw/sh>target) {sx+=(sw-sh*target)/2;sw=sh*target;} else {sy+=(sh-sw/target)/2;sh=sw/target;}
+      ctx.drawImage(vid,sx,sy,sw,sh,x,y,dw,dh);
+    }
+    var ch=face && face.layout!=='pip' ? h*face.size : 0;
+    draw(activeCrop,0,face?.layout==='top'?ch:0,w,h-ch);
+    if(face) {
+      if(face.layout==='pip') {
+        var cw=w*face.size; ch=Math.min(h*.45,cw*face.crop.h*vid.videoHeight/(face.crop.w*vid.videoWidth));
+        draw(face.crop,face.corner.includes('right')?w-cw:0,face.corner.includes('bottom')?h-ch:0,cw,ch);
+      } else draw(face.crop,0,face.layout==='top'?0:h-ch,w,ch);
+    }
+  }
+  function loadEditorSource() {
+    var original=$('editor-source-mode').value==='original';
+    editorSource=original ? (editorClip.source_file || selectedVideo) : editorClip.output_file;
+    sourceOffset=original ? Number(editorClip.start_time)||0 : 0;
+    sourceSpan=original ? Math.max(.1,Number(editorClip.end_time)-sourceOffset) : 0;
+    cropPosition={x:.5,y:.5}; activeCrop=null;
+    $('editor-source-note').textContent=original ? 'Original source: rebuild framing from the full image. Baked captions, silence cuts and effects from the rendered clip are not included.' : 'Rendered clip: existing captions and effects are preserved. Choose Original video to recover areas outside this crop.';
+    var vid=$('editor-video');vid.pause();vid.src=fileUrl(editorSource);vid.load();
   }
 
   // ---- export ------------------------------------------------------------
@@ -520,10 +695,17 @@
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Rendering…'; }
     $('editor-cancel-btn').classList.remove('hidden');
     setEditorProgress(0, 'Starting…', 'Rendering');
+    var body = { spec: spec };
+    var capPayload = captionExportPayload();
+    if (capPayload) {
+      body.burn_captions = true;
+      body.caption_words = capPayload.words;
+      body.caption_style = capPayload.style;
+    }
     try {
       var res = await fetch(serverUrl + '/editor/export', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ spec: spec }),
+        body: JSON.stringify(body),
       });
       var data = await res.json().catch(function () { return {}; });
       if (!res.ok) throw new Error(data.detail || ('Server returned ' + res.status));
@@ -573,7 +755,9 @@
     vid.addEventListener('pause', function () { $('editor-playpause').textContent = '▶️'; });
     vid.addEventListener('loadedmetadata', function () {
       var dur = clipDuration();
-      trimIn = 0; trimOut = dur;
+      if (sourceSpan) sourceSpan = Math.max(.1, Math.min(sourceSpan, vid.duration - sourceOffset));
+      dur = clipDuration(); trimIn = 0; trimOut = dur;
+      seekTo(0);
       updateCropOverlay();
       renderPreviewOverlays();
       renderTimeline();
@@ -581,9 +765,10 @@
     });
     vid.addEventListener('timeupdate', function () {
       var o = trimOut || vid.duration;
-      if (vid.currentTime > o) vid.currentTime = trimIn;   // loop within trim
-      $('editor-time').textContent = fmtClock(vid.currentTime) + ' / ' + fmtClock(vid.duration);
+      if (!vid.paused && vid.currentTime - sourceOffset > o) seekTo(trimIn);   // loop within trim
+      $('editor-time').textContent = fmtClock(vid.currentTime - sourceOffset) + ' / ' + fmtClock(clipDuration());
       syncOverlayVisibility();
+      syncCaptionOverlay();
       updatePlayhead();
     });
 
@@ -613,6 +798,32 @@
       updateCropOverlay(); renderPreviewOverlays();
     });
 
+    bindCropDrag('editor-crop-overlay',false); bindCropDrag('editor-facecam-overlay',true);
+    $('editor-source-mode').addEventListener('change',loadEditorSource);
+    ['editor-facecam-enabled','editor-facecam-layout','editor-facecam-size','editor-facecam-corner','editor-facecam-width','editor-facecam-height'].forEach(function(id) {
+      $(id).addEventListener('input',function() {
+        facecamCrop.w=Number($('editor-facecam-width').value)/100; facecamCrop.h=Number($('editor-facecam-height').value)/100;
+        facecamCrop.x=Math.min(facecamCrop.x,1-facecamCrop.w);facecamCrop.y=Math.min(facecamCrop.y,1-facecamCrop.h);updateCropOverlay();
+      });
+    });
+    $('editor-timeline-zoom').addEventListener('input',function() { $('editor-tl-tracks').style.width=(Number(this.value)*100)+'%';renderTimeline(); });
+    ['editor-trim-in','editor-trim-out'].forEach(function(id) {$(id).addEventListener('change',function() {
+      trimIn=Math.max(0,Math.min(Number($('editor-trim-in').value)||0,clipDuration()-.01));
+      trimOut=Math.max(trimIn+.01,Math.min(Number($('editor-trim-out').value)||clipDuration(),clipDuration()));seekTo(trimIn);renderTimeline();
+    });});
+    modal.addEventListener('dragover', function(e) { e.preventDefault(); });
+    modal.addEventListener('drop', function(e) {
+      e.preventDefault();
+      Array.from(e.dataTransfer.files).forEach(function(file) {
+        var path=file.path || window.clipperAPI?.getPathForFile?.(file); if(!path) return;
+        var start=Math.max(0,vid.currentTime-sourceOffset);
+        if (/\.(png|jpe?g|webp)$/i.test(file.name)) editorStickers.push({path:path,name:file.name,x:.5,y:.5,scale:.25,start:start,end:clipDuration()});
+        else if (/\.(wav|mp3|m4a|ogg|flac)$/i.test(file.name)) editorSfx.push({path:path,name:file.name,start:start,gain:.8});
+        else showToast('Drop an image or audio file. Use the source selector for video framing.', 'info');
+      });renderTimeline();renderPreviewOverlays();
+    });
+    vid.addEventListener('seeked',drawOutputPreview);
+    vid.addEventListener('play',function tick() {drawOutputPreview();if(!vid.paused) previewFrame=requestAnimationFrame(tick);});
     $('editor-zoom').addEventListener('input', applyZoomPreview);
     $('editor-speed').addEventListener('input', function () {
       var sp = parseFloat(this.value) || 1;
@@ -649,6 +860,30 @@
     });
     $('editor-add-sticker').addEventListener('click', addEditorSticker);
     $('editor-add-sfx').addEventListener('click', addEditorSfx);
+
+    // ---- captions -------------------------------------------------------
+    var capShow = $('editor-captions-show');
+    if (capShow) capShow.addEventListener('change', function () { editorCaptions.show = this.checked; renderPreviewOverlays(); });
+    var capBurn = $('editor-captions-burn');
+    if (capBurn) capBurn.addEventListener('change', function () { editorCaptions.burn = this.checked; });
+    var capPos = $('editor-captions-position');
+    if (capPos) capPos.addEventListener('change', function () { editorCaptions.position = this.value; renderPreviewOverlays(); });
+    var capChunk = $('editor-captions-chunk');
+    if (capChunk) capChunk.addEventListener('input', function () {
+      editorCaptions.chunk = parseInt(this.value, 10) || 4;
+      var lbl = $('editor-captions-chunk-label'); if (lbl) lbl.textContent = String(editorCaptions.chunk);
+      buildCaptionChunks(); renderPreviewOverlays();
+    });
+    var capSize = $('editor-captions-size');
+    if (capSize) capSize.addEventListener('input', function () {
+      editorCaptions.size = parseInt(this.value, 10) || 72;
+      var lbl = $('editor-captions-size-label'); if (lbl) lbl.textContent = String(editorCaptions.size);
+      renderPreviewOverlays();
+    });
+    var capColor = $('editor-captions-color');
+    if (capColor) capColor.addEventListener('input', function () { editorCaptions.color = this.value; renderPreviewOverlays(); });
+    var capHi = $('editor-captions-highlight');
+    if (capHi) capHi.addEventListener('input', function () { editorCaptions.highlight = this.value; renderPreviewOverlays(); });
 
     window.addEventListener('resize', function () { updateCropOverlay(); renderPreviewOverlays(); });
   }
@@ -687,18 +922,84 @@
 
   function baseName(p) { return String(p || '').split(/[\\/]/).pop() || p; }
 
+  // Reset + populate the caption panel for a freshly opened clip. Captions are
+  // shown by default when the clip has word timings, but never burned unless
+  // the user opts in.
+  function initEditorCaptions(clip) {
+    var hasWords = !!(clip && clip.words && clip.words.length);
+    editorCaptions.show = hasWords;
+    editorCaptions.burn = false;
+    editorCaptions.position = 'bottom';
+    editorCaptions.chunk = 4;
+    editorCaptions.size = 72;
+    editorCaptions.color = '#ffffff';
+    editorCaptions.highlight = '#ffe000';
+    editorCaptions.chunks = [];
+
+    var group = $('editor-captions-controls');
+    var none = $('editor-captions-none');
+    if (group) group.classList.toggle('hidden', !hasWords);
+    if (none) none.classList.toggle('hidden', hasWords);
+
+    var setVal = function (id, v) { var el = $(id); if (el) { if (el.type === 'checkbox') el.checked = !!v; else el.value = v; } };
+    setVal('editor-captions-show', editorCaptions.show);
+    setVal('editor-captions-burn', editorCaptions.burn);
+    setVal('editor-captions-position', editorCaptions.position);
+    setVal('editor-captions-chunk', editorCaptions.chunk);
+    setVal('editor-captions-size', editorCaptions.size);
+    setVal('editor-captions-color', editorCaptions.color);
+    setVal('editor-captions-highlight', editorCaptions.highlight);
+    var cl = $('editor-captions-chunk-label'); if (cl) cl.textContent = String(editorCaptions.chunk);
+    var sl = $('editor-captions-size-label'); if (sl) sl.textContent = String(editorCaptions.size);
+
+    if (hasWords) buildCaptionChunks();
+  }
+
+  // Caption payload for the export request — only when the user opts to burn.
+  // Word times are rebased to the OUTPUT timeline: clip-local minus the trim
+  // in-point, divided by playback speed, and clamped to the visible range.
+  function captionExportPayload() {
+    if (!editorCaptions.burn || !editorCaptions.chunks.length) return null;
+    var speed = parseFloat($('editor-speed').value) || 1;
+    if (!(speed > 0)) speed = 1;
+    var tIn = trimIn || 0;
+    var tOut = trimOut || clipDuration();
+    var words = [];
+    editorCaptions.chunks.forEach(function (c) {
+      c.words.forEach(function (w) {
+        if (w.end < tIn || w.start > tOut) return;   // outside the kept range
+        var s = (w.start - tIn) / speed;
+        var e = (w.end - tIn) / speed;
+        words.push({ word: w.word, start: Math.max(0, s), end: Math.max(0.04, e) });
+      });
+    });
+    if (!words.length) return null;
+    return {
+      words: words,
+      style: {
+        primary_color: editorCaptions.color,
+        highlight_color: editorCaptions.highlight,
+        font_size: Math.round(editorCaptions.size),
+        chunk_size: parseInt(editorCaptions.chunk, 10) || 4,
+        position: editorCaptions.position === 'top' ? 8 : (editorCaptions.position === 'middle' ? 5 : 2),
+      },
+    };
+  }
+
   function closeEditor() {
     var vid = $('editor-video');
     if (vid) { vid.pause(); vid.removeAttribute('src'); vid.load(); }
-    stopEditorPolling();
+    if(previewFrame) cancelAnimationFrame(previewFrame);
     $('editor-progress').classList.add('hidden');
     $('editor-modal').classList.add('hidden');
   }
 
   window.openEditor = function (clipIndex) {
+    if (editorJobId) { $('editor-modal').classList.remove('hidden'); showToast('The current edit is still exporting. You can close this panel and keep working.', 'info'); return; }
     var clip = generatedClips[clipIndex];
     if (!clip) return;
     editorClip = clip;
+    sourceSpan=0;sourceOffset=0;
     bindEditorOnce();
 
     document.querySelectorAll('#editor-ratio-chips .ratio-chip').forEach(function (c) { c.classList.toggle('is-selected', c.dataset.ratio === 'full'); });
@@ -713,6 +1014,7 @@
     $('editor-music-volume').value = '0.12'; $('editor-music-volume-label').textContent = '12%';
     $('editor-music-duck').checked = true;
     editorTexts = []; editorStickers = []; editorSfx = [];
+    initEditorCaptions(clip);
     trimIn = 0; trimOut = Number(clip.duration) || 0;
     selected = null;
     renderInspector();
@@ -722,7 +1024,12 @@
     $('editor-crop-overlay').classList.add('hidden');
 
     var vid = $('editor-video');
-    vid.src = fileUrl(clip.output_file); vid.muted = false; vid.load();
+    $('editor-facecam-enabled').checked=false; facecamCrop={x:.7,y:.05,w:.25,h:.25};
+    $('editor-facecam-width').value='25';$('editor-facecam-height').value='25';
+    $('editor-timeline-zoom').value='1';$('editor-tl-tracks').style.width='100%';
+    $('editor-source-mode').value='rendered';
+    $('editor-source-mode').options[1].disabled=!(clip.source_file || selectedVideo);
+    vid.muted = false; loadEditorSource();
 
     $('editor-modal').classList.remove('hidden');
 
