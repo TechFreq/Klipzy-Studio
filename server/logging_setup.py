@@ -17,6 +17,7 @@ Files (rotated at 1 MB, keeping the last 5):
 import logging
 import logging.handlers
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -39,10 +40,15 @@ def setup_logging(level: int = logging.INFO) -> logging.Logger:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    console = logging.StreamHandler()
+    console = logging.StreamHandler(sys.stdout)
+    console.addFilter(lambda record: record.levelno < logging.WARNING)
     console.setLevel(level)
     console.setFormatter(formatter)
     logger.addHandler(console)
+    error_console = logging.StreamHandler(sys.stderr)
+    error_console.setLevel(logging.WARNING)
+    error_console.setFormatter(formatter)
+    logger.addHandler(error_console)
 
     # When Electron is capturing stdout/stderr it writes the log files itself,
     # so the Python side must NOT also write them (no duplicate lines).

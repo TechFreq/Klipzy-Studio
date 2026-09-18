@@ -40,7 +40,10 @@
     var zoom = _num(state.zoom, 1.0);
     if (zoom < 1) zoom = 1.0;
 
-    var clipDur = trimOut - trimIn;
+    var speed = Math.max(0.1, _num(state.speed, 1.0));
+    var clipDur = (trimOut - trimIn) / speed;
+    function outputTime(t) { return Math.max(0, Math.min(clipDur, (_num(t, 0) - trimIn) / speed)); }
+    function visible(item) { return _num(item.end, trimOut) > trimIn && _num(item.start, 0) < trimOut; }
     var filter = state.filter && state.filter !== 'none' ? [state.filter] : [];
 
     var tracks = [{
@@ -80,28 +83,28 @@
       });
     }
     (state.sfx || []).forEach(function (s) {
-      if (!s || !s.path) return;
+      if (!s || !s.path || _num(s.start, 0) < trimIn || _num(s.start, 0) >= trimOut) return;
       audioItems.push({
         src: s.path,
         gain: Math.max(0, Math.min(4, _num(s.gain, 0.8))),
         duck: false,
         loop: false,
         role: 'sfx',
-        start: Math.max(0, _num(s.start, 0)),
+        start: outputTime(s.start),
       });
     });
     if (audioItems.length) tracks.push({ kind: 'audio', items: audioItems });
 
     // Image graphics / stickers.
-    var stickers = (state.stickers || []).filter(function (s) { return s && s.path; });
+    var stickers = (state.stickers || []).filter(function (s) { return s && s.path && visible(s); });
     if (stickers.length) {
       tracks.push({
         kind: 'overlay',
         items: stickers.map(function (s) {
           return {
             src: s.path,
-            start: Math.max(0, _num(s.start, 0)),
-            end: _num(s.end, clipDur),
+            start: outputTime(s.start),
+            end: outputTime(_num(s.end, trimOut)),
             pos: { x: _clamp01(s.x, 0.5), y: _clamp01(s.y, 0.5) },
             scale: Math.max(0.01, Math.min(4, _num(s.scale, 0.25))),
           };
@@ -110,17 +113,17 @@
     }
 
     // Free-floating text / titles.
-    var texts = (state.texts || []).filter(function (t) { return t && t.text; });
+    var texts = (state.texts || []).filter(function (t) { return t && t.text && visible(t); });
     if (texts.length) {
       tracks.push({
         kind: 'text',
         items: texts.map(function (t) {
           return {
             text: String(t.text),
-            start: Math.max(0, _num(t.start, 0)),
-            end: _num(t.end, clipDur),
+            start: outputTime(t.start),
+            end: outputTime(_num(t.end, trimOut)),
             pos: { x: _clamp01(t.x, 0.5), y: _clamp01(t.y, 0.85) },
-            style: { size: Math.max(8, _num(t.size, 96)), primary: t.color || '#ffffff' },
+            style: { size: Math.max(8, _num(t.size, 96)), primary: t.color || '#ffffff', font:t.font||'Arial', bold:t.bold!==false, italic:!!t.italic, outline:_num(t.outline,4), outlineColor:t.outlineColor||'#000000', shadow:_num(t.shadow,0), box:!!t.box, boxColor:t.boxColor||'#111111', padding:_num(t.padding,12) },
           };
         }),
       });

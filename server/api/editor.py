@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from server.core import proc
 from server.models import EditorExportRequest, EditorExportResponse
@@ -26,6 +27,7 @@ router = APIRouter()
 
 _EDITOR_JOBS: Dict[str, dict] = {}
 _EDITOR_LOCK = threading.Lock()
+_EDITOR_OUTPUTS = set()
 
 
 def _editor_export_worker(job_id: str, spec: dict, output_path: str,
@@ -39,7 +41,7 @@ def _editor_export_worker(job_id: str, spec: dict, output_path: str,
                 j["step"] = step
                 j["percent"] = pct
 
-    proc.begin_job()  # arm the killable-subprocess registry for this render
+    proc.begin_job(f"editor:{job_id}")  # arm the killable-subprocess registry for this render
     try:
         compositor.render(spec, output_path, subtitle_path=subtitle_path,
                           normalize_audio=normalize_audio, progress_callback=report)
@@ -55,6 +57,9 @@ def _editor_export_worker(job_id: str, spec: dict, output_path: str,
             _EDITOR_JOBS[job_id].update({"state": "failed", "done": True, "error": str(e)})
     finally:
         proc.end_job()
+        with _EDITOR_LOCK:
+            _EDITOR_OUTPUTS.discard(output_path)
+
 
 
 @router.post("/editor/export", response_model=EditorExportResponse)
@@ -73,29 +78,47 @@ def editor_export(req: EditorExportRequest):
 
     out_dir = Path(req.output_dir) if req.output_dir else Path(ns["source"]).parent
     stem = Path(ns["source"]).stem
-    filename = req.filename or f"{stem}_edited.mp4"
+    filename = req.filename or f"{stem}_edited_{uuid.uuid4().hex[:8]}.mp4"
+    if Path(filename).name != filename or "/" in filename or "\\" in filename or any(c in filename for c in '<>:"|?*') or not filename.lower().endswith(".mp4"):
+        raise HTTPException(status_code=400, detail="Use a filename ending in .mp4 with no folders or reserved characters. Choose the folder separately.")
     output_path = str((out_dir / filename).resolve())
+    if Path(output_path).exists():
+        raise HTTPException(status_code=409, detail="That export already exists. Choose another filename or leave it empty for an automatic name.")
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"Cannot create the export folder. Choose a writable folder: {exc}")
 
-    # If the client asked to burn captions, generate a karaoke ASS from the
-    # (already output-timeline-rebased) word timings and burn that. This takes
-    # precedence over any prebuilt subtitle_path.
-    subtitle_path = req.subtitle_path
-    if req.burn_captions and req.caption_words:
-        try:
-            subtitle_path = _build_caption_ass(req, ns, output_path) or subtitle_path
-        except Exception as e:  # noqa: BLE001 — bad caption data must not fail the render
-            print(f"[editor] caption ASS generation failed, skipping burn: {e}")
-
-    job_id = uuid.uuid4().hex[:8]
     with _EDITOR_LOCK:
-        _EDITOR_JOBS[job_id] = {"state": "rendering", "percent": 0, "step": "Starting…",
-                                "done": False, "error": None, "output": None}
-    threading.Thread(
-        target=_editor_export_worker,
-        args=(job_id, ns, output_path, subtitle_path, req.normalize_audio),
-        daemon=True,
-    ).start()
-    return EditorExportResponse(job_id=job_id, status="started")
+        if output_path in _EDITOR_OUTPUTS or Path(output_path).exists():
+            raise HTTPException(status_code=409, detail="That filename is already being exported or exists. Choose another filename.")
+        _EDITOR_OUTPUTS.add(output_path)
+    try:
+        # If the client asked to burn captions, generate a karaoke ASS from the
+        # (already output-timeline-rebased) word timings and burn that. This takes
+        # precedence over any prebuilt subtitle_path.
+        subtitle_path = req.subtitle_path
+        if req.burn_captions and req.caption_words:
+            try:
+                subtitle_path = _build_caption_ass(req, ns, output_path) or subtitle_path
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Could not prepare captions. Check the caption data and export folder: {e}")
+
+        job_id = uuid.uuid4().hex[:8]
+        with _EDITOR_LOCK:
+            _EDITOR_JOBS[job_id] = {"state": "rendering", "percent": 0, "step": "Starting…",
+                                    "done": False, "error": None, "output": None}
+        threading.Thread(
+            target=_editor_export_worker,
+            args=(job_id, ns, output_path, subtitle_path, req.normalize_audio),
+            daemon=True,
+        ).start()
+        return EditorExportResponse(job_id=job_id, status="started")
+    except BaseException:
+        with _EDITOR_LOCK:
+            _EDITOR_OUTPUTS.discard(output_path)
+        raise
+
 
 
 # Canvas ratio -> ASS PlayRes (matches the compositor's caption coordinate space).
@@ -149,6 +172,12 @@ def _build_caption_ass(req: EditorExportRequest, ns: dict, output_path: str) -> 
     return ass_path
 
 
+@router.get("/editor/exports")
+def editor_export_jobs():
+    with _EDITOR_LOCK:
+        return {"jobs": [{"job_id": key, **value} for key, value in _EDITOR_JOBS.items()]}
+
+
 @router.get("/editor/export/{job_id}")
 def editor_export_status(job_id: str):
     with _EDITOR_LOCK:
@@ -167,5 +196,22 @@ def editor_export_cancel(job_id: str):
         if job.get("done"):
             return {"job_id": job_id, "ok": False, "error": "already finished"}
         job["state"] = "cancelling"
-    proc.request_cancel()  # hard-kills the active ffmpeg child (see proc.py)
+    proc.request_cancel(f"editor:{job_id}")  # hard-kills the active ffmpeg child (see proc.py)
     return {"job_id": job_id, "ok": True}
+
+
+class TimelineMediaRequest(BaseModel):
+    path: str
+    start: float = Field(default=0, ge=0, allow_inf_nan=False)
+    duration: float = Field(gt=0, le=600, allow_inf_nan=False)
+
+
+@router.post("/editor/timeline-media")
+def editor_timeline_media(req: TimelineMediaRequest):
+    if not Path(req.path).is_file():
+        raise HTTPException(status_code=400, detail="The timeline source video could not be found.")
+    from server.core.timeline_media import timeline_media
+    try:
+        return timeline_media(req.path, req.start, req.duration)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Timeline preview unavailable. You can still edit and export: {exc}")

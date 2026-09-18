@@ -1,3 +1,57 @@
+let setupRecommendations = null;
+let selectedOllamaModel = "";
+let localModelSaving = false, localModelRevision = 0;
+function syncSidebarModels(models) {
+  const sidebar = document.getElementById('sidebar-ai-model');
+  if (sidebar) {
+    if (models) sidebar.innerHTML = models.map(model => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`).join('');
+    if (selectedOllamaModel && ![...sidebar.options].some(option => option.value === selectedOllamaModel)) sidebar.add(new Option(selectedOllamaModel + ' · download if needed', selectedOllamaModel));
+    sidebar.value = selectedOllamaModel;
+    sidebar.disabled = localModelSaving || !sidebar.options.length;
+    sidebar.onchange = () => chooseLocalModel(sidebar.value).catch(error => showToast(error.message,'error'));
+  }
+  const quality = document.getElementById('sidebar-whisper-model');
+  const source = document.getElementById('whisper-model');
+  if (quality && source) {
+    quality.innerHTML = source.innerHTML;
+    quality.value = source.value;
+    quality.onchange = () => { source.value = quality.value; source.dispatchEvent(new Event('change',{bubbles:true})); };
+    if (!source.dataset.sidebarBound) {
+      source.dataset.sidebarBound = '1';
+      source.addEventListener('change', () => {quality.value = source.value;});
+      document.getElementById('ai-whisper-model')?.addEventListener('change', () => {quality.value = source.value;});
+    }
+  }
+}
+async function chooseLocalModel(model) {
+  if (localModelSaving) return;
+  const previous = selectedOllamaModel;
+  localModelSaving = true; localModelRevision++;
+  selectedOllamaModel = model;
+  renderRecommendations(setupRecommendations);
+  syncSidebarModels();
+  const status = document.getElementById('sidebar-model-status');
+  if (status) status.textContent = 'Saving model selection…';
+  document.querySelectorAll('[data-model-kind="ollama"], [data-use], #ai-ollama-model').forEach(el => {el.disabled=true;});
+  try {
+    const response = await fetch(`${serverUrl}/api/setup/ai-model`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'ollama',model})});
+    if (!response.ok) throw new Error('Could not save model selection');
+    if (status) status.textContent = 'Selected for the next local AI request. Loading occurs when used; running processing keeps its current model.';
+    showToast(`${model} selected. Download it in Settings if needed.`, 'success');
+  } catch(error) {
+    selectedOllamaModel = previous;
+    if (status) status.textContent = 'Selection failed; previous model restored.';
+    throw error;
+  } finally {
+    localModelSaving = false;
+    renderRecommendations(setupRecommendations);
+    syncSidebarModels();
+    document.querySelectorAll('[data-use], #ai-ollama-model').forEach(el => {el.disabled=false;});
+    loadAiModels();
+    renderModelCatalog();
+  }
+}
+
 /*
  * Setup / System panel: dependency rows, model catalog, AI models + engine, GPU acceleration and the render estimator.
  *
@@ -13,12 +67,20 @@
 // Setup / System panel
 // ------------------------------------------------------------------
 async function loadSetupPanel() {
+  if (typeof backendState !== 'undefined' && backendState === 'starting') {
+    document.getElementById('setup-hardware').textContent = 'Starting local engine. Hardware checks will run automatically when it is ready...';
+    return;
+  }
+  startInstallActivity();
+  await refreshInstallActivity().catch(() => {});
   loadSupportLinks();
   try {
     const res = await fetch(`${serverUrl}/api/setup/status`);
+    if (!res.ok) throw new Error(`Setup check failed (${res.status})`);
     const data = await res.json();
     renderHardware(data);
     loadGpuAcceleration();
+    setupRecommendations = data.recommendations;
     renderRecommendations(data.recommendations);
     renderDeps(data);
     bindInstallAll();
@@ -63,7 +125,7 @@ async function loadOptionalAddons() {
       installBtn.textContent = '⏳ Installing… (a few min)';
       showToast('Installing pyannote.audio — this is a large download', 'info');
       try {
-        const r = await fetch(`${serverUrl}/api/setup/install-optional?component=diarization`, { method: 'POST' });
+        const r = await runDependencyInstall('diarization');
         const d = await r.json();
         if (d.ok) { showToast('✅ pyannote installed — restart the app to load it', 'success'); }
         else throw new Error(d.error || d.stderr || 'install failed');
@@ -72,7 +134,8 @@ async function loadOptionalAddons() {
       } finally {
         installBtn.disabled = false;
         installBtn.textContent = orig;
-        loadOptionalAddons();
+        await loadOptionalAddons();
+        renderInstallActivity();
       }
     });
   }
@@ -121,9 +184,9 @@ async function renderModelCatalog() {
     const isActive = m.name === active;
     const badges = [];
     if (m.recommended) badges.push('<span class="model-badge rec">⭐ Recommended</span>');
-    if (isActive) badges.push('<span class="model-badge active">● In use</span>');
+    if (isActive) badges.push(`<span class="model-badge active">● ${m.installed ? 'In use' : 'Selected · download needed'}</span>`);
     else if (m.installed) badges.push('<span class="model-badge dl">✓ Downloaded</span>');
-    if (m.tested) badges.push('<span class="model-badge tested" title="Benchmarked for clip selection on real footage">🧪 Tested</span>');
+    if (m.tested) badges.push('<span class="model-badge tested" title="Has local test coverage; not a clip-quality certification">🧪 Tested</span>');
     if (m.license) badges.push('<span class="model-badge license" title="Model license">' + escapeHtml(m.license) + '</span>');
     if (!m.fits_ram) badges.push('<span class="model-badge warn">Needs ' + m.min_ram_gb + 'GB+ RAM</span>');
 
@@ -159,7 +222,7 @@ async function renderModelCatalog() {
   if (active) {
     const am = (data.models || []).find((m) => m.name === active);
     grid.insertAdjacentHTML('afterbegin',
-      `<div class="model-inuse-banner" style="grid-column:1/-1;">🟢 <strong>In use:</strong> ${escapeHtml(am ? am.label : active)} <span class="muted small">— powering hooks, titles &amp; chat right now.</span></div>`);
+      `<div class="model-inuse-banner" style="grid-column:1/-1;">${am?.installed ? '🟢 <strong>In use:</strong>' : '<strong>Selected:</strong>'} ${escapeHtml(am ? am.label : active)} <span class="muted small">${am?.installed ? '— used for local AI hooks, titles &amp; chat.' : '— download this model below to use it locally.'}</span></div>`);
   }
 
   // Transparency footnote (Clips-Kitty-style honesty): be clear about which
@@ -173,20 +236,7 @@ async function renderModelCatalog() {
 
   grid.querySelectorAll('[data-use]').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const model = btn.dataset.use;
-      try {
-        const r = await fetch(`${serverUrl}/api/setup/ai-model`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ kind: 'ollama', model }),
-        });
-        if (!r.ok) throw new Error(`Server returned ${r.status}`);
-        showToast(`AI model set to ${model}`, 'success');
-        renderModelCatalog();
-        loadAiModels();
-      } catch (e) {
-        showToast(`Could not set model: ${e.message}`, 'error');
-      }
+      chooseLocalModel(btn.dataset.use).catch(error => showToast(error.message,'error'));
     });
   });
 
@@ -334,11 +384,7 @@ function bindInstallAll() {
         btn.textContent = `⏳ Installing ${key} (${i + 1}/${total})…`;
         setProgress(i, total, `Installing ${key} (${i + 1} of ${total})… this can take a few minutes.`);
         try {
-          const res = await fetch(`${serverUrl}/api/setup/install`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ component: key }),
-          });
+          const res = await runDependencyInstall(key);
           const d = await res.json().catch(() => ({}));
           if (res.ok && !d.error && (d.returncode === 0 || d.returncode === undefined)) installed.push(key);
           else failed.push(key);
@@ -394,14 +440,21 @@ async function loadAiModels(statusData) {
   const ollamaSel = document.getElementById('ai-ollama-model');
   if (!ollamaSel) return;
   try {
+    const revision = localModelRevision;
     const res = await fetch(`${serverUrl}/api/setup/ai-models`);
     if (!res.ok) throw new Error();
     const data = await res.json();
+    if (localModelSaving || revision !== localModelRevision) return;
     const models = data.installed_ollama_models || [];
     const active = data.ollama;
+    selectedOllamaModel = active || "";
+    syncSidebarModels(models);
+    renderRecommendations(setupRecommendations);
     if (!models.length) {
       const installed = statusData && statusData.ollama && statusData.ollama.installed;
-      ollamaSel.innerHTML = `<option value="">${installed ? 'No models pulled yet — use “Pull model”' : 'Ollama not installed'}</option>`;
+      ollamaSel.innerHTML = active
+        ? `<option value="${escapeHtml(active)}" selected>${escapeHtml(active)} (selected · download needed)</option>`
+        : `<option value="">${installed ? 'No models pulled yet — use “Pull model”' : 'Ollama not installed'}</option>`;
       ollamaSel.disabled = true;
     } else {
       ollamaSel.disabled = false;
@@ -409,24 +462,14 @@ async function loadAiModels(statusData) {
         `<option value="${escapeHtml(m)}"${m === active ? ' selected' : ''}>${escapeHtml(m)}</option>`
       ).join('');
       if (active && !models.includes(active)) {
-        ollamaSel.insertAdjacentHTML('afterbegin', `<option value="${escapeHtml(active)}" selected>${escapeHtml(active)} (active)</option>`);
+        ollamaSel.insertAdjacentHTML('afterbegin', `<option value="${escapeHtml(active)}" selected>${escapeHtml(active)} (selected · download needed)</option>`);
       }
     }
     if (!ollamaSel.dataset.bound) {
       ollamaSel.dataset.bound = '1';
       ollamaSel.addEventListener('change', async () => {
         if (!ollamaSel.value) return;
-        try {
-          const r = await fetch(`${serverUrl}/api/setup/ai-model`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ kind: 'ollama', model: ollamaSel.value }),
-          });
-          if (!r.ok) throw new Error(`Server returned ${r.status}`);
-          showToast(`AI model set to ${ollamaSel.value}`, 'success');
-        } catch (e) {
-          showToast(`Could not set model: ${e.message}`, 'error');
-        }
+        chooseLocalModel(ollamaSel.value).catch(error => showToast(error.message,'error'));
       });
     }
   } catch (_) {
@@ -456,7 +499,7 @@ function loadSupportLinks() {
 function openSettings() {
   const setupNav = document.querySelector('.nav-item[data-view="setup"]');
   if (setupNav) setupNav.click();   // reuse the normal nav switch
-  loadSetupPanel();                 // refresh diagnostics on the way in
+
   document.getElementById('view-setup')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -512,6 +555,7 @@ async function loadGpuAcceleration() {
     return;
   }
 
+  const needsRestart = installJobs.some(j => j.restart_required && ["gpu", "pytorch"].includes(j.component));
   const dotClass = g.state === 'active' ? 'ok' : (g.state === 'cpu_only' ? '' : 'warn');
   const cmdBlock = (label, cmd) => (cmd ? `
     <div class="gpu-cmd">
@@ -522,9 +566,15 @@ async function loadGpuAcceleration() {
 
   let actions = '';
   let guide = '';
-  if (g.state === 'active') {
+  if (needsRestart) {
+    actions = '<button class="btn btn-primary btn-small" id="gpu-restart-btn">Restart Klipzy to activate</button>';
+    guide = '<p>Installation verified in a fresh Python process. Restart to replace the libraries loaded by this session.</p>';
+  } else if (g.state === 'active') {
     actions = `<button class="btn btn-small" disabled>✓ Acceleration active (${escapeHtml(g.engine || 'GPU')})</button>
-               <button class="btn btn-small btn-ghost" id="gpu-revert-btn" title="Remove the GPU build (revert to CPU)">Revert to CPU…</button>`;
+               <button class="btn btn-small btn-ghost" id="gpu-revert-btn" title="Remove PyTorch from this environment">Uninstall PyTorch…</button>`;
+  } else if (g.state === 'dormant' && g.cuda_build) {
+    actions = '<span class="muted">CUDA build installed · GPU initialization needs attention</span>';
+    guide = '<p>CUDA-enabled PyTorch is installed, but this process cannot use the GPU. Restart Klipzy and check the NVIDIA driver if this persists. Downloading the same build again will not enable a driver that is unavailable.</p>';
   } else if (g.state === 'dormant' || g.state === 'not_installed') {
     const verb = g.state === 'not_installed' ? 'Install PyTorch' : `Enable ${g.plan_label || 'GPU acceleration'}`;
     actions = `<button class="btn btn-primary btn-small" id="gpu-enable-btn">⚡ ${escapeHtml(verb)}</button>`;
@@ -565,7 +615,7 @@ async function loadGpuAcceleration() {
       ${g.state === 'active' ? cmdBlock('Revert to CPU build', g.cpu_command) : ''}
     </div>
     ${transBlock}
-    <p class="muted small">These commands run inside the app\u2019s own Python environment. Restart the app after changing PyTorch.</p>`;
+    <p class="muted small">These commands are generated for this computer and target Klipzy’s Python environment. On Windows, paste into PowerShell. Restart after changing PyTorch.</p>`;
 
   el.querySelectorAll('.gpu-copy').forEach((b) => b.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(b.dataset.cmd); showToast('Command copied', 'success'); }
@@ -581,10 +631,19 @@ async function loadGpuAcceleration() {
     else { openSettings(); showToast('Feedback & issue links are in the Support section.', 'info'); }
   });
 
+  document.getElementById('gpu-restart-btn')?.addEventListener('click', restartAfterInstall);
+  renderInstallActivity();
+  if (g.python_executable) {
+    const runtime = document.createElement('p');
+    runtime.className = 'muted small';
+    runtime.style.overflowWrap = 'anywhere';
+    runtime.textContent = `Engine Python: ${g.python_executable} · PyTorch ${g.torch_version || 'not loaded'}${g.cuda_build ? ' · CUDA build ' + g.cuda_build : ''}`;
+    el.append(runtime);
+  }
   const enableBtn = document.getElementById('gpu-enable-btn');
   if (enableBtn) enableBtn.addEventListener('click', async () => {
     const ok = await showConfirm(
-      'Install the GPU (CUDA / Apple-Metal) build of PyTorch? This downloads ~2.5GB and replaces the current CPU build. A restart is needed afterward to load it.',
+      'Check and install the recommended PyTorch build? Klipzy will verify the environment first and skip downloading if that build is already installed. A new installation can be several GB and requires a restart.',
       'Enable GPU acceleration');
     if (!ok) return;
     const orig = enableBtn.textContent;
@@ -592,16 +651,17 @@ async function loadGpuAcceleration() {
     enableBtn.textContent = '⏳ Installing… (~2.5GB, several min)';
     showToast('Installing the GPU build of PyTorch — large download, please wait', 'info');
     try {
-      const r = await fetch(`${serverUrl}/api/setup/gpu/install`, { method: 'POST' });
+      const r = await runDependencyInstall('gpu');
       const d = await r.json();
-      if (d.ok) showToast('✅ GPU build installed — restart the app to activate it', 'success');
+      if (d.ok) showToast(d.already_installed ? 'PyTorch build verified — no download needed. Restart to refresh the active engine.' : 'GPU build verified — restart to activate it', 'success');
       else throw new Error(d.error || d.stderr || 'install failed');
     } catch (e) {
       showToast(`Install failed: ${e.message || e}. You can copy the command and run it manually.`, 'error');
     } finally {
       enableBtn.disabled = false;
       enableBtn.textContent = orig;
-      loadGpuAcceleration();
+      await loadSetupPanel();
+      renderInstallActivity();
     }
   });
 
@@ -609,7 +669,7 @@ async function loadGpuAcceleration() {
   if (revertBtn) revertBtn.addEventListener('click', async () => {
     const ok = await showConfirm(
       'Remove the current PyTorch build? Face-tracking will be unavailable until you reinstall PyTorch (the CPU command is shown for that).',
-      'Revert to CPU');
+      'Uninstall PyTorch');
     if (!ok) return;
     const orig = revertBtn.textContent;
     revertBtn.disabled = true;
@@ -627,7 +687,8 @@ async function loadGpuAcceleration() {
     } finally {
       revertBtn.disabled = false;
       revertBtn.textContent = orig;
-      loadGpuAcceleration();
+      await loadGpuAcceleration();
+      renderInstallActivity();
     }
   });
 }
@@ -652,15 +713,15 @@ function renderRecommendations(recs) {
         ${it.realtime_factor ? `<span class="rec-chip">${escapeHtml(it.realtime_factor)}</span>` : ''}
       </div>
       <div class="rec-note muted">${escapeHtml(it.note || '')}</div>
-      ${it.choices ? `<div class="rec-choices">${it.choices.map((choice, i) => {
-        const selected = it.key === 'whisper' ? (choice.model === whisperSel) : (i === 0);
-        return `<button class="btn btn-small rec-choice${selected ? ' is-selected' : ''}" data-model-kind="${it.key}" data-model="${escapeHtml(choice.model)}">
+      ${it.key === 'yolo' ? '<p class="muted small">Face tracking currently uses yolov8n.pt automatically. Alternate YOLO model selection is not supported yet.</p>' : it.choices ? `<div class="rec-choices">${it.choices.map((choice, i) => {
+        const selected = it.key === 'whisper' ? (choice.model === whisperSel) : (it.key === 'ollama' && choice.model === selectedOllamaModel);
+        return `<button class="btn btn-small rec-choice${selected ? ' is-selected' : ''}" aria-busy="${it.key === 'ollama' && localModelSaving}" ${it.key === 'ollama' && localModelSaving ? 'disabled' : ''} data-model-kind="${it.key}" data-model="${escapeHtml(choice.model)}">
           ${escapeHtml(choice.tier)}: ${escapeHtml(choice.model)}
         </button>`;
       }).join('')}</div>` : ''}
     </div>`).join('');
   document.querySelectorAll('.rec-choice').forEach((button) => {
-    button.addEventListener('click', () => {
+    button.addEventListener('click', async () => {
       if (button.dataset.modelKind === 'whisper') {
         const select = document.getElementById('whisper-model');
         if (select) {
@@ -673,7 +734,7 @@ function renderRecommendations(recs) {
         button.classList.add('is-selected');
         showToast(`Whisper model set to ${button.dataset.model}`, 'success');
       } else {
-        showToast(`${button.dataset.model} is the recommended Ollama choice. Ollama will use it locally when AI is enabled.`, 'info');
+        chooseLocalModel(button.dataset.model).catch(error => showToast(error.message,'error'));
       }
     });
   });
@@ -751,11 +812,12 @@ function renderDeps(data) {
   const renderable = base.filter((key) => DEP_DEF[key]);
   const rows = renderable.map((key) => {
     const def = DEP_DEF[key];
-    const ok = def.check(data);
+    const pending = installJobs.some(job => job.restart_required && (job.component === key || key === 'pytorch' && job.component === 'gpu'));
+    const ok = pending || def.check(data);
     const cmdAvailable = !!cmds[key];
-    const canUninstall = ok && !!uninstallCmds[key];
+    const canUninstall = ok && !pending && !!uninstallCmds[key];
     const statusMark = ok ? '✅' : '❌';
-    const tag = def.statusText ? def.statusText(data) : (ok ? 'Installed' : 'Missing');
+    const tag = pending ? 'Verified · Restart required' : def.statusText ? def.statusText(data) : (ok ? 'Installed' : 'Missing');
     return `
       <div class="dep-row ${ok ? 'ok' : 'missing'}" data-key="${key}">
         <div class="dep-info">
@@ -776,6 +838,8 @@ function renderDeps(data) {
       </div>`;
   }).join('');
   document.getElementById('setup-deps').innerHTML = rows;
+
+  renderInstallActivity();
 
   // Uninstall buttons (pip packages only)
   document.querySelectorAll('[data-uninstall]').forEach((btn) => {
@@ -809,18 +873,14 @@ function renderDeps(data) {
       btn.disabled = true;
       btn.textContent = '⏳ Installing... (may take a while)';
       try {
-        const res = await fetch(`${serverUrl}/api/setup/install`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ component: key }),
-        });
+        const res = await runDependencyInstall(key);
         const data = await res.json();
         if (data.error) {
           showAlert(`Install failed: ${data.error}`);
           btn.disabled = false;
           btn.textContent = '⬇️ Install';
         } else if (data.returncode === 0) {
-          showAlert(`✅ ${key} installed successfully!\n\nCommand: ${data.command}`);
+          showAlert(`✅ ${key} verified. See Install activity for restart status.\n\nCommand: ${data.command}`);
           loadSetupPanel();
         } else {
           showAlert(`Install may have failed (code ${data.returncode}).\n\nCommand: ${data.command}\n\n${data.stderr || data.stdout || ''}`);

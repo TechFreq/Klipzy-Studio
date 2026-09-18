@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import threading
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -47,7 +48,13 @@ from server.auth import (
 
 setup_logging()  # logs/server.log (+ console), also used by main.py
 
-app = FastAPI(title="Klipzy Studio Server", version="1.0.0")
+@asynccontextmanager
+async def _lifespan(app):
+    await _start_model_recommendation()
+    yield
+
+
+app = FastAPI(title="Klipzy Studio Server", version="1.0.0", lifespan=_lifespan)
 
 # Shared secret for this run. Electron passes one in via KLIPZY_API_TOKEN;
 # otherwise one is generated and written to logs/api_token.txt for scripts.
@@ -195,14 +202,27 @@ def _resolve_startup_ollama_model() -> str:
                 return saved
     except Exception:
         pass
-    try:
-        from server.core.system_check import resolve_default_ollama_model
-        return resolve_default_ollama_model()
-    except Exception:
-        return "gemma2:2b"
+    return "gemma2:2b"
 
 
 PREFERRED_OLLAMA_MODEL = _resolve_startup_ollama_model()
+
+async def _start_model_recommendation():
+    # Hardware discovery may load Torch slowly on a cold Windows launch.
+    # Serve requests first, and never overwrite an explicitly saved selection.
+    def resolve():
+        global PREFERRED_OLLAMA_MODEL
+        try:
+            if _preferred_model_path().is_file():
+                return
+            from server.core.system_check import resolve_default_ollama_model
+            model = resolve_default_ollama_model()
+            if not _preferred_model_path().is_file():
+                PREFERRED_OLLAMA_MODEL = model
+        except Exception:
+            logging.getLogger("klipzy").exception("Background model recommendation failed")
+    threading.Thread(target=resolve, daemon=True).start()
+
 
 
 def _active_llm_model() -> str:
@@ -290,6 +310,8 @@ def _enqueue_process_job(req: "ProcessRequest") -> str:
     both use the same serial-queue semantics (never N concurrent heavy passes)."""
     job_id = uuid.uuid4().hex[:8]
     JOBS[job_id] = {"status": "queued", "clips": [], "error": None, "progress": 0}
+    from server.core import processing_trace as trace
+    trace.event("job.queued", job_id=job_id, video_path=req.video_path)
     _JOB_REQUESTS[job_id] = req
     _JOB_CANCEL[job_id] = threading.Event()
     _JOBS_ORDER.append(job_id)
@@ -321,11 +343,19 @@ def _run_job(job_id: str) -> None:
         JOBS[job_id]["progress"] = pct
         JOBS[job_id]["step"] = step
 
-    proc.begin_job()  # reset kill-registry + cancel flag for this job
+    from server.core import processing_trace as trace
+    trace.bind(job_id)
+    trace.event("job.start", settings=req.model_dump())
+    proc.begin_job(f"process:{job_id}")  # reset kill-registry + cancel flag for this job
     try:
         JOBS[job_id]["status"] = "processing"
         clips = ENGINE.process_video(
             video_path=req.video_path,
+            diagnostic_job_id=job_id,
+            audio_tracks=req.audio_tracks,
+            audio_track_gains=req.audio_track_gains,
+            analysis_audio_tracks=req.analysis_audio_tracks,
+            visual_review=req.visual_review,
             vertical_crop=req.vertical_crop,
             aspect_ratio=req.aspect_ratio,
             max_clips=req.max_clips,
@@ -377,13 +407,18 @@ def _run_job(job_id: str) -> None:
             raise _CancelledError()
         JOBS[job_id]["clips"] = [c.model_dump() for c in clips]
         JOBS[job_id]["status"] = "completed"
+        trace.event("job.completed", clips=[c.model_dump() for c in clips])
     except _CancelledError:
+        trace.event("job.cancelled")
         JOBS[job_id]["status"] = "cancelled"
         JOBS[job_id]["error"] = "Job cancelled by user."
     except Exception as e:
+        import traceback
+        trace.event("job.failed", error=str(e), traceback=traceback.format_exc())
         JOBS[job_id]["status"] = "failed"
         JOBS[job_id]["error"] = str(e)
     finally:
+        trace.unbind()
         proc.end_job()  # clear the kill-registry; next job starts clean
 
 
@@ -416,6 +451,15 @@ class HealthResponse(BaseModel):
     transcription_backend: Optional[str] = None  # mlx | faster-whisper | openai-whisper | None
 
 
+@app.get("/ready")
+def ready():
+    """Lightweight readiness; dependency and hardware checks belong to Settings."""
+    import sys
+    return {"status": "ok", "protocol": "klipzy-settings-v1",
+            "python": sys.executable, "root": str(Path(__file__).resolve().parents[2]),
+            "pid": os.getpid()}
+
+
 @app.get("/health", response_model=HealthResponse)
 def health():
     from server.core.transcriber import detect_active_backend
@@ -430,8 +474,8 @@ def health():
         pass
     whisper_ok = False
     try:
-        import whisper  # noqa: F401
-        whisper_ok = True
+        from importlib.util import find_spec
+        whisper_ok = find_spec("whisper") is not None
     except ImportError:
         pass
     return HealthResponse(
@@ -456,9 +500,9 @@ def transcription_backend():
 def process_video(req: ProcessRequest):
     if not os.path.exists(req.video_path):
         raise HTTPException(status_code=400, detail=f"Video file not found: {req.video_path}")
-    if not (1 <= req.max_clips <= 20):
+    if not req.auto_clip_count and not (1 <= req.max_clips <= 20):
         raise HTTPException(status_code=400, detail="max_clips must be between 1 and 20")
-    if req.max_duration <= req.min_duration:
+    if not req.auto_clip_count and req.max_duration <= req.min_duration:
         raise HTTPException(status_code=400, detail="max_duration must be greater than min_duration")
 
     job_id = _enqueue_process_job(req)
@@ -480,9 +524,9 @@ def process_video_batch(req: ProcessRequest):
     paths = [p for p in (req.video_paths or []) if p and os.path.exists(p)]
     if not paths:
         raise HTTPException(status_code=400, detail="No existing video files in video_paths")
-    if not (1 <= req.max_clips <= 20):
+    if not req.auto_clip_count and not (1 <= req.max_clips <= 20):
         raise HTTPException(status_code=400, detail="max_clips must be between 1 and 20")
-    if req.max_duration <= req.min_duration:
+    if not req.auto_clip_count and req.max_duration <= req.min_duration:
         raise HTTPException(status_code=400, detail="max_duration must be greater than min_duration")
 
     job_ids: List[str] = []
@@ -521,7 +565,7 @@ def cancel_job(job_id: str):
         ev.set()
         job["status"] = "cancelling"
     if _ACTIVE_JOB_ID == job_id:
-        proc.request_cancel()
+        proc.request_cancel(f"process:{job_id}")
     return {"job_id": job_id, "status": job["status"], "message": "Cancellation requested."}
 
 
@@ -2074,6 +2118,23 @@ def setup_status():
         "recommendations": sc.recommend_models(),
         "output_dir": str(_ensure_output_root()),
     }
+
+
+@app.get("/api/setup/install-jobs")
+def setup_install_jobs():
+    from server.core.setup_installs import snapshot
+    return {"jobs": snapshot()}
+
+
+@app.post("/api/setup/install-jobs")
+def setup_start_install(req: SetupInstallRequest):
+    from server.core.setup_installs import start
+    try:
+        return start(req.component)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except RuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error))
 
 
 @app.post("/api/setup/install")

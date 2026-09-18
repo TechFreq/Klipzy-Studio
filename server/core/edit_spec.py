@@ -19,6 +19,7 @@ compositor (documented, comes in a later phase).
 from __future__ import annotations
 
 from typing import Any, Dict, List
+import math
 
 # Delivery ratios the editor canvas supports. "full"/"original" means "keep the
 # source frame untouched" (no crop, no pad).
@@ -35,9 +36,12 @@ def _num(value: Any, default: float = 0.0) -> float:
     try:
         if value is None or value == "":
             return float(default)
-        return float(value)
+        result = float(value)
     except (TypeError, ValueError):
         return float(default)
+    if not math.isfinite(result):
+        raise ValueError("Numeric editor settings must be finite")
+    return result
 
 
 def _clamp01(value: Any, default: float = 0.5) -> float:
@@ -63,7 +67,10 @@ def _norm_crop(value):
     if not isinstance(value, dict):
         return None
     import math
-    vals = {k: float(value.get(k, d)) for k, d in (("x", 0), ("y", 0), ("w", 1), ("h", 1))}
+    try:
+        vals = {k: float(value.get(k, d)) for k, d in (("x", 0), ("y", 0), ("w", 1), ("h", 1))}
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Crop coordinates must be numbers") from exc
     if not all(math.isfinite(v) for v in vals.values()):
         raise ValueError("Crop coordinates must be finite")
     vals["w"] = max(0.01, min(1, vals["w"]))

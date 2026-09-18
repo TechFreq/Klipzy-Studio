@@ -16,10 +16,10 @@ from server.core.ffmpeg_tools import (
     generate_srt, generate_vtt, get_video_duration,
     extract_best_thumbnail,
 )
+from server.core.processing_trace import pipeline_scope
 from server.core.transcriber import Transcriber
 from server.core.highlight_detector import HighlightDetector
 from server.core.audio_energy import detect_highlights_audio_energy
-from server.core.llm_detector import detect_highlights_llm
 from server.core.face_tracker import FaceTracker
 from server.models import ClipCandidate, ClipResult, TranscriptSegment
 
@@ -57,7 +57,7 @@ class VideoClipperEngine:
     def _video_fingerprint(video_path: str) -> str:
         try:
             st = os.stat(video_path)
-            raw = f"{os.path.getsize(video_path)}:{int(st.st_mtime)}"
+            raw = f"{Path(video_path).resolve()}:{st.st_size}:{st.st_mtime_ns}"
         except OSError:
             raw = str(video_path)
         return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
@@ -130,6 +130,7 @@ class VideoClipperEngine:
         except Exception:
             pass
 
+    @pipeline_scope
     def process_video(
         self,
         video_path: str,
@@ -177,16 +178,25 @@ class VideoClipperEngine:
         intro_font_size: Optional[int] = None,
         intro_style: Optional[dict] = None,
         progress_callback=None,
+        audio_tracks: str = "default",
+        analysis_audio_tracks: str = "same",
+        audio_track_gains: Optional[List[float]] = None,
+        visual_review: bool = False,
+        diagnostic_job_id: Optional[str] = None,
     ) -> List[ClipResult]:
         """
         End-to-end pipeline: long video -> rendered shorts.
         """
+        requested_settings = {k: v for k, v in locals().items() if k not in ("self", "progress_callback")}
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"Video file not found: {video_path}")
 
         available, ffmpeg_err = check_ffmpeg()
         if not available:
             raise RuntimeError(ffmpeg_err)
+
+        if auto_clip_count:
+            min_duration, max_duration = 8.0, 120.0
 
         self.detector.min_duration = min_duration
         self.detector.max_duration = max_duration
@@ -196,20 +206,60 @@ class VideoClipperEngine:
         job_dir = self.output_dir / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
 
+        from server.core import processing_trace as trace
+        trace.bind(diagnostic_job_id or job_id)
+        trace.attach(job_dir / "processing-debug.jsonl")
+        trace.event("pipeline.start", settings=requested_settings, output_dir=str(job_dir),
+                    effective_min_duration=min_duration, effective_max_duration=max_duration)
         temp_audio = str(job_dir / "temp_audio.wav")
 
+        current_stage = ["initializing"]
+        def trace_filter(stage, before, after):
+            remaining = {id(c) for c in after}
+            trace.event("selection.filter", stage=stage, before=len(before), after=len(after),
+                        rejected=[{"id": c.id, "start": c.start_time, "end": c.end_time,
+                                   "score": c.score, "ai_score": c.ai_score} for c in before if id(c) not in remaining])
+
         def report(step: str, pct: int):
+            current_stage[0] = step
+            trace.event("progress", percent=pct, message=step)
             if progress_callback:
                 progress_callback(step, pct)
 
+        cache_video_path = video_path
+        action_audio = str(job_dir / "action_audio.wav")
+        def extract_analysis_audio():
+            if analysis_audio_tracks == "same":
+                return extract_audio(video_path, temp_audio)
+            from server.core.ffmpeg_tools import extract_selected_audio
+            return extract_selected_audio(cache_video_path, temp_audio, analysis_audio_tracks)
+
+        if audio_tracks != "default" or audio_track_gains:
+            from server.core.ffmpeg_tools import prepare_audio_tracks
+            report(f"Preparing export audio tracks {audio_tracks}...", 10)
+            video_path = prepare_audio_tracks(video_path, str(job_dir / "selected_audio_source.mkv"), audio_tracks, gains=audio_track_gains)
+        else:
+            try:
+                from server.core.ffmpeg_tools import get_media_info
+                tracks = [s for s in get_media_info(video_path).get("streams", []) if s.get("codec_type") == "audio"]
+                if len(tracks) > 1:
+                    report(f"Found {len(tracks)} audio tracks. Default uses one track. Select audio tracks in Audio & Cleanup to include separate commentary.", 10)
+            except Exception as stage_error:
+                trace.event("stage.failed", stage=current_stage[0], error_type=type(stage_error).__name__, error=str(stage_error))
+                pass
         report("Transcribing with Whisper...", 25)
         effective_model = whisper_model or self.whisper_model or "base"
+        cache_model = effective_model + "_audio_" + (audio_tracks if analysis_audio_tracks == "same" else analysis_audio_tracks).replace(",", "-") + "_lang_" + (language or "auto")
+        if analysis_audio_tracks == "same" and audio_track_gains:
+            cache_model += "_mix_" + hashlib.sha1(json.dumps(audio_track_gains).encode()).hexdigest()[:10]
         # Reuse transcript if we've already transcribed this exact video with
         # this model — makes caption/format tweaks near-instant.
-        segments = self._cached_segments(video_path, effective_model)
+        segments = self._cached_segments(cache_video_path, cache_model)
+        trace.event("transcript.cache", hit=segments is not None, cache_key=cache_model,
+                    fingerprint=self._video_fingerprint(cache_video_path))
         if segments is None:
             report("Extracting audio...", 12)
-            extract_audio(video_path, temp_audio)
+            extract_analysis_audio()
             # Keep self.transcriber in sync for backend reporting / GPU cleanup,
             # even though the transcription itself runs via transcribe_cancellable.
             if self.transcriber.model_size != effective_model:
@@ -220,7 +270,21 @@ class VideoClipperEngine:
             # subprocess isn't viable (packaged app, launch error).
             from server.core.transcribe_runner import transcribe_cancellable
             segments = transcribe_cancellable(temp_audio, effective_model, language)
-            self._save_cache(video_path, effective_model, segments)
+            self._save_cache(cache_video_path, cache_model, segments)
+
+        # VAD can return a segment spanning separated speech islands. Split on
+        # observed word gaps, including cached transcripts from older runs.
+        from server.core.transcriber import split_transcript_gaps
+        repaired = split_transcript_gaps(segments)
+        if len(repaired) != len(segments):
+            report("Repaired transcript segments spanning long speech gaps", 34)
+            segments = repaired
+            self._save_cache(cache_video_path, cache_model, segments)
+
+        trace.event("transcript.summary", segments=len(segments), words=sum(len(s.words or []) for s in segments),
+                    first_start=segments[0].start if segments else None, last_end=segments[-1].end if segments else None)
+        for segment in segments:
+            trace.event("transcript.segment", segment=segment.model_dump())
 
         # Optional speaker diarization ("who spoke when"), shared by both the
         # speaker-aware selection (#16.2) and active-speaker crop (#16.3). Run it
@@ -233,57 +297,112 @@ class VideoClipperEngine:
                 if diarization_available():
                     report("Diarizing speakers...", 36)
                     if not os.path.exists(temp_audio):
-                        extract_audio(video_path, temp_audio)
+                        extract_analysis_audio()
                     dres = diarize(temp_audio)
                     if dres.get("available"):
                         diar_segments = dres.get("segments", []) or None
-            except Exception:
+            except Exception as stage_error:
+                trace.event("stage.failed", stage=current_stage[0], error_type=type(stage_error).__name__, error=str(stage_error))
                 diar_segments = None
 
         report("Finding highlight moments...", 38)
-        candidates: List[ClipCandidate] = self.detector.detect_highlights_heuristic(segments)
+        if auto_clip_count:
+            from server.core.highlight_detector import detect_highlights_auto
+            report("Auto: finding complete speech moments and audio highlights...", 38)
+            candidates = detect_highlights_auto(segments)
+        else:
+            candidates = self.detector.detect_highlights_heuristic(segments)
 
         if use_audio_energy:
             report("Scanning audio energy peaks...", 42)
+            if not os.path.exists(temp_audio):
+                extract_analysis_audio()
             energy_clips = detect_highlights_audio_energy(
                 temp_audio, segments, min_duration=min_duration, max_duration=max_duration
             )
             candidates.extend(energy_clips)
 
-        if use_llm:
-            report("Asking local LLM for viral moments...", 46)
-            llm_clips = detect_highlights_llm(segments, model=llm_model)
-            candidates.extend(llm_clips)
-
-        # Gameplay fallback: if there's no speech to score (shooters/Warzone,
-        # music-only footage), find the loudest action moments straight from the
-        # audio envelope — gunfights/killstreaks — NVIDIA-Highlights-style.
-        if not candidates:
-            report("No speech found — scanning for action moments...", 44)
+        speech_count = len(candidates)
+        if use_audio_energy:
+            report("Scanning audio + visual action moments alongside speech...", 44)
             from server.core.audio_energy import detect_action_highlights
-            candidates = detect_action_highlights(
-                temp_audio, min_duration=min_duration, max_duration=max_duration,
-                top_k=20 if auto_clip_count else max_clips, video_path=video_path,
+            if not os.path.exists(temp_audio):
+                extract_analysis_audio()
+            # Action detection needs game sound even when ASR uses only the mic.
+            if analysis_audio_tracks != "same":
+                extract_audio(video_path, action_audio)
+            action_clips = detect_action_highlights(
+                action_audio if analysis_audio_tracks != "same" else temp_audio, min_duration=min_duration, max_duration=max_duration,
+                top_k=None if auto_clip_count else max_clips, video_path=video_path,
             )
+            # Action windows may contain speech too. Preserve those words for
+            # captions, transcript review, and grounded AI ranking.
+            from server.core.highlight_detector import align_action_window
+            for clip in action_clips:
+                align_action_window(clip, segments, max_duration=max_duration)
+                matching = [seg for seg in segments if seg.end > clip.start_time and seg.start < clip.end_time]
+                clip.words = [word for seg in matching for word in (seg.words or [])
+                              if word.start >= clip.start_time and word.end <= clip.end_time]
+                clip.full_text = " ".join(word.word for word in clip.words) if clip.words else " ".join(seg.text for seg in matching)
+            candidates.extend(action_clips)
+            report(f"Found {speech_count} speech/audio candidates and {len(action_clips)} action candidates; combining overlapping moments", 45)
+
+        # Local models can attach good titles to unrelated invented windows, even
+        # when prompted with segment IDs. Rank actual detector windows below instead.
+        if use_llm and not segments:
+            report("No transcript: skipping text-only AI; using available action candidates", 46)
+
+        for candidate in candidates:
+            trace.event("candidate.proposed", candidate=candidate.model_dump())
+        proposed_candidates = list(candidates)
 
         # Sanity floor: never emit a degenerate sub-clip regardless of source.
         # (A loud one-word segment must not survive as a fraction-of-a-second clip.)
         floor = min(min_duration, 5.0)
+        before_filter = list(candidates)
         candidates = [c for c in candidates if c.duration >= floor]
+        trace_filter("minimum duration", before_filter, candidates)
 
         # Semantic "rank-and-refine": let the local LLM SCORE the real candidate
         # windows (and write hook/title) rather than invent timestamps — grounded
         # selection, no hallucinated cuts. Only the top pool is sent to keep the
         # prompt tight; degrades to the heuristic ordering if Ollama is absent.
-        if use_llm and candidates:
+        if use_llm and any(c.full_text for c in candidates):
             try:
                 from server.core.llm_detector import rank_candidates_llm
                 report("Ranking clips with local AI...", 48)
-                ordered = sorted(candidates, key=lambda c: c.score, reverse=True)
-                pool, rest = ordered[:12], ordered[12:]
-                candidates = rank_candidates_llm(pool, model=llm_model, preset=caption_style) + rest
-            except Exception:
+                spoken = [c for c in candidates if c.full_text]
+                unspoken = [c for c in candidates if not c.full_text]
+                ordered = sorted(spoken, key=lambda c: c.start_time)
+                ranked = []
+                # Cover the full timeline, not just the twelve highest keyword scores.
+                for offset in range(0, len(ordered), 6):
+                    from server.core import proc
+                    if proc.cancelled():
+                        break
+                    report(f"Ranking candidates {offset+1}–{min(offset+6,len(ordered))}/{len(ordered)}...", 48)
+                    batch = ordered[offset:offset+6]
+                    ranked.extend(rank_candidates_llm(batch, model=llm_model,
+                        preset=caption_style, status_callback=lambda msg: report(msg, 48)))
+                    if not any(c.ai_score is not None for c in batch):
+                        ranked.extend(ordered[offset+6:])
+                        report("No usable AI scores; remaining candidates keep heuristic scores", 48)
+                        break
+                candidates = ranked + unspoken
+
+            except Exception as stage_error:
+                trace.event("stage.failed", stage=current_stage[0], error_type=type(stage_error).__name__, error=str(stage_error))
                 pass
+
+        from server.core import proc
+        proc.raise_if_cancelled()
+
+        # Text AI may reject weak speech clips; it cannot judge silent visual events.
+        if auto_clip_count and use_llm:
+            before_filter = list(candidates)
+            candidates = [c for c in candidates if c.ai_score is None or c.ai_score >= 5
+                          or c.id.startswith("action_")]
+            trace_filter("Auto: AI speech score below 5", before_filter, candidates)
 
         # #16.2 Speaker-aware selection: gently boost candidates that stay on one
         # speaker or a clean two-way exchange, and dampen messy 3+ speaker /
@@ -292,58 +411,84 @@ class VideoClipperEngine:
             try:
                 from server.core.diarizer import rank_clips_by_speaker
                 rank_clips_by_speaker(candidates, diar_segments)
-            except Exception:
+            except Exception as stage_error:
+                trace.event("stage.failed", stage=current_stage[0], error_type=type(stage_error).__name__, error=str(stage_error))
                 pass
 
-        # Deduplicate by time-overlap, then by hook/title: the heuristic and
-        # audio-energy detectors often land on the SAME moment with slightly
-        # different bounds (so time-overlap alone misses it). Keep the
-        # higher-scoring pick per distinct hook.
+        # Deduplicate overlapping moments. Repeated titles are repaired after copywriting;
+        # they must not discard distinct footage.
+        if auto_clip_count:
+            candidates.sort(key=lambda candidate: candidate.score, reverse=True)
+        before_filter = list(candidates)
         candidates = self.detector._deduplicate(candidates)
+        trace_filter("overlapping windows", before_filter, candidates)
         candidates.sort(key=lambda c: c.score, reverse=True)
-        seen_hooks = set()
-        unique: List[ClipCandidate] = []
-        for c in candidates:
-            key = (c.title or c.hook_text or "").strip().lower()[:40]
-            if key and key in seen_hooks:
-                continue
-            seen_hooks.add(key)
-            unique.append(c)
+        unique = candidates
         if auto_clip_count:
             candidates = select_auto_candidates(unique)
-            report(f"Auto selected {len(candidates)} of {len(unique)} distinct moments (limit 20)", 49)
+            report(f"Auto selected {len(candidates)} of {len(unique)} distinct moments from this footage", 49)
         else:
             candidates = unique[:max_clips]
 
-        # Viral copywriting pass (opt-in via use_llm): rewrite each FINAL clip's
-        # hook + title and add an engaging 1-2 sentence description — the
-        # CapCut / OpusClips-style copy that shows on the clip card and drives the
-        # auto intro hook. Runs only on the small final set (<= max_clips) and is
-        # grounded in each clip's own transcript. Per-clip try/except means a
-        # missing/offline Ollama silently keeps the heuristic hook/title.
-        if use_llm and candidates:
-            report("Writing viral titles & descriptions with local AI...", 49)
+        trace_filter("Auto quality threshold" if auto_clip_count else "manual clip count", unique, candidates)
+        selected_ids = {id(c) for c in candidates}
+        for candidate in proposed_candidates:
+            trace.event("candidate.decision", candidate_id=candidate.id, start=candidate.start_time,
+                        end=candidate.end_time, score=candidate.score, ai_score=candidate.ai_score,
+                        selected=id(candidate) in selected_ids,
+                        reason=candidate.reason)
+        trace.event("selection.summary", proposed=len(proposed_candidates), selected=len(candidates))
+
+        if visual_review and candidates:
+            from server.core.visual_reviewer import review_candidate
+            for index, clip in enumerate(candidates):
+                proc.raise_if_cancelled()
+                report(f"Reviewing visual evidence {index+1}/{len(candidates)} (sampled frames)...", 49)
+                try:
+                    clip.visual_review = review_candidate(video_path, clip)
+                    trace.event("visual.result", clip_id=clip.id, result=clip.visual_review)
+                except Exception as stage_error:
+                    trace.event("stage.failed", stage=current_stage[0], error_type=type(stage_error).__name__, error=str(stage_error))
+                    proc.raise_if_cancelled()
+                    report("Visual review unavailable; keeping existing selections. Check gemma3:4b in Ollama.", 49)
+                    break
+
+        # Write and check final clip copy. Unavailable or unsupported generation
+        # falls back to this clip's source wording, not unverified ranking copy.
+        if use_llm and any(c.full_text for c in candidates):
+            report("Writing and checking clip titles & descriptions with local AI...", 49)
             try:
-                from server.core.hook_writer import generate_clip_copy_llm
+                from server.core.hook_writer import generate_clip_copy_llm, source_clip_copy
                 for clip in candidates:
+                    if not clip.full_text:
+                        continue
                     try:
                         copy = generate_clip_copy_llm(
                             clip.full_text or clip.hook_text,
                             current_hook=clip.hook_text,
                             model=llm_model,
                         )
-                    except Exception:
+                    except Exception as stage_error:
+                        trace.event("stage.failed", stage=current_stage[0], error_type=type(stage_error).__name__, error=str(stage_error))
                         copy = None
                     if not copy:
-                        continue
+                        copy = source_clip_copy(clip.full_text)
+                    trace.event("copy.result", clip_id=clip.id, copy=copy,
+                                source_fallback=copy.get("description", "").startswith("From the clip:"))
                     if copy.get("hook"):
                         clip.hook_text = copy["hook"]
                     if copy.get("title"):
                         clip.title = copy["title"]
                     if copy.get("description"):
                         clip.description = copy["description"]
-            except Exception:
+            except Exception as stage_error:
+                trace.event("stage.failed", stage=current_stage[0], error_type=type(stage_error).__name__, error=str(stage_error))
                 pass
+
+        from server.core.hook_writer import ensure_distinct_clip_titles
+        ensure_distinct_clip_titles(candidates)
+        for clip in candidates:
+            trace.event("clip.final", clip=clip.model_dump())
 
         # Generate subtitle files
         srt_path = str(job_dir / "captions.srt")
@@ -374,7 +519,8 @@ class VideoClipperEngine:
                 intro_font_size=intro_font_size,
                 intro_style=intro_style,
             )
-        except Exception:
+        except Exception as stage_error:
+            trace.event("stage.failed", stage=current_stage[0], error_type=type(stage_error).__name__, error=str(stage_error))
             ass_path = None
 
         results: List[ClipResult] = []
@@ -414,7 +560,8 @@ class VideoClipperEngine:
                             crop_expr = build_crop_x_expression(
                                 traj, min_x=0.0, max_x=100000.0,
                             )
-                    except Exception:
+                    except Exception as stage_error:
+                        trace.event("stage.failed", stage=current_stage[0], error_type=type(stage_error).__name__, error=str(stage_error))
                         crop_expr = None
                 if crop_expr is None:
                     crop_offset = self.face_tracker.get_speaker_center_x(
@@ -456,7 +603,8 @@ class VideoClipperEngine:
                         intro_font_size=intro_font_size,
                         intro_style=intro_style,
                     )
-                except Exception:
+                except Exception as stage_error:
+                    trace.event("stage.failed", stage=current_stage[0], error_type=type(stage_error).__name__, error=str(stage_error))
                     clip_ass = None
             else:
                 clip_srt = srt_path
@@ -482,6 +630,9 @@ class VideoClipperEngine:
                 duck_music=duck_music,
             )
 
+            trace.event("render.completed", clip_id=clip.id, output_file=output_clip_path,
+                        bytes=os.path.getsize(output_clip_path) if os.path.exists(output_clip_path) else 0)
+
             # Optional profanity bleep/mute
             if (bleep_profanity or mute_profanity) and os.path.exists(output_clip_path):
                 try:
@@ -494,7 +645,8 @@ class VideoClipperEngine:
                         if os.path.exists(censored_path):
                             import shutil
                             shutil.move(censored_path, output_clip_path)
-                except Exception:
+                except Exception as stage_error:
+                    trace.event("stage.failed", stage=current_stage[0], error_type=type(stage_error).__name__, error=str(stage_error))
                     pass
 
             # Optional dead air removal
@@ -506,7 +658,8 @@ class VideoClipperEngine:
                     if os.path.exists(tight_path):
                         import shutil
                         shutil.move(tight_path, output_clip_path)
-                except Exception:
+                except Exception as stage_error:
+                    trace.event("stage.failed", stage=current_stage[0], error_type=type(stage_error).__name__, error=str(stage_error))
                     pass
 
             # Generate high quality video poster / thumbnail
@@ -514,7 +667,8 @@ class VideoClipperEngine:
             try:
                 if os.path.exists(output_clip_path):
                     extract_best_thumbnail(output_clip_path, thumb_path, timestamp=0.5)
-            except Exception:
+            except Exception as stage_error:
+                trace.event("stage.failed", stage=current_stage[0], error_type=type(stage_error).__name__, error=str(stage_error))
                 pass
 
             # Determine layout string for potential re-render
@@ -528,6 +682,7 @@ class VideoClipperEngine:
             results.append(
                 ClipResult(
                     clip_id=clip.id,
+                    visual_review=clip.visual_review,
                     title=clip.title,
                     score=clip.score,
                     start_time=clip.start_time,
@@ -556,17 +711,24 @@ class VideoClipperEngine:
         if os.path.exists(temp_audio):
             os.remove(temp_audio)
 
+        if os.path.exists(action_audio):
+            os.remove(action_audio)
+
         # Free GPU memory now that the job is done, so VRAM drops back to ~idle
         # instead of staying reserved by Whisper/YOLO/PyTorch cache + the LLM.
         self._free_gpu_memory(unload_llm_model=llm_model if use_llm else None)
 
         report("Done!", 100)
+        trace.event("pipeline.completed", outputs=[c.output_file for c in results])
+        if diagnostic_job_id is None:
+            trace.unbind()
         return results
 
-def select_auto_candidates(candidates, limit=20):
-    """Choose distinct ranked moments within 65% of the strongest score."""
+def select_auto_candidates(candidates, limit=None):
+    """Keep strong distinct moments without a fixed clip quota."""
     if not candidates:
         return []
     ordered = sorted(candidates, key=lambda candidate: candidate.score, reverse=True)
-    threshold = max(0.0, ordered[0].score * 0.65)
-    return [candidate for candidate in ordered if candidate.score >= threshold][:limit]
+    threshold = max(5.0, ordered[0].score * 0.65)
+    selected = [candidate for candidate in ordered if candidate.score >= threshold]
+    return selected if limit is None else selected[:limit]

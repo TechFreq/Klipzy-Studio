@@ -75,7 +75,7 @@ def load_config() -> Dict[str, Any]:
         if p.is_file():
             saved = json.loads(p.read_text(encoding="utf-8") or "{}")
             if isinstance(saved, dict):
-                cfg.update({k: saved.get(k, cfg[k]) for k in cfg})
+                cfg.update({k: saved[k] for k in cfg if isinstance(saved.get(k), str)})
     except Exception:
         pass  # a corrupt config must never block transcription
     if cfg.get("backend") not in VALID_BACKENDS:

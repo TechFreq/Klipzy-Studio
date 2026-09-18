@@ -141,7 +141,8 @@ def text_items_to_ass(spec: Dict[str, Any]) -> Optional[str]:
         "[V4+ Styles]\n"
         "Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, "
         "Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        "Style: Txt,Arial,96,&H00FFFFFF,&H00000000,&H00000000,-1,0,1,4,0,5,10,10,10,1\n\n"
+        "Style: Txt,Arial,96,&H00FFFFFF,&H00000000,&H00000000,-1,0,1,4,0,5,10,10,10,1\n"
+        "Style: TxtBox,Arial,96,&HFFFFFFFF,&H00111111,&H00111111,-1,0,3,12,0,5,10,10,10,1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
@@ -157,8 +158,21 @@ def text_items_to_ass(spec: Dict[str, Any]) -> Optional[str]:
         style = it.get("style") or {}
         size = int(style.get("size") or 96)
         col = _hex_to_ass(style.get("primary"))
-        override = f"{{\\an5\\pos({x},{y})\\fs{size}\\c{col}}}"
-        lines.append(f"Dialogue: 0,{start},{end},Txt,,0,0,0,,{override}{text}")
+        font = str(style.get("font") or "Arial")
+        font = "".join(c for c in font if c.isalnum() or c in " -_")[:80] or "Arial"
+        bold = 1 if style.get("bold", True) else 0
+        italic = 1 if style.get("italic", False) else 0
+        outline = max(0, min(12, float(style.get("outline", 4))))
+        shadow = max(0, min(20, float(style.get("shadow", 0))))
+        stroke = _hex_to_ass(style.get("outlineColor") or "#000000")
+        base = f"\\an5\\pos({x},{y})\\fs{size}\\fn{font}\\b{bold}\\i{italic}"
+        if style.get("box"):
+            padding = max(0, min(40, float(style.get("padding", 12))))
+            fill = _hex_to_ass(style.get("boxColor") or "#111111")
+            background = f"{{{base}\\1a&HFF&\\3c{fill}\\4c{fill}\\bord{padding}\\shad0}}"
+            lines.append(f"Dialogue: 0,{start},{end},TxtBox,,0,0,0,,{background}{text}")
+        override = f"{{{base}\\c{col}\\3c{stroke}\\bord{outline}\\shad{shadow}}}"
+        lines.append(f"Dialogue: 1,{start},{end},Txt,,0,0,0,,{override}{text}")
     return "\n".join(lines) + "\n"
 
 

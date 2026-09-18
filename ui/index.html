@@ -30,12 +30,19 @@
       <nav class="nav">
         <button class="nav-item active" data-view="projects">🏠 Projects</button>
         <button class="nav-item" data-view="clipper">✂️ Long Form to Shorts</button>
+        <button class="nav-item" data-view="editor">🎞️ Clip Editor</button>
         <button class="nav-item" data-view="chat">💬 AI Edit Chat</button>
-        <button class="nav-item" data-view="setup">⚙️ Setup</button>
       </nav>
+      <div class="sidebar-models">
+        <label for="sidebar-ai-model">Local AI model</label>
+        <select id="sidebar-ai-model" disabled><option>Loading models…</option></select>
+        <label for="sidebar-whisper-model">Transcription quality</label>
+        <select id="sidebar-whisper-model"><option value="tiny">Tiny · fastest</option><option value="base">Base · fast</option><option value="small">Small · balanced</option><option value="medium">Medium · detailed</option><option value="large-v3">Large v3 · highest capacity</option></select>
+        <small id="sidebar-model-status" role="status">Choose the model for upcoming AI requests and transcription for new jobs.</small>
+      </div>
       <div class="sidebar-footer">
         <div class="sidebar-quick-actions">
-          <button id="sidebar-settings-btn" class="sidebar-action-btn" title="Open Settings — dependencies, models, queue & support">⚙️ Settings</button>
+          <button id="sidebar-settings-btn" class="sidebar-action-btn nav-item" data-view="setup" title="Open Settings — dependencies, models, queue & support">⚙️ Settings</button>
           <button id="sidebar-queue-btn" class="sidebar-action-btn" title="Open the background rendering queue">📋 Queue <span id="sidebar-queue-badge" class="badge-count hidden">0</span></button>
           <button id="sidebar-support-btn" class="sidebar-action-btn support" title="Support TechFreq — donate, links & GitHub">💙 Support TechFreq</button>
         </div>
@@ -75,6 +82,12 @@
           </div>
           <div id="projects-home-grid" class="projects-home-grid"></div>
         </div>
+      </section>
+
+      <section id="view-editor" class="view">
+        <header class="view-header"><h1>Clip Editor</h1><p class="subtitle">Choose a generated clip from the current video to adjust its framing, text, audio, and captions.</p></header>
+        <div class="editor-library-toolbar"><input id="editor-library-search" type="search" placeholder="Search clips…" aria-label="Search clips" /><label class="toggle"><input id="editor-library-favorites" type="checkbox" /> Favorites only</label></div>
+        <div id="editor-library" class="editor-library"></div>
       </section>
 
       <!-- Clipper View -->
@@ -278,8 +291,8 @@
             </label>
             <p class="output-mode-hint muted small" id="output-mode-hint">Or fine-tune everything manually below.</p>
           </div>
-<label class="toggle"><input type="checkbox" id="auto-clip-count" /> Auto-select clip count</label>
-<p class="muted small">Find strong, distinct moments instead of using a fixed count (up to 20). Your duration limits still apply. The processing log reports how many were selected.</p>
+<div class="discovery-mode"><label class="toggle"><input type="checkbox" id="auto-clip-count" /><span><strong>Auto highlights</strong> · let the footage decide</span></label>
+<p class="muted small" id="auto-highlight-hint">Auto finds and ranks speech and audio moments, chooses their lengths, and returns the strong distinct highlights. No fixed clip count. Your caption and layout selections still apply.</p></div>
           <div class="options-grid">
             <label class="option">
               <span>Max clips</span>
@@ -332,14 +345,30 @@
                   </span>
                 </label>
                 <label class="toggle">
-                  <input type="checkbox" id="burn-captions" checked />
+                  <input type="checkbox" id="burn-captions" />
                   <span>Burn animated captions</span>
                 </label>
               </div>
             </div>
 
             <div class="toggle-group">
+              <div class="toggle-group-title">Visual evidence</div>
+              <label class="toggle"><input type="checkbox" id="visual-review" /><span>Local visual review (experimental)</span></label>
+              <p class="muted small">Uses installed gemma3:4b in Ollama to describe three frames per selected clip. Adds review notes, not verified event labels or popularity predictions; slower on CPU.</p>
+            </div>
+            <div class="toggle-group">
               <div class="toggle-group-title"><span class="tg-icon">🔊</span> Audio &amp; Cleanup</div>
+              <details class="audio-routing"><summary>Audio tracks &amp; mix balance</summary>
+              <label for="source-audio-tracks">Export audio tracks</label>
+              <input id="source-audio-tracks" type="text" value="default" placeholder="default, 3, 1,3, or all" pattern="default|all|[1-9][0-9]*(,[1-9][0-9]*)*" aria-describedby="source-audio-help" />
+              <p id="source-audio-help" class="muted">default, one track, a mix such as 1,3, or all. Generated clips and editor playback use this audio. Original input preview remains unchanged. Avoid mixing a complete mix with its component tracks.</p>
+              <label for="export-audio-gains">Export mix balances (optional)</label>
+              <input id="export-audio-gains" type="text" placeholder="0.3,1" aria-describedby="export-mix-help" />
+              <p id="export-mix-help" class="muted">One relative volume per selected track, in the same order (0–4). For tracks 1,3, use 0.3,1 to keep game sound quieter than the microphone. Leave blank for equal balance.</p>
+              <label for="analysis-audio-tracks">Speech analysis tracks</label>
+              <input id="analysis-audio-tracks" type="text" value="same" placeholder="same, 3, or 1,3" aria-describedby="analysis-audio-help" />
+              <p id="analysis-audio-help" class="muted">same uses export audio. Select a separate microphone track for clearer captions and speech selection (example: microphone track 3, export mix 1,3). Action detection still uses export audio and video.</p>
+              </details>
               <div class="toggle-group-grid">
                 <label class="toggle">
                   <input type="checkbox" id="normalize-audio" checked />
@@ -380,7 +409,7 @@
               <div class="toggle-group-grid">
                 <label class="toggle">
                   <input type="checkbox" id="audio-energy" checked />
-                  <span>Audio energy detection</span>
+                  <span>Audio energy + visual action detection</span>
                 </label>
                 <label class="toggle">
                   <input type="checkbox" id="use-llm" />
@@ -452,6 +481,7 @@
 
               <div class="caption-settings-layout">
                 <div class="caption-controls-col">
+                  <details class="preset-browser" open><summary>Browse caption looks</summary><input id="caption-preset-search" type="search" placeholder="Search looks…" aria-label="Search caption looks" /><div id="caption-preset-gallery" class="preset-gallery"></div><p class="muted small">Choose a look, then customize the settings below. Previews show representative colors and fonts.</p></details>
                   <div class="caption-grid">
                     <label class="caption-field">
                       <span>Preset Style</span>
@@ -553,6 +583,8 @@
                   <span>Intro hook size (<output id="generated-intro-font-size-label" for="generated-intro-font-size">64</output>)</span>
                   <input type="range" id="generated-intro-font-size" min="24" max="140" step="2" value="64" />
                 </label>
+<div class="headline-look-grid" role="group" aria-label="Headline looks"><button type="button" data-headline-look="plain" class="headline-look"><span>YOUR HOOK</span><small>Text only</small></button><button type="button" data-headline-look="dark" class="headline-look"><span style="background:#111;color:#fff">YOUR HOOK</span><small>Dark box</small></button><button type="button" data-headline-look="light" class="headline-look"><span style="background:#fff;color:#111">YOUR HOOK</span><small>Light box</small></button><button type="button" data-headline-look="accent" class="headline-look"><span style="background:#ffe600;color:#111">YOUR HOOK</span><small>Highlight box</small></button></div>
+<div class="headline-box-controls"><label class="toggle"><input id="intro-box" type="checkbox" /> Square background box</label><label class="caption-field"><span>Box color</span><input id="intro-box-color" type="color" value="#111111" /></label><label class="caption-field"><span>Box opacity (%)</span><input id="intro-box-opacity" type="range" min="0" max="100" value="100" /></label><label class="caption-field"><span>Box padding</span><input id="intro-box-padding" type="range" min="0" max="40" value="12" /></label></div>
 <div class="caption-grid"><label class="caption-field"><span>Headline preset</span><select id="intro-preset"><option value="viral_yellow">Viral yellow</option><option value="neon_green">Neon green</option><option value="bold_white">Bold white</option><option value="cyberpunk_cyan">Cyberpunk cyan</option><option value="fire_red">Fire red</option></select></label>
 <label class="caption-field"><span>Headline font</span><select id="intro-font-name">
                         <option value="" selected>Default (from preset)</option>
@@ -596,7 +628,7 @@
 </details>
           <div class="step-actions">
             <button class="btn btn-primary btn-large" id="start-clipping">🚀 Start Clipping & Transcribing</button>
-            <button class="btn btn-secondary btn-large" id="batch-process-btn" title="Pick several videos and queue them with these same settings">📦 Batch process multiple videos</button>
+            <button class="btn btn-secondary btn-large" id="batch-process-btn" title="Process every video already added to this project" hidden>Process all project videos</button>
           </div>
         </div>
       </div>
@@ -762,11 +794,16 @@
           <div class="modal-header">
             <h3 id="editor-modal-title">✂️ Edit Clip</h3>
             <div class="editor-header-actions">
+              <span id="editor-draft-status" class="muted small" role="status"></span>
+              <button class="btn btn-small btn-secondary" id="editor-save-draft">Save draft</button>
+              <button class="btn btn-small btn-secondary" id="editor-undo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
+              <button class="btn btn-small btn-secondary" id="editor-redo" title="Redo (Ctrl+Shift+Z)" disabled>↷ Redo</button>
               <button class="btn btn-small btn-secondary" id="editor-tutorial-btn" title="Show a quick step-by-step walkthrough">❓ Tutorial</button>
               <button class="modal-close" id="close-editor-modal" aria-label="Close editor">&times;</button>
             </div>
           </div>
           <div class="modal-body">
+            <label class="editor-clip-navigation">Clip <select id="editor-clip-picker" aria-label="Switch clip"></select></label>
             <div class="editor-top">
               <!-- Preview -->
               <div class="editor-preview">
@@ -778,6 +815,8 @@
 <p id="editor-source-note" class="muted small"></p><div class="editor-output-preview"><span class="muted small">Output framing</span><canvas id="editor-output-canvas"></canvas></div>
                 <div class="editor-transport">
                   <button class="btn btn-small" id="editor-playpause" title="Play / pause preview">▶️</button>
+                  <button class="btn btn-small" id="editor-frame-prev" title="Step back 1/30 second">‹</button>
+                  <button class="btn btn-small" id="editor-frame-next" title="Step forward 1/30 second">›</button>
                   <span class="editor-time" id="editor-time">0:00 / 0:00</span>
                   <span class="editor-transport-spacer"></span>
                   <button class="btn btn-primary btn-small" id="editor-export-btn" title="Render your edit locally using the available hardware.">🚀 Export</button>
@@ -872,6 +911,7 @@
                     <input type="color" id="editor-text-color" value="#ffffff" aria-label="Text colour" title="Text colour" />
                     <button class="btn btn-small btn-secondary" id="editor-add-text">🅣 Text</button>
                   </div>
+                  <p class="muted small">Add independent text over this clip. Existing burned text remains in Rendered mode.</p><button class="btn btn-small btn-secondary" id="editor-add-hook">Add opening headline (3 seconds)</button>
                   <div class="editor-add-btn-row">
                     <button class="btn btn-small btn-secondary" id="editor-add-sticker">🖼 Image</button>
                     <button class="btn btn-small btn-secondary" id="editor-add-sfx">🔊 SFX</button>
@@ -927,23 +967,26 @@
                   </div>
                 </div>
 
+                <div class="editor-group" id="editor-transcript-group"><span class="editor-group-label">Transcript · click a word to seek</span><input id="editor-transcript-search" type="search" placeholder="Search transcript…" aria-label="Search transcript" /><div id="editor-transcript-list" class="editor-transcript-list"></div></div>
                 <!-- Selected-item inspector (populated when a timeline block is clicked) -->
                 <div class="editor-group editor-inspector hidden" id="editor-inspector"></div>
               </div>
             </div>
 
+            <details class="editor-export-settings"><summary>Export destination</summary><label>Folder <input id="editor-export-folder" type="text" placeholder="Beside the edited source video" /></label><label>Filename <input id="editor-export-filename" type="text" placeholder="Automatic unique filename.mp4" /></label><p class="muted small">MP4 video. Leave the filename empty for a unique export. An existing file will not be replaced.</p></details>
             <!-- Timeline -->
-<div class="editor-timeline-tools"><label>Timeline zoom <input type="range" id="editor-timeline-zoom" min="1" max="12" step="1" value="1" /></label><label>In (s) <input id="editor-trim-in" type="number" min="0" step="0.01" value="0" /></label><label>Out (s) <input id="editor-trim-out" type="number" min="0" step="0.01" value="0" /></label><output id="editor-trim-feedback" aria-live="polite"></output><span class="muted small">Drop images or audio here to add them at the playhead.</span></div>
+<div class="editor-timeline-tools"><label class="toggle"><input id="editor-snap" type="checkbox" checked /> Snap to edges</label><label>Timeline zoom <input type="range" id="editor-timeline-zoom" min="1" max="12" step="1" value="1" /></label><label>In (s) <input id="editor-trim-in" type="number" min="0" step="0.01" value="0" /></label><label>Out (s) <input id="editor-trim-out" type="number" min="0" step="0.01" value="0" /></label><output id="editor-trim-feedback" aria-live="polite"></output><span class="muted small">Drop images or audio here to add them at the playhead.</span></div>
+            <p id="editor-media-status" class="muted small" role="status"></p>
             <div class="editor-timeline" id="editor-timeline">
               <div class="editor-tl-labels">
                 <div class="editor-tl-label editor-tl-ruler-spacer"></div>
-                <div class="editor-tl-label">🎬 Video</div>
+                <div class="editor-tl-label editor-media-label">Frames</div><div class="editor-tl-label editor-waveform-label">Source audio</div><div class="editor-tl-label">🎬 Video</div>
                 <div class="editor-tl-label">🅣 Text</div>
                 <div class="editor-tl-label">🖼 Media</div>
                 <div class="editor-tl-label">🎵 Audio</div>
               </div>
               <div class="editor-tl-scroll"><div class="editor-tl-tracks" id="editor-tl-tracks">
-                <div class="editor-tl-ruler" id="editor-tl-ruler"></div>
+                <div class="editor-tl-ruler" id="editor-tl-ruler"></div><div id="editor-thumbnail-strip" class="editor-thumbnail-strip" aria-label="Source video thumbnails"></div><div id="editor-waveform" class="editor-waveform" aria-label="Source audio waveform"></div>
                 <div class="editor-tl-lane" id="lane-video"></div>
                 <div class="editor-tl-lane" id="lane-text"></div>
                 <div class="editor-tl-lane" id="lane-graphics"></div>
@@ -1200,7 +1243,7 @@
       <!-- Setup View -->
       <section id="view-setup" class="view">
         <header class="view-header">
-          <h1>⚙️ Setup & System</h1>
+          <h1>⚙️ Settings</h1>
           <p class="subtitle">Check dependencies, install what's missing, and choose the best-to-lightest models for your hardware.</p>
         </header>
 
@@ -1248,6 +1291,10 @@
               <div id="install-all-fill" class="progress-fill"></div>
             </div>
           </div>
+          <section class="install-activity-panel"><h3>Install activity</h3>
+            <p class="muted small">Live installer output includes package names and download sources. Progress is indeterminate when the installer does not report a percentage.</p>
+            <div id="install-activity" aria-live="polite"></div>
+          </section>
           <div id="setup-deps" class="setup-deps">
             <span class="muted">Checking...</span>
           </div>
@@ -1469,8 +1516,10 @@
   <script src="src/editor-spec.js"></script>
   <script src="src/renderer.js"></script>
   <script src="src/caption-editor.js"></script>
+  <script src="src/preset-gallery.js"></script>
   <script src="src/exports.js"></script>
   <script src="src/editor.js"></script>
+  <script src="src/install-activity.js"></script>
   <script src="src/setup-panel.js"></script>
 </body>
 </html>

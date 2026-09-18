@@ -14,6 +14,14 @@ import sys
 from typing import Dict, List, Optional
 
 
+def format_shell_command(command):
+    """Commands target this runtime; quote paths for the user's platform shell."""
+    if os.name == "nt":
+        return "& " + " ".join("'" + str(arg).replace("'", "''") + "'" for arg in command)
+    import shlex
+    return shlex.join(command)
+
+
 # ----------------------------------------------------------------------
 # Detection helpers
 # ----------------------------------------------------------------------
@@ -330,12 +338,14 @@ def _detect_cpu_name() -> Optional[str]:
     return platform.processor() or None
 
 
-def detect_torch() -> Dict[str, bool]:
+def detect_torch() -> Dict[str, object]:
     try:
         import torch
         cuda_ok = torch.cuda.is_available()
         return {
             "installed": True,
+            "version": str(torch.__version__),
+            "cuda_build": torch.version.cuda,
             "cuda": cuda_ok,
             "mps": getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available(),
         }
@@ -521,7 +531,7 @@ def _transcription_accel() -> Dict:
     else:
         cmd, reco = [], ""
     return {"active": tb.get("active"), "note": tb.get("note", ""),
-            "recommend": reco, "command": " ".join(cmd)}
+            "recommend": reco, "command": format_shell_command(cmd)}
 
 
 def gpu_acceleration_status() -> Dict:
@@ -578,9 +588,9 @@ def gpu_acceleration_status() -> Dict:
         engine = "CPU"
 
     plan = _pytorch_accel_plan()
-    install_cmd = " ".join(plan["command"])
-    uninstall_cmd = " ".join(get_uninstall_commands().get("pytorch", []))
-    cpu_cmd = f"{os.path.basename(sys.executable)} -m pip install torch torchvision"
+    install_cmd = format_shell_command(plan["command"])
+    uninstall_cmd = format_shell_command(get_uninstall_commands().get("pytorch", []))
+    cpu_cmd = format_shell_command([sys.executable, "-m", "pip", "install", "torch", "torchvision"])
     transcription = _transcription_accel()
 
     vendor_label = {"nvidia": "NVIDIA", "amd": "AMD", "intel": "Intel",
@@ -589,6 +599,9 @@ def gpu_acceleration_status() -> Dict:
     if state == "active":
         headline = f"Acceleration is ON — {engine}."
         detail = f"{name or vendor_label} is powering transcription and face-tracking."
+    elif state == "dormant" and torch_info.get("cuda_build"):
+        headline = "CUDA-enabled PyTorch is installed, but the GPU is unavailable to this process."
+        detail = "Restart Klipzy to load the installed build. If this persists, check the NVIDIA driver; reinstalling the same CUDA wheel is not an activation step."
     elif state == "dormant":
         exp = " (experimental)" if plan["experimental"] else ""
         headline = f"{name or vendor_label} found, but PyTorch is running on the CPU."
@@ -610,6 +623,9 @@ def gpu_acceleration_status() -> Dict:
         "vram_gb": gpu.get("vram_gb"),
         "vendor": vendor,
         "torch_installed": installed,
+        "python_executable": sys.executable,
+        "torch_version": torch_info.get("version"),
+        "cuda_build": torch_info.get("cuda_build"),
         "cuda": cuda, "mps": mps, "directml": directml, "xpu": xpu,
         "accelerated": accelerated,
         "can_accelerate": can_accelerate,
@@ -827,6 +843,26 @@ def recommend_ollama_model(preset: str = "") -> str:
     return _MODEL_LADDER[idx]
 
 
+def ollama_model_health(model: str) -> str:
+    """Check model metadata, including missing weight files, without loading it."""
+    import json
+    import urllib.request
+    import urllib.error
+    req = urllib.request.Request("http://127.0.0.1:11434/api/show",
+        data=json.dumps({"model": model}).encode(), headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=3) as response:
+            json.load(response)
+        return "ready"
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace").lower()
+        if exc.code == 404 or "cannot find the file" in detail or "no such file" in detail:
+            return "repair_needed"
+        return "unknown"
+    except Exception:
+        return "unknown"
+
+
 def ollama_model_catalog(preset: str = "") -> Dict:
     """Catalog + which models are installed + the recommended pick.
 
@@ -840,9 +876,12 @@ def ollama_model_catalog(preset: str = "") -> Dict:
     vram = detect_gpu().get("vram_gb") or 0
     models = []
     for m in OLLAMA_MODEL_CATALOG:
+        present = m["name"] in installed_set
+        health = ollama_model_health(m["name"]) if present else "not_installed"
         models.append({
             **m,
-            "installed": (m["name"] in installed) or (m["name"] in installed_set),
+            "installed": present and health != "repair_needed",
+            "health": health,
             "recommended": m["name"] == recommended,
             "fits_ram": (not ram) or (ram >= m["min_ram_gb"]),
             # Fully GPU-accelerated when there's enough VRAM; otherwise it still

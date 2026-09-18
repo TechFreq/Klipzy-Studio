@@ -117,7 +117,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         animation = {"fade": r"\fad(200,150)", "pop": r"\fscx80\fscy80\t(0,180,\fscx100\fscy100)"}.get(opts.get("animation"), "")
         # The intro name keeps this event clip-relative during subtitle rebasing.
         alignment_tag = chr(92) + "an" + str(align)
-        event_lines.append(f"Dialogue: 0,0:00:00.00,{fmt_ass_time(intro_end)},Intro,intro,0,0,0,,{{{alignment_tag}{animation}}}{intro_text}")
+        if opts.get("box"):
+            opacity = max(0, min(100, float(opts.get("box_opacity", 100))))
+            padding = max(0, min(40, float(opts.get("box_padding", 12))))
+            box_color = _to_ass_color(opts.get("box_color", "#111111"), "&H00111111")
+            box_color = f"&H{round(255 * (1-opacity/100)):02X}" + box_color[-6:]
+            # BorderStyle 3 draws a square opaque box around the same text metrics.
+            # A separate layer retains the headline's independent text outline.
+            box_style = f"Style: IntroBox,{name},{size},&HFF000000,&HFF000000,{box_color},{box_color},{ib},{ii},0,0,100,100,1,0,3,{padding},0,{align},40,40,180,1\n"
+            header = header.replace("[Events]", box_style + "\n[Events]")
+            event_lines.append(f"Dialogue: 0,0:00:00.00,{fmt_ass_time(intro_end)},IntroBox,intro,0,0,0,,{{{alignment_tag}{animation}}}{intro_text}")
+        text_layer = 1 if opts.get("box") else 0
+        event_lines.append(f"Dialogue: {text_layer},0:00:00.00,{fmt_ass_time(intro_end)},Intro,intro,0,0,0,,{{{alignment_tag}{animation}}}{intro_text}")
 
     for seg in segments:
         words = getattr(seg, "words", []) or []

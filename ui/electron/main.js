@@ -6,11 +6,15 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const net = require('net');
+const { decideQuit } = require('./ollama-shutdown');
+const { compatibleBackend } = require('./backend-identity');
+let quitApproved = false, quitPromptPending = false;
 const crypto = require('crypto');
 
-const SERVER_PORT = 8765;
+let SERVER_PORT = 8765;
 let mainWindow = null;
 let serverProcess = null;
+let serverStatus = { state: "starting", detail: "Starting local engine..." };
 
 // Shared secret for this launch. The Python server requires it in the
 // X-Klipzy-Token header on every request, which stops arbitrary web pages from
@@ -49,8 +53,8 @@ function findPython() {
   const venv = (isWin ? winVenv : nixVenv).filter((p) => {
     try { return fs.existsSync(p); } catch { return false; }
   });
-  // Bare interpreters as a last resort (correct one first for the platform).
-  return [...venv, isWin ? 'python' : 'python3', isWin ? 'python3' : 'python'];
+  // Never switch environments just because the project environment starts slowly.
+  return venv.length ? [venv[0]] : [isWin ? 'python' : 'python3', isWin ? 'python3' : 'python'];
 }
 
 function isPortFree(port) {
@@ -66,6 +70,7 @@ function isPortFree(port) {
 // the server is up, so it needs to hear about progress and failures rather than
 // the user staring at a dead UI.
 function reportServerStatus(state, detail) {
+  serverStatus = { state, detail: detail || "" };
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('server-status', { state, detail: detail || '' });
   }
@@ -73,30 +78,37 @@ function reportServerStatus(state, detail) {
 }
 
 async function startServer() {
-  // If a server is already listening, reuse it rather than fighting for the
-  // port. Note that it will have its own token, so the renderer reads the
-  // effective one from disk in that case.
+  const serverDir = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', '..');
+  const pythons = findPython();
   if (!(await isPortFree(SERVER_PORT))) {
-    console.log('Server already running on port', SERVER_PORT);
     reusedExistingServer = true;
     try {
       const token = await getEffectiveApiToken();
-      const response = await fetch('http://127.0.0.1:' + SERVER_PORT + '/output-folder', {
-        headers: { 'X-Klipzy-Token': token }, signal: AbortSignal.timeout(5000),
+      const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/ready`, {
+        headers: {'X-Klipzy-Token': token}, signal: AbortSignal.timeout(5000),
       });
-      if (!response.ok) throw new Error('Connection rejected');
-      reportServerStatus('ready', 'Connected to the existing local engine.');
-    } catch (_) {
-      reportServerStatus('failed', 'An existing backend could not be authenticated. Close all Klipzy windows and any separately started Klipzy backend, then reopen Klipzy Studio. This is a connection issue, not a CPU/GPU requirement.');
+      const identity = response.ok ? await response.json() : null;
+      if (compatibleBackend(identity, pythons[0], serverDir)) {
+        reportServerStatus('ready', 'Connected to the matching local engine.');
+        return;
+      }
+    } catch (_) { /* Older or unrelated server: leave it untouched. */ }
+    reusedExistingServer = false;
+    let available = false;
+    for (let port = 8766; port <= 8785; port++) {
+      if (await isPortFree(port)) { SERVER_PORT = port; available = true; break; }
     }
-    return;
+    if (!available) {
+      reportServerStatus('failed', 'No free local engine port was found (8765–8785). Close unused Klipzy instances and reopen.');
+      return;
+    }
+    reportServerStatus('starting', `An older or different engine occupies port 8765. Starting the project environment on port ${SERVER_PORT}.`);
   }
 
-  const serverDir = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', '..');
-  const pythons = findPython();
   const attempted = [];
 
   for (const py of pythons) {
+    if (app.isQuitting) return;
     try {
       reportServerStatus('starting', `Trying ${py}`);
 
@@ -132,7 +144,7 @@ async function startServer() {
         console.error('[server-err]', text.trim());
       });
 
-      const ready = await waitForServer(30000, () => spawnError !== null || exited !== null);
+      const ready = await waitForServer(180000, () => app.isQuitting || spawnError !== null || exited !== null);
       if (ready) {
         console.log('Python server started with', py);
         reportServerStatus('ready', '');
@@ -148,6 +160,7 @@ async function startServer() {
         return;
       }
 
+      if (app.isQuitting) return;
       attempted.push(`${py}: ${spawnError ? spawnError.message : exited ? `exited with code ${exited.code}` : 'timed out'}`);
       if (serverProcess && !serverProcess.killed) serverProcess.kill();
       if (stderrTail.trim()) console.error('[server-err last output]', stderrTail.trim());
@@ -160,8 +173,9 @@ async function startServer() {
   serverProcess = null;
   reportServerStatus(
     'failed',
-    'Could not start the Python backend. Check that Python 3.10+ is installed and that '
-      + '"pip install -r requirements.txt" has been run. Details: ' + attempted.join(' | ')
+    'Could not start the Python backend in the selected environment. Reopen Klipzy; if this repeats, '
+      + 'check logs/server.log and repair dependencies in the project .venv using the launcher. '
+      + 'A slow startup does not mean PyTorch or a GPU is missing. Details: ' + attempted.join(' | ')
   );
 }
 
@@ -171,8 +185,10 @@ function waitForServer(timeoutMs = 30000, shouldAbort = () => false) {
     const check = async () => {
       if (shouldAbort()) return resolve(false);
       try {
-        // /health is intentionally exempt from token auth so this poll works.
-        const res = await fetch(`http://127.0.0.1:${SERVER_PORT}/health`);
+        // Readiness must not import AI libraries or run hardware probes.
+        const res = await fetch(`http://127.0.0.1:${SERVER_PORT}/ready`, {
+          headers: { "X-Klipzy-Token": API_TOKEN }, signal: AbortSignal.timeout(2000),
+        });
         if (res.ok) return resolve(true);
       } catch (e) { /* not ready yet */ }
       if (Date.now() - start > timeoutMs) return resolve(false);
@@ -215,6 +231,10 @@ function createWindow() {
     return { action: 'deny' };
   });
 
+  mainWindow.on('close', (event) => {
+    if (!quitApproved) { event.preventDefault(); app.quit(); }
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -236,6 +256,40 @@ ipcMain.handle('select-video', async () => {
   return result.filePaths[0];
 });
 
+ipcMain.handle('restart-app', async () => {
+  if (reusedExistingServer) return {error:'This engine was started outside this window. Close Klipzy and restart that backend before reopening.'};
+  try {
+    const headers = {'X-Klipzy-Token': await getEffectiveApiToken()};
+    const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/setup/install-jobs`, {headers, signal:AbortSignal.timeout(5000)});
+    if (!response.ok) throw new Error('Could not verify installer status');
+    const data = await response.json();
+    if (data.jobs.some(job => !['complete','failed'].includes(job.state))) return {error:'Wait for dependency installation to finish before restarting.'};
+    const jobsResponse = await fetch(`http://127.0.0.1:${SERVER_PORT}/jobs`, {headers, signal:AbortSignal.timeout(5000)});
+    if (!jobsResponse.ok) throw new Error('Could not verify processing status');
+    const jobsData = await jobsResponse.json();
+    const jobs = Array.isArray(jobsData) ? jobsData : jobsData.jobs || [];
+    if (jobs.some(job => ['queued','running','processing'].includes(job.status))) return {error:'Finish or cancel queued and running jobs before restarting.'};
+    const editorResponse = await fetch(`http://127.0.0.1:${SERVER_PORT}/editor/exports`, {headers, signal:AbortSignal.timeout(5000)});
+    if (!editorResponse.ok) throw new Error('Could not verify editor exports; finish exports before restarting.');
+    const editorData = await editorResponse.json();
+    if (editorData.jobs.some(job => !job.done)) return {error:'Finish or cancel editor exports before restarting.'};
+    app.isQuitting = true;
+    if (serverProcess && serverProcess.exitCode === null) {
+      const stopped = await new Promise(resolve => {
+        const timer = setTimeout(() => resolve(false),10000);
+        serverProcess.once('exit', () => {clearTimeout(timer); resolve(true);});
+        serverProcess.kill();
+      });
+      if (!stopped) {app.isQuitting = false; return {error:'The backend did not stop. Close and reopen Klipzy manually.'};}
+    }
+    quitApproved = true;
+    app.relaunch();
+    app.quit();
+    return {ok:true};
+  } catch(error) {app.isQuitting = false; return {error:error.message};}
+});
+
+ipcMain.handle('server-status', () => serverStatus);
 ipcMain.handle('server-url', () => `http://127.0.0.1:${SERVER_PORT}`);
 
 async function getEffectiveApiToken() {
@@ -362,8 +416,20 @@ app.on('window-all-closed', () => {
 });
 
 // Distinguishes an intentional shutdown from a backend crash.
-app.on('before-quit', () => {
-  app.isQuitting = true;
+app.on('before-quit', (event) => {
+  if (quitApproved) { app.isQuitting = true; return; }
+  event.preventDefault();
+  if (quitPromptPending) return;
+  quitPromptPending = true;
+  const ask = options => mainWindow && !mainWindow.isDestroyed()
+    ? dialog.showMessageBox(mainWindow, options) : dialog.showMessageBox(options);
+  decideQuit({ ask })
+    .then(approved => { if (approved) { quitApproved = true; app.isQuitting = true; app.quit(); } })
+    .catch(error => {
+      console.error('Quit prompt failed; leaving Ollama unchanged:', error.message);
+      quitApproved = true; app.isQuitting = true; app.quit();
+    })
+    .finally(() => { quitPromptPending = false; });
 });
 
 app.on('quit', () => {

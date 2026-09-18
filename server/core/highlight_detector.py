@@ -245,3 +245,53 @@ class HighlightDetector:
             if not overlap:
                 selected.append(c)
         return selected
+
+def detect_highlights_auto(segments):
+    """Discover complete speech moments at sentence/pause boundaries, independent of manual limits.
+
+    Eight seconds avoids isolated fragments; two minutes bounds a single short.
+    These are window bounds, not an output-count target. Scoring remains heuristic.
+    """
+    detector = HighlightDetector()
+    candidates = []
+    for i, first in enumerate(segments):
+        if i and not (segments[i-1].text.rstrip().endswith((".", "!", "?")) or first.start - segments[i-1].end >= 0.6):
+            continue
+        text, words = [], []
+        for j in range(i, len(segments)):
+            seg = segments[j]
+            duration = seg.end - first.start
+            if duration > 120:
+                break
+            text.append(seg.text)
+            words.extend(seg.words or [])
+            boundary = seg.text.rstrip().endswith((".", "!", "?")) or j == len(segments)-1 or segments[j+1].start - seg.end >= 0.6
+            if duration < 8 or not boundary:
+                continue
+            full = " ".join(text)
+            score = detector._compute_virality_score(full)
+            if score < 5:
+                continue
+            hook, title = choose_hook_and_title(full, len(candidates)+1)
+            candidates.append(ClipCandidate(id=f"auto-{i}-{j}", title=title, start_time=first.start,
+                end_time=seg.end, duration=duration, score=score, hook_text=hook,
+                full_text=full, words=list(words), reason="Transcript highlight ending at a sentence or pause"))
+    return detector._deduplicate(sorted(candidates, key=lambda candidate: candidate.score, reverse=True))
+
+def align_action_window(clip, segments, max_shift=2.0, max_duration=None):
+    """Avoid cutting through a spoken segment when a nearby boundary is available.
+
+    Only expands the window slightly; visual-only events retain their boundaries.
+    """
+    start,end=clip.start_time,clip.end_time
+    for seg in segments:
+        if seg.start < start < seg.end and start-seg.start <= max_shift:
+            start=seg.start
+        if seg.start < end < seg.end and seg.end-end <= max_shift:
+            end=seg.end
+    if max_duration is not None and end-start > max_duration:
+        return clip
+    clip.start_time=round(max(0,start),3)
+    clip.end_time=round(end,3)
+    clip.duration=round(clip.end_time-clip.start_time,3)
+    return clip

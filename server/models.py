@@ -41,6 +41,8 @@ class ViralityBreakdown(BaseModel):
 
 
 class ClipCandidate(BaseModel):
+    visual_review: Optional[dict] = None
+    ai_score: Optional[float] = None
     id: str
     title: str
     start_time: float
@@ -58,6 +60,7 @@ class ClipCandidate(BaseModel):
 
 
 class ClipResult(BaseModel):
+    visual_review: Optional[dict] = None
     clip_id: str
     title: str
     score: float
@@ -88,6 +91,10 @@ class ClipResult(BaseModel):
 
 
 class ProcessRequest(BaseModel):
+    audio_track_gains: List[float] = Field(default_factory=list)
+    visual_review: bool = False
+    analysis_audio_tracks: str = Field(default="same", pattern=r"^(same|default|all|[1-9][0-9]*(,[1-9][0-9]*)*)$")
+    audio_tracks: str = Field(default="default", pattern=r"^(default|all|[1-9][0-9]*(,[1-9][0-9]*)*)$")
     video_path: str
     # Optional: batch mode. When set (via /process/batch) each path is enqueued
     # as its own job reusing all the other settings on this request.

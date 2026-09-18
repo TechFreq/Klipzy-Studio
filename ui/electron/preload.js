@@ -5,6 +5,8 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('clipperAPI', {
   getPathForFile: (file) => webUtils.getPathForFile(file),
   selectVideo: () => ipcRenderer.invoke('select-video'),
+  restartApp: () => ipcRenderer.invoke('restart-app'),
+  getServerStatus: () => ipcRenderer.invoke('server-status'),
   getServerUrl: () => ipcRenderer.invoke('server-url'),
   // Shared secret for the local API. See server/auth.py for why it exists.
   getApiToken: () => ipcRenderer.invoke('api-token'),

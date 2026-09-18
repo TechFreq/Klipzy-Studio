@@ -98,6 +98,7 @@ function resetWizardToStep1() {
   setVal('project-name', '');
   hide('trim-panel');
   hide('source-preview');
+  document.getElementById('batch-process-btn').hidden = true;
   sourceFiles = [];
   for (const id of ['trim-video', 'trim-sideby-orig-vid', 'trim-sideby-out-vid']) document.getElementById(id)?.pause();
   const grid = document.getElementById('clips-grid');
@@ -280,6 +281,8 @@ function initModalA11y() {
 // ------------------------------------------------------------------
 // Init
 // ------------------------------------------------------------------
+let backendState = window.clipperAPI ? "starting" : "ready";
+
 async function init() {
   if (window.clipperAPI) {
     serverUrl = await window.clipperAPI.getServerUrl();
@@ -297,22 +300,27 @@ async function init() {
   initModalA11y();
   loadProjectList();
   // These all hit the API, so they wait until a token is in hand.
-  checkHealth();
+  if (!window.clipperAPI) checkHealth();
   // Restore + two-way-bind the Whisper model selects before anything can run a
   // job, independent of whether the Setup panel's server fetch succeeds. Without
   // this the clip-time select stays at the HTML default `base` and the run
   // ignores the saved preference until the user re-selects it.
   initWhisperModelSync();
-  loadSetupPanel();
-  populateCaptionPresets();
-  loadOutputFolder();
-  startResourcePolling();
+  if (window.clipperAPI?.getServerStatus) {
+    handleServerStatus(await window.clipperAPI.getServerStatus());
+  } else {
+    loadSetupPanel();
+    populateCaptionPresets();
+    loadOutputFolder();
+    startResourcePolling();
+  }
 }
 
 // Surfaces backend lifecycle events from the Electron main process. The window
 // now opens before the server is ready, so the user gets told what is going on
 // rather than meeting a UI whose buttons quietly do nothing.
 function handleServerStatus({ state, detail }) {
+  backendState = state;
   const el = document.getElementById('health-status');
   const paint = (cls, text) => {
     if (el) el.innerHTML = `<span class="dot ${cls}"></span> ${escapeHtml(text)}`;
@@ -321,9 +329,11 @@ function handleServerStatus({ state, detail }) {
   if (state === 'starting') {
     paint('warn', 'Starting AI engine...');
   } else if (state === 'ready') {
+    paint('ok', 'Server ready · Checking hardware...');
     // Re-read the token in case we attached to a pre-existing backend.
     if (window.clipperAPI && window.clipperAPI.getApiToken) {
-      window.clipperAPI.getApiToken().then((t) => {
+      Promise.all([window.clipperAPI.getServerUrl(), window.clipperAPI.getApiToken()]).then(([url, t]) => {
+        serverUrl = url;
         if (t) apiToken = t;
         checkHealth();
         loadSetupPanel();
@@ -604,8 +614,13 @@ function bindEvents() {
       view.classList.add('active');
       // Keep the Projects home fresh whenever it becomes visible.
       if (btn.dataset.view === 'projects') renderProjectsHome();
+      if (btn.dataset.view === 'editor') renderEditorLibrary();
+      if (btn.dataset.view === 'setup') loadSetupPanel();
     });
   });
+
+  document.getElementById('editor-library-search')?.addEventListener('input',renderEditorLibrary);
+  document.getElementById('editor-library-favorites')?.addEventListener('change',renderEditorLibrary);
 
   // Projects home actions
   document.getElementById('projects-new-btn')?.addEventListener('click', goToNewProject);
@@ -664,7 +679,7 @@ function bindEvents() {
 
   // Sidebar quick-access: Settings (consolidates deps/models/support), Queue,
   // and a dedicated Support TechFreq entry.
-  document.getElementById('sidebar-settings-btn')?.addEventListener('click', () => openSettings());
+
   document.getElementById('sidebar-queue-btn')?.addEventListener('click', openQueueModal);
   document.getElementById('sidebar-support-btn')?.addEventListener('click', openSupport);
 
@@ -941,7 +956,7 @@ function bindEvents() {
     }
   });
   document.getElementById('auto-clip-count')?.addEventListener('change', event => {
-    document.getElementById('max-clips').disabled = event.target.checked;
+    syncAutoHighlightControls();
   });
 
   const step4Restart = document.getElementById('step4-restart-btn');
@@ -955,9 +970,10 @@ function bindEvents() {
 // ------------------------------------------------------------------
 async function checkHealth() {
   const statusEl = document.getElementById('health-status');
-  if (!statusEl) return;
+  if (!statusEl || backendState !== 'ready') return;
   try {
     const res = await fetch(`${serverUrl}/health`);
+    if (backendState !== 'ready') return;
     // A 4xx/5xx still resolves the promise, so the old code painted "ready"
     // for a 500. Only a genuine 200 means the backend is actually up.
     if (!res.ok) {
@@ -975,6 +991,7 @@ async function checkHealth() {
       statusEl.innerHTML = `<span class="dot ok"></span> Server ready${backendLabel}`;
     }
   } catch (e) {
+    if (backendState !== 'ready') return;
     statusEl.innerHTML = `<span class="dot error"></span> Server offline`;
   }
 }
@@ -1052,7 +1069,7 @@ function initializeSourcePreview() {
     const video = document.getElementById(id);
     video.pause(); video.poster = ''; video.src = fileUrl(selectedVideo); video.load();
   }
-  renderSourceLibrary(); updateSourceAspect(); loadTrimPoster(selectedVideo, generation);
+  renderSourceLibrary(); updateProjectBatchAction(); updateSourceAspect(); loadTrimPoster(selectedVideo, generation);
 }
 function updateSourceAspect() {
   const aspect = document.getElementById('clip-aspect-ratio').value || '9:16';
@@ -1247,6 +1264,40 @@ function renderProjectGrid() {
 // one. A standalone screen (OpenClipper/CapCut-style) that mirrors the
 // step-1 recent grid but adds an Edit action (rename + description).
 // ------------------------------------------------------------------
+function renderEditorLibrary() {
+  const grid = document.getElementById('editor-library');
+  if (!grid) return;
+  grid.replaceChildren();
+  if (!generatedClips.length) {
+    const empty = document.createElement('div'); empty.className = 'card';
+    const message = document.createElement('p');
+    message.textContent = 'No generated clips for the current video yet. Open a saved project or generate clips to start editing.';
+    const button = document.createElement('button'); button.className = 'btn btn-primary'; button.textContent = 'Go to Long Form to Shorts';
+    button.addEventListener('click', () => activateView('clipper'));
+    empty.append(message, button); grid.append(empty); return;
+  }
+  const query=(document.getElementById('editor-library-search')?.value || '').toLowerCase();
+  const onlyFavorites=document.getElementById('editor-library-favorites')?.checked;
+  let favorites=[];try{favorites=JSON.parse(localStorage.getItem('klipzy.clip-favorites')||'[]');}catch(_){}
+  generatedClips.forEach((clip, index) => {
+    const key=JSON.stringify([currentProjectId,clip.source_file,clip.id||clip.output_file]);
+    if(onlyFavorites && !favorites.includes(key)) return;
+    if(![clip.title,clip.hook_text,clip.full_text].join(' ').toLowerCase().includes(query)) return;
+    const card = document.createElement('article'); card.className = 'card editor-library-card';
+    if (clip.thumbnail_path) {
+      const image = document.createElement('img'); image.src = fileUrl(clip.thumbnail_path); image.alt = ''; image.loading = 'lazy'; card.append(image);
+    }
+    const title = document.createElement('h3'); title.textContent = clip.title || clip.hook_text || `Clip ${index + 1}`;
+    const duration = document.createElement('p'); duration.className = 'muted small'; duration.textContent = `${Math.round(Number(clip.duration) || 0)} seconds`;
+    const button = document.createElement('button'); button.className = 'btn btn-primary'; button.textContent = 'Edit clip';
+    button.addEventListener('click', () => window.openEditor(index));
+    const favorite=document.createElement('button');favorite.className='btn btn-secondary btn-small';favorite.textContent=favorites.includes(key)?'★ Favorited':'☆ Favorite';favorite.setAttribute('aria-pressed',String(favorites.includes(key)));
+    favorite.addEventListener('click',()=>{const next=favorites.includes(key)?favorites.filter(item=>item!==key):favorites.concat(key);try{localStorage.setItem('klipzy.clip-favorites',JSON.stringify(next));renderEditorLibrary();}catch(_){showToast('Could not save favorites on this device.','error');}});
+    card.append(title, duration, favorite, button); grid.append(card);
+  });
+  if(!grid.children.length) {const empty=document.createElement('p');empty.className='muted';empty.textContent='No clips match your filters.';grid.append(empty);}
+}
+
 function activateView(viewName) {
   const view = document.getElementById(`view-${viewName}`);
   if (!view) return;
@@ -1254,6 +1305,7 @@ function activateView(viewName) {
   document.querySelector(`.nav-item[data-view="${viewName}"]`)?.classList.add('active');
   document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
   view.classList.add('active');
+  if (viewName === 'editor') renderEditorLibrary();
 }
 
 // Holds the name/description entered in the New Project modal until the first
@@ -1473,6 +1525,23 @@ function saveEditProject() {
   showToast('Project updated', 'success');
 }
 
+function syncAutoHighlightControls() {
+  const automatic = document.getElementById('auto-clip-count').checked;
+  for (const id of ['max-clips', 'min-duration', 'max-duration', 'audio-energy']) {
+    const el = document.getElementById(id); el.disabled = automatic;
+    el.closest('label')?.classList.toggle('auto-managed', automatic);
+  }
+  document.getElementById('auto-highlight-hint').textContent = automatic
+    ? 'Auto is choosing count and duration from the footage using speech and audio analysis. Manual limits are ignored. Your selected captions and layout are kept.'
+    : 'Enable Auto to choose count and duration from the footage. Otherwise use your manual limits below.';
+}
+function updateProjectBatchAction() {
+  const btn = document.getElementById('batch-process-btn');
+  const count = new Set(sourceFiles.map(file => file.path)).size;
+  btn.hidden = count < 2;
+  btn.textContent = 'Process all ' + count + ' project videos';
+}
+
 function collectProcessingOptions() {
   const settings = {};
   document.querySelectorAll('#output-options-section input[id], #output-options-section select[id]').forEach(el => {
@@ -1551,7 +1620,7 @@ function openProject(id) {
   sourceFiles = (project.sources || []).map(file => ({ ...file }));
   if (project.outputFolder) saveOutputFolder(project.outputFolder);
   restoreProcessingOptions(project.processingOptions);
-  document.getElementById('max-clips').disabled = document.getElementById('auto-clip-count').checked;
+  syncAutoHighlightControls();
   // Restore the output layout/aspect the project was created with.
   const aspectSel = document.getElementById('clip-aspect-ratio');
   if (aspectSel && project.aspectRatio) aspectSel.value = project.aspectRatio;
@@ -2421,16 +2490,18 @@ function buildClipCard(clip, idx) {
       </div>
       <div class="clip-headline">
         <div class="clip-title">${escapeHtml(title)}</div>
-        <span class="virality-badge">🔥 Virality: ${score}/10</span>
+        <span class="virality-badge" title="Heuristic/AI ranking signal; not a probability of popularity">Selection score: ${score}/10</span>
         <span class="ready-badge" title="Rendered and ready to export/share">✅ Ready</span>
       </div>
+      ${clip.visual_review ? `<details class="visual-review"><summary>Visual evidence · needs review</summary><p>${escapeHtml(clip.visual_review.summary || '')}</p><p class="muted">${escapeHtml(clip.visual_review.uncertainty || '')}</p></details>` : ''}
       <div class="virality-metrics">
         <span class="metric-pill" title="Hook wording strength — only scored by the keyword detector">Hook: <strong>${escapeHtml(String(metric(v.hook_score)))}</strong></span>
         <span class="metric-pill" title="Pacing, from clip length">Flow: <strong>${escapeHtml(String(metric(v.flow_score)))}</strong></span>
-        <span class="metric-pill" title="Overall trend potential, bucketed from the clip's score">Trend: <strong>${escapeHtml(String(metric(v.trend_potential)))}</strong></span>
+        <span class="metric-pill" title="Heuristic score band; not predicted audience engagement">Score band: <strong>${escapeHtml(String(metric(v.trend_potential)))}</strong></span>
       </div>
       <div class="clip-meta">${escapeHtml(String(clip.duration))}s duration</div>
       <div class="clip-desc">${escapeHtml(desc)}</div>
+      <section class="clip-transcript" aria-label="Clip transcript"><h4>Transcript</h4><div class="clip-transcript-text">${escapeHtml(clip.full_text || (clip.words || []).map(word => word.word || '').join(' ') || 'No transcript is available for this clip.')}</div></section>
       <div class="clip-platforms" role="group" aria-label="Export for platform">
         <span class="platforms-label">Export for:</span>
         <button class="platform-tile" data-action="platform" data-platform="TikTok" data-ratio="9:16" title="TikTok — 9:16">🎵 TikTok</button>
@@ -3453,14 +3524,10 @@ function buildProcessPayload() {
 document.getElementById('batch-process-btn')?.addEventListener('click', batchProcessVideos);
 
 async function batchProcessVideos() {
-  let files = [];
-  if (window.clipperAPI && window.clipperAPI.selectVideosMulti) {
-    files = await window.clipperAPI.selectVideosMulti();
-  } else {
-    const paths = window.prompt('Paste video paths separated by a newline or comma:');
-    if (paths) files = paths.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
-  }
-  if (!files || !files.length) return;
+  const files = [...new Set(sourceFiles.map(file => file.path))];
+  if (files.length < 2) { showToast('Add another video to this project to use batch processing.', 'info'); return; }
+  saveProjectManifest(false);
+  const batchProjectId = currentProjectId;
 
   const ok = await showConfirm(
     `Queue ${files.length} video${files.length > 1 ? 's' : ''} for processing with the current settings? ` +
@@ -3486,7 +3553,8 @@ async function batchProcessVideos() {
     showToast(`✅ Queued ${data.count} videos. Watch progress in the jobs panel.`, 'success');
     if (Array.isArray(data.job_ids) && data.job_ids.length) {
       // Follow the first job so the UI shows live progress; the rest drain after.
-      pollJob(data.job_ids[0]);
+      data.job_ids.forEach((id, index) => rememberJob(id, {projectId: batchProjectId, source: files[index]}));
+      pollJob(data.job_ids[0], jobContexts[data.job_ids[0]]);
     }
   } catch (e) {
     showError(e.message);

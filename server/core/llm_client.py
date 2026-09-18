@@ -79,7 +79,7 @@ def load_config() -> Dict[str, Any]:
         if p.is_file():
             saved = json.loads(p.read_text(encoding="utf-8") or "{}")
             if isinstance(saved, dict):
-                cfg.update({k: saved.get(k, cfg[k]) for k in cfg})
+                cfg.update({k: saved[k] for k in cfg if isinstance(saved.get(k), str)})
     except Exception:
         pass  # unreadable/corrupt config must never break AI features
     if cfg.get("backend") not in VALID_BACKENDS:
@@ -201,18 +201,37 @@ def chat(
     heuristic fallbacks.
     """
     cfg = load_config()
-    if cfg["backend"] == BACKEND_OPENAI:
-        return _chat_openai(cfg, messages, json_mode, model, timeout)
-    return _chat_ollama(messages, json_mode, model)
+    from server.core import processing_trace as trace
+    if trace.active():
+        trace.event("ai.request", backend=cfg["backend"], model=cfg.get("model") or model,
+                    json_mode=json_mode, messages=messages)
+    try:
+        if cfg["backend"] == BACKEND_OPENAI:
+            result = _chat_openai(cfg, messages, json_mode, model, timeout)
+        else:
+            result = _chat_ollama(messages, json_mode, model, timeout=timeout)
+        if trace.active():
+            trace.event("ai.response", content=result)
+        return result
+    except Exception as exc:
+        if trace.active():
+            trace.event("ai.failed", error=str(exc), error_type=type(exc).__name__)
+        raise
 
 
-def _chat_ollama(messages: List[Dict[str, str]], json_mode: bool, model: Optional[str]) -> str:
+def _chat_ollama(messages: List[Dict[str, str]], json_mode: bool, model: Optional[str], timeout: float = DEFAULT_TIMEOUT) -> str:
     import ollama  # lazy: keeps the package optional
 
     kwargs: Dict[str, Any] = {"model": model, "messages": messages}
     if json_mode:
         kwargs["format"] = "json"
-    resp = ollama.chat(**kwargs)
+        kwargs["options"] = {"temperature": 0, "num_ctx": 8192}
+    try:
+        resp = ollama.Client(timeout=timeout).chat(**kwargs)
+    except Exception as exc:
+        if getattr(exc, "status_code", None) in (404, 500):
+            raise RuntimeError(f"Local model {model} could not load. Use Settings to test it or download it again to repair missing weights.") from exc
+        raise
     return ((resp.get("message", {}) or {}).get("content", "") or "").strip()
 
 

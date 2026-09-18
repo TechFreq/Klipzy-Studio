@@ -60,3 +60,7 @@ NEXT_SESSION_PROMPT.md
 
 # Internal developer notes / codebase audits.
 /dev/
+
+# Endpoint preferences may contain API credentials.
+logs/llm_endpoint.json
+logs/asr_endpoint.json

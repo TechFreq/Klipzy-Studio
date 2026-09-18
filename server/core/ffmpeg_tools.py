@@ -1196,3 +1196,68 @@ def generate_vtt(segments: list, output_path: str) -> str:
     with open(output_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
     return output_path
+
+
+def prepare_audio_tracks(video_path: str, output_path: str, selection: str, gains=None) -> str:
+    """Build a persistent analysis/editor source with explicitly selected audio.
+
+    Track numbers are one-based audio indices, not container stream indices.
+    Video is copied losslessly; selected audio is mixed and encoded once to AAC.
+    Keeping this source makes later editor re-renders use the same audio.
+    """
+    if selection == "default":
+        if gains:
+            raise ValueError("Choose explicit export tracks to set mix balances.")
+        return video_path
+    streams = [s for s in get_media_info(video_path).get("streams", []) if s.get("codec_type") == "audio"]
+    if selection == "all":
+        tracks = list(range(len(streams)))
+    elif re.fullmatch(r"[1-9][0-9]*(,[1-9][0-9]*)*", selection or ""):
+        tracks = list(dict.fromkeys(int(n) - 1 for n in selection.split(",")))
+    else:
+        raise ValueError("Audio tracks must be default, all, or comma-separated numbers such as 1,3.")
+    if not tracks or any(n >= len(streams) for n in tracks):
+        raise ValueError(f"This video has {len(streams)} audio tracks; choose track numbers from 1 to {len(streams)}.")
+    import math
+    if gains and (len(tracks) < 2 or len(gains) != len(tracks) or
+                  not all(math.isfinite(g) and 0 <= g <= 4 for g in gains) or not any(gains)):
+        raise ValueError("Mix balances need one finite value from 0 to 4 per selected track, with at least one above zero; select two or more tracks.")
+    cmd = ["ffmpeg", "-y", "-i", video_path]
+    if len(tracks) == 1:
+        cmd += ["-map", "0:v:0", "-map", f"0:a:{tracks[0]}"]
+    else:
+        inputs = "".join(f"[0:a:{n}]" for n in tracks)
+        weights = (":weights='" + " ".join(str(g) for g in gains) + "'") if gains else ""
+        graph = inputs + f"amix=inputs={len(tracks)}:duration=longest:normalize=1{weights}[audio]"
+        cmd += ["-filter_complex", graph, "-map", "0:v:0", "-map", "[audio]"]
+    cmd += ["-c:v", "copy", "-c:a", "aac", "-b:a", "192k", output_path]
+    result = proc.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if result.returncode:
+        raise RuntimeError(f"Audio track preparation failed: {result.stderr[-500:]}")
+    return output_path
+
+
+def extract_selected_audio(video_path: str, output_path: str, selection: str) -> str:
+    """Select/mix analysis audio without copying the video stream."""
+    if selection == "default":
+        return extract_audio(video_path, output_path)
+    count = sum(s.get("codec_type") == "audio" for s in get_media_info(video_path).get("streams", []))
+    if selection == "all":
+        tracks = list(range(count))
+    elif re.fullmatch(r"[1-9][0-9]*(,[1-9][0-9]*)*", selection or ""):
+        tracks = sorted(set(int(n)-1 for n in selection.split(",")))
+    else:
+        raise ValueError("Invalid analysis audio tracks")
+    if not tracks or max(tracks) >= count:
+        raise ValueError(f"Analysis audio selection is unavailable: this video has {count} audio tracks.")
+    cmd = ["ffmpeg", "-y", "-i", video_path]
+    if len(tracks) == 1:
+        cmd += ["-map", f"0:a:{tracks[0]}"]
+    else:
+        graph = "".join(f"[0:a:{n}]" for n in tracks) + f"amix=inputs={len(tracks)}:duration=longest:normalize=1[audio]"
+        cmd += ["-filter_complex", graph, "-map", "[audio]"]
+    cmd += ["-vn", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", output_path]
+    result = proc.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if result.returncode:
+        raise RuntimeError(f"Analysis audio extraction failed: {result.stderr[-500:]}")
+    return output_path

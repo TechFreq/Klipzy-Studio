@@ -372,3 +372,24 @@ class Transcriber:
                 )
             )
         return segments
+def split_transcript_gaps(segments, max_gap=3.0):
+    """Repair ASR segments that bridge long silence using real word timestamps.
+
+    Never interpolate timestamps or move speech to unrelated action windows.
+    Segments without word timing retain their original text and bounds.
+    """
+    repaired=[]
+    for seg in segments:
+        words=seg.words or []
+        groups=[]
+        for word in words:
+            if not groups or word.start-groups[-1][-1].end > max_gap:
+                groups.append([])
+            groups[-1].append(word)
+        if len(groups)<=1:
+            repaired.append(seg.model_copy(update={'id':len(repaired)}))
+            continue
+        for group in groups:
+            repaired.append(TranscriptSegment(id=len(repaired),start=group[0].start,end=group[-1].end,
+                text=' '.join(w.word.strip() for w in group).strip(),words=group,speaker=seg.speaker))
+    return repaired

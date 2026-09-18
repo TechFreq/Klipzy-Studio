@@ -4,7 +4,7 @@ Finds loudness spikes = excitement peaks, mapped onto transcript segments.
 """
 
 import os
-from typing import List
+from typing import List, Optional
 
 from server.models import ClipCandidate, TranscriptSegment, ViralityBreakdown, WordTimestamp
 from server.core.highlight_detector import choose_hook_and_title
@@ -200,7 +200,7 @@ def detect_action_highlights(
     audio_path: str,
     min_duration: float = 15.0,
     max_duration: float = 45.0,
-    top_k: int = 6,
+    top_k: Optional[int] = 6,
     video_path: str = None,
 ) -> List[ClipCandidate]:
     """
@@ -227,17 +227,9 @@ def detect_action_highlights(
     if y is None or len(y) == 0:
         return []
 
+    if top_k is not None and top_k <= 0:
+        return []
     total = len(y) / float(sr)
-    if total < min_duration:
-        # Whole thing is shorter than one clip — just take it all.
-        return [
-            ClipCandidate(
-                id="action_0", title="🎮 Highlight", start_time=0.0, end_time=round(total, 2),
-                duration=round(total, 2), score=7.0, hook_text="Gameplay highlight",
-                full_text="", words=[], reason="Full gameplay segment",
-            )
-        ]
-
     hop = int(sr * 0.5)
     rms = librosa.feature.rms(y=y, hop_length=hop)[0]
     times = librosa.times_like(rms, sr=sr, hop_length=hop)
@@ -253,14 +245,21 @@ def detect_action_highlights(
     else:
         signal = rms
 
+    if not np.any(signal > 0):
+        return []
+
     # "Action" = intensity well above the clip's own baseline.
     mean, std = float(signal.mean()), float(signal.std())
-    threshold = min(0.9, mean + 0.8 * std)
+    # A peak must rise meaningfully above this recording's baseline. Capping
+    # the threshold below 1 made uniform noise qualify after normalization.
+    threshold = mean + max(0.8 * std, 0.15)
+    if float(signal.max()) <= threshold:
+        return []
 
     # Peak indices, most-intense first.
     peak_order = sorted(range(len(signal)), key=lambda k: signal[k], reverse=True)
 
-    titles = ["🔥 Big Play", "💥 Intense Moment", "🎯 Killstreak", "⚡ Action Spike", "🎮 Highlight", "🏆 Clutch"]
+    titles = ["Action highlight", "High-energy moment", "Motion highlight", "Action peak"]
     picked: List[ClipCandidate] = []
     windows: List = []  # (start, end)
 
@@ -275,7 +274,7 @@ def detect_action_highlights(
         # Extend while the surrounding audio stays hot (up to max_duration).
         j = k + 1
         while (end - start) < max_duration and j < len(signal) and signal[j] >= threshold * 0.7:
-            end = min(total, float(times[j]))
+            end = max(end, min(total, start + max_duration, float(times[j])))
             j += 1
         # Guarantee at least min_duration (pull the start back, or push end out)
         # so a peak near the tail can't yield a stub clip.
@@ -293,12 +292,13 @@ def detect_action_highlights(
         picked.append(
             ClipCandidate(
                 id=f"action_{len(picked)}",
-                title=titles[len(picked) % len(titles)],
+                title=f"{titles[len(picked) % len(titles)]} at {int(t) // 60}:{int(t) % 60:02d}",
                 start_time=round(start, 2),
                 end_time=round(end, 2),
                 duration=round(end - start, 2),
                 score=score,
-                hook_text="Gameplay action moment",
+                hook_text="Audio / motion peak",
+                description="Selected for an audio or motion peak. Review the footage to confirm the moment.",
                 full_text="",
                 words=[],
                 reason=f"Action peak ({sig_kind} {signal[k]:.2f})",
@@ -311,7 +311,7 @@ def detect_action_highlights(
                 ),
             )
         )
-        if len(picked) >= top_k:
+        if top_k is not None and len(picked) >= top_k:
             break
 
     picked.sort(key=lambda c: c.start_time)

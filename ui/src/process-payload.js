@@ -53,6 +53,10 @@
 
     return {
       video_path: selectedVideo,
+      audio_track_gains: (doc.getElementById("export-audio-gains")?.value || "").trim() ? doc.getElementById("export-audio-gains").value.split(",").map(Number) : [],
+      visual_review: !!doc.getElementById("visual-review")?.checked,
+      analysis_audio_tracks: (doc.getElementById("analysis-audio-tracks")?.value || "same").replace(/\s/g, "").toLowerCase(),
+      audio_tracks: (doc.getElementById("source-audio-tracks")?.value || "default").replace(/\s/g, "").toLowerCase(),
       vertical_crop: doc.getElementById('vertical-crop').checked,
       aspect_ratio: aspectEl ? aspectEl.value : '9:16',
       caption_style: captionOpts.caption_style,

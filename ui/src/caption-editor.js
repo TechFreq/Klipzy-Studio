@@ -333,6 +333,14 @@ function refreshIntroPreview() {
   const scaled = Math.max(1, Math.round(rawSize * (containerWidth / canvasWidth)));
   const w = Math.max(0, Math.round(outlineWidth * (containerWidth / canvasWidth)));
 
+  const box = document.getElementById('intro-box').checked;
+  const boxColor = document.getElementById('intro-box-color').value;
+  const opacity = Number(document.getElementById('intro-box-opacity').value) / 100;
+  const alpha = Math.round(opacity * 255).toString(16).padStart(2, '0');
+  el.style.backgroundColor = box ? boxColor + alpha : 'transparent';
+  el.style.padding = box ? (Number(document.getElementById('intro-box-padding').value) * containerWidth / canvasWidth) + 'px' : '0';
+  el.style.borderRadius = '0';
+  el.style.width = 'max-content'; el.style.maxWidth = '88%';
   el.style.color = accentColor;        // hooks pop in the highlight color
   el.style.fontFamily = fontName;
   el.style.fontSize = `${scaled}px`;
@@ -346,7 +354,7 @@ function refreshIntroPreview() {
     : `0 0 14px ${accentColor}55`;
 }
 
-const INTRO_STYLE_FIELDS = {preset:'intro-preset',font_name:'intro-font-name',primary_color:'intro-color',outline_color:'intro-outline-color',outline_width:'intro-outline-width',position:'intro-position',animation:'intro-animation',bold:'intro-bold',italic:'intro-italic',uppercase:'intro-uppercase'};
+const INTRO_STYLE_FIELDS = {box:'intro-box',box_color:'intro-box-color',box_opacity:'intro-box-opacity',box_padding:'intro-box-padding',preset:'intro-preset',font_name:'intro-font-name',primary_color:'intro-color',outline_color:'intro-outline-color',outline_width:'intro-outline-width',position:'intro-position',animation:'intro-animation',bold:'intro-bold',italic:'intro-italic',uppercase:'intro-uppercase'};
 function collectIntroStyle() {
   const style = {};
   Object.entries(INTRO_STYLE_FIELDS).forEach(([key,id]) => {
@@ -370,6 +378,18 @@ document.getElementById('intro-preset')?.addEventListener('change', event => {
   document.getElementById('intro-font-name').value = '';
   refreshIntroPreview();
 });
+
+document.querySelectorAll('[data-headline-look]').forEach(button => button.addEventListener('click', () => {
+  const look = button.dataset.headlineLook;
+  document.getElementById('caption-intro-enabled').checked = true;
+  document.getElementById('intro-box').checked = look !== 'plain';
+  document.getElementById('intro-box-color').value = look === 'light' ? '#ffffff' : look === 'accent' ? '#ffe600' : '#111111';
+  document.getElementById('intro-color').value = ['light','accent'].includes(look) ? '#111111' : '#ffffff';
+  document.getElementById('intro-outline-width').value = look === 'plain' ? '3' : '0';
+  document.getElementById('intro-box-opacity').value = '100';
+  document.querySelectorAll('[data-headline-look]').forEach(tile => tile.setAttribute('aria-pressed', String(tile === button)));
+  refreshIntroPreview();
+}));
 
 // Wire the intro-hook controls to the live preview (runs once at load).
 (function wireIntroHookPreview() {
