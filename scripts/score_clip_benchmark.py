@@ -22,10 +22,14 @@ def score(predictions,labels,threshold=.5):
     for overlap,i,j in edges:
         if i in used_p or j in used_r:continue
         used_p.add(i);used_r.add(j);matches.append((covered[i],good[j]))
+    title_labels=[r for r in labels if r.get('title_accuracy') in ('good','bad')]
+    boundary_labels=[r for r in labels if r.get('boundaries') in ('good','bad')]
     return {'reviewed_predictions':len(covered),'unrated_predictions':len(predictions)-len(covered),'publishable_references':len(good),'matched':len(matches),
         'precision_on_reviewed':len(matches)/len(covered) if covered else None,
         'recall_on_labeled_positives':len(matches)/len(good) if good else None,
         'mean_boundary_error_seconds':sum(abs(p['start']-r['start'])+abs(p['end']-r['end']) for p,r in matches)/(2*len(matches)) if matches else None,
+        'reviewed_titles':len(title_labels), 'title_accuracy_on_reviewed':sum(r['title_accuracy']=='good' for r in title_labels)/len(title_labels) if title_labels else None,
+        'reviewed_boundaries':len(boundary_labels), 'complete_boundaries_on_reviewed':sum(r['boundaries']=='good' for r in boundary_labels)/len(boundary_labels) if boundary_labels else None,
         'note':'Human-reviewed intervals only; not full-video recall or a virality estimate.'}
 
 if __name__=='__main__':

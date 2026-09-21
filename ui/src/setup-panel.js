@@ -1,13 +1,17 @@
 let setupRecommendations = null;
 let selectedOllamaModel = "";
 let localModelSaving = false, localModelRevision = 0;
+let localModelLoading = false;
 function syncSidebarModels(models) {
   const sidebar = document.getElementById('sidebar-ai-model');
   if (sidebar) {
     if (models) sidebar.innerHTML = models.map(model => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`).join('');
-    if (selectedOllamaModel && ![...sidebar.options].some(option => option.value === selectedOllamaModel)) sidebar.add(new Option(selectedOllamaModel + ' · download if needed', selectedOllamaModel));
+    if (models && !models.length) sidebar.innerHTML = '<option value="">No downloaded models — open Settings</option>';
+    if (selectedOllamaModel && ![...sidebar.options].some(option => option.value === selectedOllamaModel)) {
+      const missing = new Option(selectedOllamaModel + ' · not downloaded', selectedOllamaModel); missing.disabled = true; sidebar.add(missing);
+    }
     sidebar.value = selectedOllamaModel;
-    sidebar.disabled = localModelSaving || !sidebar.options.length;
+    sidebar.disabled = localModelSaving || ![...sidebar.options].some(option => option.value && !option.disabled);
     sidebar.onchange = () => chooseLocalModel(sidebar.value).catch(error => showToast(error.message,'error'));
   }
   const quality = document.getElementById('sidebar-whisper-model');
@@ -35,9 +39,9 @@ async function chooseLocalModel(model) {
   document.querySelectorAll('[data-model-kind="ollama"], [data-use], #ai-ollama-model').forEach(el => {el.disabled=true;});
   try {
     const response = await fetch(`${serverUrl}/api/setup/ai-model`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:'ollama',model})});
-    if (!response.ok) throw new Error('Could not save model selection');
+    if (!response.ok) { const error = await response.json().catch(() => ({})); throw new Error(error.detail || 'Could not save model selection'); }
     if (status) status.textContent = 'Selected for the next local AI request. Loading occurs when used; running processing keeps its current model.';
-    showToast(`${model} selected. Download it in Settings if needed.`, 'success');
+    showToast(`${model} selected for new requests. It loads into memory when used.`, 'success');
   } catch(error) {
     selectedOllamaModel = previous;
     if (status) status.textContent = 'Selection failed; previous model restored.';
@@ -433,15 +437,17 @@ function initWhisperModelSync() {
 
 // Populate + wire the "Change AI models" selectors.
 async function loadAiModels(statusData) {
+  if (localModelLoading) return;
+  localModelLoading = true;
   // Keep both Whisper selects and the saved preference in lockstep.
   initWhisperModelSync();
 
   // Ollama model: list what's installed locally, let the user pick the active one.
   const ollamaSel = document.getElementById('ai-ollama-model');
-  if (!ollamaSel) return;
+  if (!ollamaSel) { localModelLoading = false; return; }
   try {
     const revision = localModelRevision;
-    const res = await fetch(`${serverUrl}/api/setup/ai-models`);
+    const res = await fetch(`${serverUrl}/api/setup/ai-models`, {signal: AbortSignal.timeout(10000)});
     if (!res.ok) throw new Error();
     const data = await res.json();
     if (localModelSaving || revision !== localModelRevision) return;
@@ -450,6 +456,8 @@ async function loadAiModels(statusData) {
     selectedOllamaModel = active || "";
     syncSidebarModels(models);
     renderRecommendations(setupRecommendations);
+    const status = document.getElementById('sidebar-model-status');
+    if (status) status.textContent = models.length ? `${models.length} downloaded model(s). Selection applies to new requests; models load into memory when used.` : 'No downloaded models found. Start Ollama or download a model in Settings, then refresh.';
     if (!models.length) {
       const installed = statusData && statusData.ollama && statusData.ollama.installed;
       ollamaSel.innerHTML = active
@@ -475,8 +483,14 @@ async function loadAiModels(statusData) {
   } catch (_) {
     ollamaSel.innerHTML = '<option value="">Could not reach Ollama</option>';
     ollamaSel.disabled = true;
-  }
+    const sidebar = document.getElementById('sidebar-ai-model');
+    if (sidebar) { sidebar.innerHTML = '<option value="">Model list unavailable — refresh</option>'; sidebar.disabled = true; }
+    const status = document.getElementById('sidebar-model-status');
+    if (status) status.textContent = 'Could not list local models. Check Ollama and press Refresh models.';
+  } finally { localModelLoading = false; }
 }
+document.getElementById('sidebar-refresh-models')?.addEventListener('click', () => loadAiModels());
+window.addEventListener('focus', () => { if (typeof backendState !== 'undefined' && backendState === 'ready') loadAiModels(); });
 
 let supportLinks = {};
 
@@ -815,7 +829,7 @@ function renderDeps(data) {
     const pending = installJobs.some(job => job.restart_required && (job.component === key || key === 'pytorch' && job.component === 'gpu'));
     const ok = pending || def.check(data);
     const cmdAvailable = !!cmds[key];
-    const canUninstall = ok && !pending && !!uninstallCmds[key];
+    const canUninstall = ok && !pending && data.uninstall_environment_isolated !== false && !!uninstallCmds[key];
     const statusMark = ok ? '✅' : '❌';
     const tag = pending ? 'Verified · Restart required' : def.statusText ? def.statusText(data) : (ok ? 'Installed' : 'Missing');
     return `
@@ -835,9 +849,14 @@ function renderDeps(data) {
               ? `<button class="btn btn-small btn-primary" data-install="${escapeHtml(key)}">⬇️ Install</button>`
               : '<span class="muted small">Manual install needed</span>')}
         </div>
+        ${data.uninstall_shell_commands?.[key] ? `<details><summary>Uninstall command · Klipzy Python environment</summary><code>${escapeHtml(data.uninstall_shell_commands[key])}</code><button class="btn btn-small" data-copy-uninstall="${escapeHtml(key)}">Copy command</button><p class="muted small">Removes this package from the displayed Python environment. Restart Klipzy afterward.</p></details>` : ''}
       </div>`;
   }).join('');
-  document.getElementById('setup-deps').innerHTML = rows;
+  document.getElementById('setup-deps').innerHTML = (data.uninstall_environment_isolated === false ? '<p class="muted small">Klipzy is using shared system Python. Package removal is disabled here to protect other programs. Relaunch using the project virtual environment for app-scoped removal.</p>' : '') + rows;
+  document.querySelectorAll('[data-copy-uninstall]').forEach(button => button.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(data.uninstall_shell_commands[button.dataset.copyUninstall]); showToast('Uninstall command copied', 'success'); }
+    catch (_) { showToast('Copy failed. Select the displayed command to copy it manually.', 'error'); }
+  }));
 
   renderInstallActivity();
 

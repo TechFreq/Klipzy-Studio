@@ -60,6 +60,7 @@ class ClipCandidate(BaseModel):
 
 
 class ClipResult(BaseModel):
+    ai_score: Optional[float] = None
     visual_review: Optional[dict] = None
     clip_id: str
     title: str
@@ -70,6 +71,9 @@ class ClipResult(BaseModel):
     hook_text: str
     output_file: str
     source_file: Optional[str] = None
+    intro_caption: Optional[str] = None
+    captions_burned: Optional[bool] = None
+    aspect_ratio: Optional[str] = None
     # AI-written social caption/description shown on the clip card (may be empty
     # when the LLM copywriting step didn't run or Ollama wasn't available).
     description: str = ""
@@ -103,8 +107,9 @@ class ProcessRequest(BaseModel):
     aspect_ratio: Optional[str] = "9:16"  # "9:16" | "1:1" | "4:5" | "16:9" | "full"
     max_clips: int = 5
     auto_clip_count: bool = False
-    min_duration: float = 20.0
-    max_duration: float = 60.0
+    include_unreviewed_action: bool = False
+    min_duration: float = Field(default=20.0, gt=0, allow_inf_nan=False)
+    max_duration: float = Field(default=60.0, gt=0, allow_inf_nan=False)
     whisper_model: str = "base"
     language: Optional[str] = None
     use_audio_energy: bool = True
@@ -168,6 +173,8 @@ class ExportProjectResponse(BaseModel):
     format: str
     message: str
     re_rendered: bool = False
+    rendered_path: Optional[str] = None
+    ass_path: Optional[str] = None
 
 
 class SubtitleRegenRequest(BaseModel):

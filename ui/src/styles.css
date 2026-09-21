@@ -2463,3 +2463,35 @@ body {
 .audio-routing input { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border, #343442); background: #101216; color: #eee; font: inherit; }
 .audio-routing input:focus { outline: 2px solid #23c2ce; outline-offset: 1px; }
 .audio-routing p { font-size: 12px; line-height: 1.5; margin: 6px 0 12px; }
+
+/* Link import shares the project card and control styling. */
+.url-import-panel { margin-block: 12px; }
+.url-import-panel > summary { cursor: pointer; font-weight: 600; }
+.import-controls { display: flex; gap: 10px; margin-block: 12px; flex-wrap: wrap; }
+.import-controls input { flex: 1; min-width: 180px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+.import-consent { display: flex; align-items: flex-start; gap: 8px; font-size: .85rem; }
+.import-notice { margin-block: 12px; font-size: .85rem; }
+.import-job { border-top: 1px solid var(--border); padding-block: 8px; overflow-wrap: anywhere; }
+.import-job progress { width: min(100%, 360px); margin-right: 12px; accent-color: var(--accent); }
+
+.clip-review-toolbar, .quality-review-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-block: 12px; }
+.quality-review-controls { border-top: 1px solid var(--border); padding-top: 10px; font-size: 12px; }
+.quality-review-controls label { display: flex; flex-direction: column; gap: 5px; }
+.quality-review-controls select, .clip-review-toolbar select { background: var(--bg-card); color: var(--text); border: 1px solid var(--border); padding: 6px; border-radius: 6px; max-width: 100%; }
+.clips-grid.compact .clip-card { grid-template-columns: minmax(160px, 21%) minmax(0, 1fr); }
+.clips-grid.compact .clip-video-wrap { min-height: 230px; }
+.clips-grid.compact .clip-card video { max-height: 320px; }
+.clips-grid.compact .clip-info { padding: 12px; }
+.clips-grid.compact .clip-transcript-text { max-height: 90px; }
+@media(max-width:750px) { .clips-grid.compact .clip-card { grid-template-columns: 1fr; } }
+
+.import-full-terms pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-height: 340px; overflow-y: auto; padding: 12px; }
+
+.source-track-tools { grid-column: 1 / -1; width:100%; }
+.audio-track-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding-block:8px; border-bottom:1px solid var(--border); }
+.audio-track-row span { flex:1; min-width:180px; }
+.source-track-tools audio { max-width:100%; margin-block:10px; }
+#media-cache-status { overflow-wrap:anywhere; }
+.dep-row { flex-wrap: wrap; }
+.dep-row > details { flex-basis: 100%; min-width: 0; }
+.dep-row > details code { display: block; white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0; }

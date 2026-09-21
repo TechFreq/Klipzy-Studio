@@ -27,6 +27,7 @@ def detect_highlights_audio_energy(
     segments: List[TranscriptSegment],
     min_duration: float = 20.0,
     max_duration: float = 60.0,
+    max_speech_gap: Optional[float] = None,
 ) -> List[ClipCandidate]:
     """
     Uses librosa to find high-energy audio windows (excitement/loudness spikes),
@@ -85,6 +86,9 @@ def detect_highlights_audio_energy(
         while (end - start) < min_duration:
             can_lo = lo > 0 and (lo - 1) not in used
             can_hi = hi < n - 1 and (hi + 1) not in used
+            if max_speech_gap is not None:
+                can_lo = can_lo and segments[lo].start - segments[lo-1].end <= max_speech_gap
+                can_hi = can_hi and segments[hi+1].start - segments[hi].end <= max_speech_gap
             if not can_lo and not can_hi:
                 break
             grow_hi = can_hi and (not can_lo or energies[hi + 1] >= energies[lo - 1])

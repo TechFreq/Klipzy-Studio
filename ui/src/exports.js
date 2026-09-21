@@ -252,7 +252,7 @@ async function exportForPlatform(idx, platform, ratio, btnEl) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         clip_path: clip.output_file,
-        source_video: selectedVideo,
+        source_video: clip.source_file || selectedVideo,
         start_seconds: clip.start_time,
         end_seconds: clip.end_time,
         title: `${clip.title || 'clip'} [${platform}]`,
@@ -326,7 +326,7 @@ async function quickRerollHook(idx, btn) {
 
   const words = (clip.words && clip.words.length)
     ? clip.words
-    : (clip.hook_text || '').split(' ').map((w, i) => ({ word: w, start: i * 0.4, end: (i + 1) * 0.4 }));
+    : [];
   const captionOpts = collectCaptionOptions();
   const outputPath = clip.ass_path ? clip.ass_path.replace(/\.ass$/i, '.srt') : `${clip.output_file}.srt`;
   try {
@@ -347,11 +347,14 @@ async function quickRerollHook(idx, btn) {
         uppercase: captionOpts.uppercase,
         bold: captionOpts.bold,
         italic: captionOpts.italic,
-        source_video: selectedVideo,
+        source_video: clip.source_file || selectedVideo,
         clip_output_file: clip.output_file,
         start_seconds: clip.start_time,
         end_seconds: clip.end_time,
-        aspect_ratio: document.getElementById('clip-aspect-ratio')?.value || '9:16',
+        aspect_ratio: clip.aspect_ratio || (clip.layout === 'full' ? 'full' : document.getElementById('clip-aspect-ratio')?.value || '9:16'),
+        layout: clip.layout || '',
+        cam_video: clip.cam_video, cam_scale: clip.cam_scale, cam_position: clip.cam_position, crop_x_offset: clip.crop_x_offset,
+        intro_style: collectIntroStyle(),
         intro_caption: newHook,
         intro_enabled: true,
         intro_caption_duration: parseFloat(document.getElementById('caption-intro-duration')?.value || '3') || 3,
@@ -360,13 +363,17 @@ async function quickRerollHook(idx, btn) {
       }),
     });
     const data = await res.json();
-    if (res.ok) {
+    if (res.ok && data.re_rendered && data.rendered_path) {
+      clip.output_file = data.rendered_path;
+      clip.ass_path = data.ass_path || clip.ass_path;
+      clip.thumbnail_path = null;
+      clip.captions_burned = words.length > 0;
       clip.intro_caption = newHook;
       clip.hook_text = newHook;
       if (data.export_path) clip.srt_path = data.export_path;
       const card = document.querySelector(`.clip-card[data-clip-idx="${idx}"]`);
       const vid = card && card.querySelector('video');
-      if (vid) { vid.src = fileUrl(clip.output_file, true); vid.load(); }
+      if (vid) { vid.removeAttribute('poster'); vid.src = fileUrl(clip.output_file, true); vid.load(); }
       const descEl = card && card.querySelector('.clip-desc');
       if (descEl) descEl.textContent = newHook;
       saveCurrentProjectSilently();
@@ -396,7 +403,7 @@ async function quickRemoveHook(idx, btn) {
 
   const words = (clip.words && clip.words.length)
     ? clip.words
-    : (clip.hook_text || '').split(' ').map((w, i) => ({ word: w, start: i * 0.4, end: (i + 1) * 0.4 }));
+    : [];
   const captionOpts = collectCaptionOptions();
   const outputPath = clip.ass_path ? clip.ass_path.replace(/\.ass$/i, '.srt') : `${clip.output_file}.srt`;
   try {
@@ -417,23 +424,31 @@ async function quickRemoveHook(idx, btn) {
         uppercase: captionOpts.uppercase,
         bold: captionOpts.bold,
         italic: captionOpts.italic,
-        source_video: selectedVideo,
+        source_video: clip.source_file || selectedVideo,
         clip_output_file: clip.output_file,
         start_seconds: clip.start_time,
         end_seconds: clip.end_time,
-        aspect_ratio: document.getElementById('clip-aspect-ratio')?.value || '9:16',
+        aspect_ratio: clip.aspect_ratio || (clip.layout === 'full' ? 'full' : document.getElementById('clip-aspect-ratio')?.value || '9:16'),
+        layout: clip.layout || '',
+        cam_video: clip.cam_video, cam_scale: clip.cam_scale, cam_position: clip.cam_position, crop_x_offset: clip.crop_x_offset,
+        intro_style: collectIntroStyle(),
         intro_caption: '',
         intro_enabled: false,
         re_render: true,
       }),
     });
     const data = await res.json();
-    if (res.ok) {
+    if (res.ok && data.re_rendered && data.rendered_path) {
+      clip.output_file = data.rendered_path;
+      clip.ass_path = data.ass_path || clip.ass_path;
+      clip.thumbnail_path = null;
+      clip.captions_burned = words.length > 0;
       clip.intro_caption = '';
+      clip.hook_text = '';
       if (data.export_path) clip.srt_path = data.export_path;
       const card = document.querySelector(`.clip-card[data-clip-idx="${idx}"]`);
       const vid = card && card.querySelector('video');
-      if (vid) { vid.src = fileUrl(clip.output_file, true); vid.load(); }
+      if (vid) { vid.removeAttribute('poster'); vid.src = fileUrl(clip.output_file, true); vid.load(); }
       saveCurrentProjectSilently();
       playSuccessSound();
       showToast('🚫 Intro hook removed', 'success');
@@ -471,7 +486,7 @@ async function quickRemoveFillers(idx, btn) {
       if (typeof data.cut_duration === 'number') clip.duration = data.cut_duration;
       const card = document.querySelector(`.clip-card[data-clip-idx="${idx}"]`);
       const vid = card && card.querySelector('video');
-      if (vid) { vid.src = fileUrl(clip.output_file, true); vid.load(); }
+      if (vid) { vid.removeAttribute('poster'); vid.src = fileUrl(clip.output_file, true); vid.load(); }
       saveCurrentProjectSilently();
       playSuccessSound();
       showToast(`🧹 ${data.message || 'Fillers removed'}`, 'success');
@@ -590,7 +605,7 @@ async function detectSpeakers(idx, btn) {
         uppercase: captionOpts.uppercase,
         bold: captionOpts.bold,
         italic: captionOpts.italic,
-        source_video: selectedVideo,
+        source_video: clip.source_file || selectedVideo,
         clip_output_file: clip.output_file,
         start_seconds: clip.start_time,
         end_seconds: clip.end_time,
@@ -610,7 +625,7 @@ async function detectSpeakers(idx, btn) {
       if (d.re_rendered) {
         const card = document.querySelector(`.clip-card[data-clip-idx="${idx}"]`);
         const vid = card && card.querySelector('video');
-        if (vid) { vid.src = fileUrl(clip.output_file, true); vid.load(); }
+        if (vid) { vid.removeAttribute('poster'); vid.src = fileUrl(clip.output_file, true); vid.load(); }
       }
       const who = (d.speakers || []).join(', ');
       showToast(`🗣 ${d.message}`, 'success');
@@ -689,7 +704,7 @@ async function loadAspectPreview(clip, ratio) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         clip_path: clip.output_file,
-        source_video: selectedVideo,
+        source_video: clip.source_file || selectedVideo,
         start_seconds: clip.start_time,
         end_seconds: clip.end_time,
         aspect_ratio: ratio,
@@ -745,7 +760,7 @@ async function runMultiAspectExport(ratios, btn) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         clip_path: multiAspectClip.output_file,
-        source_video: selectedVideo,
+        source_video: clip.source_file || selectedVideo,
         start_seconds: multiAspectClip.start_time,
         end_seconds: multiAspectClip.end_time,
         title: multiAspectClip.title,

@@ -309,6 +309,7 @@ async function init() {
   if (window.clipperAPI?.getServerStatus) {
     handleServerStatus(await window.clipperAPI.getServerStatus());
   } else {
+    loadAiModels();
     loadSetupPanel();
     populateCaptionPresets();
     loadOutputFolder();
@@ -336,6 +337,7 @@ function handleServerStatus({ state, detail }) {
         serverUrl = url;
         if (t) apiToken = t;
         checkHealth();
+        loadAiModels();
         loadSetupPanel();
         populateCaptionPresets();
         loadOutputFolder();
@@ -343,6 +345,7 @@ function handleServerStatus({ state, detail }) {
       }).catch(() => checkHealth());
     } else {
       checkHealth();
+      loadAiModels();
     }
     if (detail) showToast(detail, 'info');
   } else if (state === 'failed' || state === 'crashed') {
@@ -1000,6 +1003,7 @@ async function checkHealth() {
 // File selection
 // ------------------------------------------------------------------
 function selectVideoFile(file, replace = false) {
+  if (typeof resetAudioInspection === 'function') resetAudioInspection();
   const sourcePath = file.path || window.clipperAPI?.getPathForFile?.(file);
   if (!sourcePath) { showToast('Could not resolve the video path. Open the video in the desktop app.', 'error'); return; }
   const previousPath = selectedVideo;
@@ -1035,6 +1039,7 @@ function selectVideoFile(file, replace = false) {
   trimState.camVideo = null;
   document.getElementById('cam-path').value = '';
   initializeSourcePreview();
+  if (typeof inspectSourceTracks === 'function') inspectSourceTracks();
   setWizardStep(1);
 }
 
@@ -1335,7 +1340,11 @@ const BRAND_KIT_FIELDS = [
   'generated-caption-preset', 'generated-caption-font-size', 'caption-font-name',
   'caption-primary-color', 'caption-highlight-color', 'caption-outline-color', 'caption-outline-width',
   'caption-position', 'caption-chunk-size', 'caption-uppercase', 'caption-bold', 'caption-italic',
-  'caption-intro-enabled', 'caption-intro-duration', 'clip-aspect-ratio', 'trim-layout', 'vertical-crop',
+  'caption-intro-enabled', 'caption-intro-duration', 'caption-intro-text', 'generated-intro-font-size',
+  'intro-preset', 'intro-font-name', 'intro-color', 'intro-outline-color', 'intro-outline-width',
+  'intro-position', 'intro-animation', 'intro-bold', 'intro-italic', 'intro-uppercase',
+  'intro-box', 'intro-box-color', 'intro-box-opacity', 'intro-box-padding',
+  'burn-captions', 'clip-aspect-ratio', 'trim-layout', 'vertical-crop',
 ];
 function readBrandKits() { try { return JSON.parse(localStorage.getItem(BRAND_KITS_KEY)) || []; } catch (_) { return []; } }
 function writeBrandKits(k) { localStorage.setItem(BRAND_KITS_KEY, JSON.stringify(k)); }
@@ -1349,14 +1358,23 @@ function collectBrandKit() {
   return data;
 }
 function applyBrandKit(settings) {
-  Object.entries(settings || {}).forEach(([id, val]) => {
+  const entries = Object.entries(settings || {}).filter(([id]) => BRAND_KIT_FIELDS.includes(id));
+  entries.forEach(([id, val]) => {
     const el = document.getElementById(id);
     if (!el) return;
     if (el.type === 'checkbox') el.checked = !!val; else el.value = val;
     el.dispatchEvent(new Event('change', { bubbles: true }));
     el.dispatchEvent(new Event('input', { bubbles: true }));
   });
+  // Preset change handlers set defaults. Restore every saved override after those handlers.
+  entries.forEach(([id, val]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (el.type === 'checkbox') el.checked = !!val; else el.value = val;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
   if (typeof refreshCaptionPreview === 'function') refreshCaptionPreview();
+  if (typeof refreshIntroPreview === 'function') refreshIntroPreview();
   showToast('Brand kit applied ✅', 'success');
 }
 function loadBrandKitList() {
@@ -2259,7 +2277,7 @@ async function finishBackgroundJob(jobId, data) {
     completedJobs.add(jobId); unreadJobs.add(jobId);
     localStorage.setItem('klipzy.completed-jobs', JSON.stringify([...completedJobs].slice(-200)));
     localStorage.setItem('klipzy.unread-jobs', JSON.stringify([...unreadJobs]));
-    showToast('Clips ready — open the Queue to review ' + (data.clips || []).length + ' clip(s).', 'success');
+    showToast((data.clips || []).length ? 'Clips ready — open the Queue to review ' + data.clips.length + ' clip(s).' : 'No clips selected. Review audio tracks or enable gameplay suggestions in Clipping Options.', (data.clips || []).length ? 'success' : 'info');
     updateQueueBadges(0);
   } finally { finishingJobs.delete(jobId); }
 }
@@ -2284,6 +2302,8 @@ function pollJob(jobId, context) {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     currentActiveJobId = null;
     setProcessingActive(false);
+    const start = document.getElementById('start-clipping');
+    if (start) { start.disabled = false; start.textContent = '🚀 Start Clipping & Transcribing'; }
     const cb = document.getElementById('cancel-active-job-btn');
     if (cb) cb.style.display = 'none';
   };
@@ -2345,7 +2365,7 @@ function pollJob(jobId, context) {
 
       if (data.status === 'completed') {
         stopPolling();
-        logActivity(`✅ Done — ${(data.clips || []).length} clip(s) generated`, 'ok');
+        logActivity((data.clips || []).length ? `✅ Done — ${data.clips.length} clip(s) generated` : 'No clips selected — review speech tracks or enable unreviewed gameplay suggestions.', (data.clips || []).length ? 'ok' : 'info');
         await finishBackgroundJob(jobId, data);
       } else if (data.status === 'cancelled') {
         stopPolling();
@@ -2437,15 +2457,34 @@ function renderClipsEmptyState(grid) {
   grid.innerHTML = `
     <div class="empty-state muted">
       <div class="empty-state-icon" aria-hidden="true">🎬</div>
-      <h3>No clips yet</h3>
-      <p>No clips were generated. Try lowering the minimum duration or enabling more detectors — or start a fresh project.</p>
+      <h3>Analysis finished — no clips selected</h3>
+      <p>No supported moments were selected. Check the named Game / Chat / Mic tracks for speech, confirm your AI model is available, or opt into unreviewed action suggestions.</p>
       <div class="empty-state-actions">
         <button class="btn btn-secondary" id="empty-back-to-options">⬅️ Back to Clipping Options</button>
-        <button class="btn btn-primary" id="empty-new-project">➕ Start New Project</button>
+        <button class="btn btn-secondary" id="empty-review-audio">Review speech tracks</button>
+        <button class="btn btn-primary" id="empty-enable-action">Enable gameplay suggestions</button>
+        <p class="muted small">Gameplay suggestions use audio and motion peaks without AI verification. Review them before publishing. Enabling returns to options; press Process Clips to retry.</p>
       </div>
     </div>`;
   grid.querySelector('#empty-back-to-options')?.addEventListener('click', () => setWizardStep(2));
-  grid.querySelector('#empty-new-project')?.addEventListener('click', resetWizardToStep1);
+  grid.querySelector('#empty-enable-action')?.addEventListener('click', () => {
+    const toggle = document.getElementById('include-unreviewed-action');
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event('change', { bubbles: true }));
+    saveCurrentProjectSilently();
+    setWizardStep(2);
+    toggle.focus();
+    toggle.scrollIntoView({ block: 'center' });
+  });
+  grid.querySelector('#empty-review-audio')?.addEventListener('click', () => {
+    setWizardStep(2);
+    const control = document.getElementById('inspect-audio-tracks');
+    for (let parent = control?.parentElement; parent; parent = parent.parentElement) {
+      if (parent.tagName === 'DETAILS') parent.open = true;
+    }
+    control?.click();
+    control?.scrollIntoView({ block: 'center' });
+  });
 }
 
 function buildClipCard(clip, idx) {
@@ -2462,7 +2501,8 @@ function buildClipCard(clip, idx) {
   const title = clip.title || (clip.hook_text ? clip.hook_text.slice(0, 48) : 'Highlight');
   // Prefer the AI-written social description (populated when the Ollama toggle
   // is on); fall back to the hook line / reason for the heuristic path.
-  const desc = clip.description || clip.hook_text || clip.reason || 'AI-selected moment with strong virality signals.';
+  const desc = clip.description || clip.hook_text || clip.reason || 'Review this selected moment before publishing.';
+  const transcript = clip.full_text || (clip.words || []).map(word => word.word || '').join(' ');
   const score = clip.score != null ? Number(clip.score).toFixed(1) : '–';
   // escapeHtml covers quotes, so a path containing " cannot break out of the
   // attribute and inject markup (e.g. an onerror handler).
@@ -2473,6 +2513,7 @@ function buildClipCard(clip, idx) {
   card.innerHTML = `
     <div class="clip-video-wrap">
       <video preload="metadata" playsinline ${posterAttr}></video>
+      <button class="clip-play-btn" type="button" data-action="play-pause" aria-label="Play preview" title="Play / pause preview">Play</button>
       <button class="clip-mute-btn" type="button" data-action="mute" aria-label="Unmute preview" title="Unmute preview">🔇</button>
       <span class="clip-hover-hint">Hover to preview</span>
       <div class="clip-seek-row">
@@ -2491,6 +2532,7 @@ function buildClipCard(clip, idx) {
       <div class="clip-headline">
         <div class="clip-title">${escapeHtml(title)}</div>
         <span class="virality-badge" title="Heuristic/AI ranking signal; not a probability of popularity">Selection score: ${score}/10</span>
+        <span class="metric-pill">${Number.isFinite(clip.ai_score) ? 'AI-reviewed selection' : 'Automated selection · AI review not recorded'}</span>
         <span class="ready-badge" title="Rendered and ready to export/share">✅ Ready</span>
       </div>
       ${clip.visual_review ? `<details class="visual-review"><summary>Visual evidence · needs review</summary><p>${escapeHtml(clip.visual_review.summary || '')}</p><p class="muted">${escapeHtml(clip.visual_review.uncertainty || '')}</p></details>` : ''}
@@ -2501,7 +2543,12 @@ function buildClipCard(clip, idx) {
       </div>
       <div class="clip-meta">${escapeHtml(String(clip.duration))}s duration</div>
       <div class="clip-desc">${escapeHtml(desc)}</div>
-      <section class="clip-transcript" aria-label="Clip transcript"><h4>Transcript</h4><div class="clip-transcript-text">${escapeHtml(clip.full_text || (clip.words || []).map(word => word.word || '').join(' ') || 'No transcript is available for this clip.')}</div></section>
+      ${transcript ? `<section class="clip-transcript" aria-label="Clip transcript"><h4>Transcript <span class="muted small">${clip.captions_burned === true ? "· captions burned in" : clip.captions_burned === false ? "· captions not burned in" : "· burn-in status unknown"}</span></h4><div class="clip-transcript-text">${escapeHtml(transcript)}</div></section>` : '<p class="muted small">No transcript available · review the video and audio before publishing.</p>'}
+      <div class="quality-review-controls">
+        <label>Clip quality <select data-review="rating"><option value="unrated">Unrated</option><option value="publish">Publishable</option><option value="reject">Not publishable</option></select></label>
+        <label>Boundaries <select data-review="boundaries"><option value="unrated">Unrated</option><option value="good">Complete moment</option><option value="bad">Needs trimming / context</option></select></label>
+        <label>Title <select data-review="title"><option value="unrated">Unrated</option><option value="good">Accurate</option><option value="bad">Misleading / generic</option></select></label>
+      </div>
       <div class="clip-platforms" role="group" aria-label="Export for platform">
         <span class="platforms-label">Export for:</span>
         <button class="platform-tile" data-action="platform" data-platform="TikTok" data-ratio="9:16" title="TikTok — 9:16">🎵 TikTok</button>
@@ -2512,6 +2559,7 @@ function buildClipCard(clip, idx) {
       </div>
     </div>
     <div class="clip-actions">
+      <button class="btn btn-small" data-action="edit-captions">Captions &amp; hook</button>
       <!-- Primary actions stay one click away; the rest are grouped into
            progressive-disclosure menus so the card isn't a wall of ~20 buttons.
            Every data-action is preserved, so the delegated click handler and
@@ -2521,7 +2569,7 @@ function buildClipCard(clip, idx) {
       <details class="clip-menu">
         <summary class="btn btn-small" title="Enhance & fix this clip">✨ Enhance ▾</summary>
         <div class="clip-menu-items">
-          <button class="btn btn-small" data-action="edit-captions">✏️ Edit Captions</button>
+
           <button class="btn btn-small" data-action="reroll-hook" title="Swap in a fresh hook for this clip and re-render it">🎣 New Hook</button>
           <button class="btn btn-small" data-action="remove-hook" title="Remove the burned-in intro hook and re-render this clip without it">🚫 Remove Hook</button>
           <button class="btn btn-small" data-action="multi-aspect" title="Render 9:16 + 1:1 + 4:5 + 16:9 in one pass">📐 Multi-Aspect</button>
@@ -2565,6 +2613,13 @@ function buildClipCard(clip, idx) {
     </div>
   `;
 
+  for (const control of card.querySelectorAll('[data-review]')) {
+    control.value = clip.quality_review?.[control.dataset.review] || 'unrated';
+    control.addEventListener('change', () => {
+      clip.quality_review = {...clip.quality_review, [control.dataset.review]:control.value, reviewed_at:new Date().toISOString()};
+      saveCurrentProjectSilently();
+    });
+  }
   const video = card.querySelector('video');
   video.src = fileUrl(clip.output_file);
   video.muted = true;
@@ -2611,7 +2666,12 @@ function buildClipCard(clip, idx) {
     seek.addEventListener('mouseup', () => { delete seek.dataset.scrubbing; });
   }
 
-  card.addEventListener('mouseenter', () => video.play().catch(() => {}));
+  let previewManuallyPaused = false;
+  const playButton = card.querySelector('.clip-play-btn');
+  const syncPlayback = () => { playButton.textContent = video.paused ? 'Play' : 'Pause'; playButton.setAttribute('aria-label', video.paused ? 'Play preview' : 'Pause preview'); };
+  video.addEventListener('play', syncPlayback);
+  video.addEventListener('pause', syncPlayback);
+  card.addEventListener('mouseenter', () => { if (!previewManuallyPaused) video.play().catch(() => {}); });
   card.addEventListener('mouseleave', () => { video.pause(); });
 
   const closeClipMenus = () => card.querySelectorAll('details.clip-menu[open]').forEach((d) => d.removeAttribute('open'));
@@ -2677,11 +2737,15 @@ function buildClipCard(clip, idx) {
       case 'speakers': detectSpeakers(idx2, actionBtn); break;
       case 'bleep': quickBleepClip(idx2); break;
       case 'open-folder': revealInFolder(clip.output_file); break;
+      case 'play-pause':
+        previewManuallyPaused = !video.paused;
+        if (video.paused) video.play().catch(() => {}); else video.pause();
+        syncPlayback();
+        break;
       case 'mute':
         e.stopPropagation();
         video.muted = !video.muted;
-        // If the user unmutes while hovering, make sure audio is actually playing.
-        if (!video.muted && video.paused) video.play().catch(() => {});
+        // Muting never overrides an explicit pause.
         syncMuteBtn();
         break;
       case 'export': exportSingleClip(idx2); break;

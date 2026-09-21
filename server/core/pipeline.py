@@ -69,22 +69,29 @@ class VideoClipperEngine:
             return None
         try:
             data = json.loads(cache_file.read_text(encoding="utf-8"))
-            if not data:
-                return None
+            if not isinstance(data, list):
+                raise ValueError("Transcript cache must contain a segment list")
             return [TranscriptSegment(**s) for s in data]
-        except Exception:
+        except Exception as exc:
+            from server.core import processing_trace as trace
+            trace.event("transcript.cache_rejected", path=str(cache_file), error_type=type(exc).__name__, error=str(exc))
             return None
 
     def _save_cache(self, video_path: str, model: str, segments: List[TranscriptSegment]) -> None:
         key = f"{self._video_fingerprint(video_path)}_{model}"
         cache_file = self._transcript_cache_path() / f"{key}.json"
+        temporary = cache_file.with_name(cache_file.name + "." + uuid.uuid4().hex + ".tmp")
         try:
-            cache_file.write_text(
-                json.dumps([s.model_dump() for s in segments], ensure_ascii=False),
-                encoding="utf-8",
-            )
-        except Exception:
-            pass
+            temporary.write_text(json.dumps([s.model_dump() for s in segments], ensure_ascii=False), encoding="utf-8")
+            temporary.replace(cache_file)
+        except Exception as exc:
+            from server.core import processing_trace as trace
+            trace.event("transcript.cache_write_failed", path=str(cache_file), error_type=type(exc).__name__, error=str(exc))
+        finally:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass  # Cache cleanup must not abort successful processing.
 
     def _free_gpu_memory(self, unload_llm_model: Optional[str] = None) -> None:
         """Release GPU memory once a job is done so VRAM returns to ~idle instead
@@ -138,6 +145,7 @@ class VideoClipperEngine:
         aspect_ratio: Optional[str] = "9:16",
         max_clips: int = 5,
         auto_clip_count: bool = False,
+        include_unreviewed_action: bool = False,
         min_duration: float = 20.0,
         max_duration: float = 60.0,
         whisper_model: str = "base",
@@ -235,9 +243,9 @@ class VideoClipperEngine:
             return extract_selected_audio(cache_video_path, temp_audio, analysis_audio_tracks)
 
         if audio_tracks != "default" or audio_track_gains:
-            from server.core.ffmpeg_tools import prepare_audio_tracks
+            from server.core.media_cache import materialize
             report(f"Preparing export audio tracks {audio_tracks}...", 10)
-            video_path = prepare_audio_tracks(video_path, str(job_dir / "selected_audio_source.mkv"), audio_tracks, gains=audio_track_gains)
+            video_path = materialize(video_path, str(job_dir / "selected_audio_source.mkv"), audio_tracks, audio_track_gains)
         else:
             try:
                 from server.core.ffmpeg_tools import get_media_info
@@ -318,7 +326,8 @@ class VideoClipperEngine:
             if not os.path.exists(temp_audio):
                 extract_analysis_audio()
             energy_clips = detect_highlights_audio_energy(
-                temp_audio, segments, min_duration=min_duration, max_duration=max_duration
+                temp_audio, segments, min_duration=min_duration, max_duration=max_duration,
+                max_speech_gap=5.0 if auto_clip_count else None
             )
             candidates.extend(energy_clips)
 
@@ -332,14 +341,14 @@ class VideoClipperEngine:
             if analysis_audio_tracks != "same":
                 extract_audio(video_path, action_audio)
             action_clips = detect_action_highlights(
-                action_audio if analysis_audio_tracks != "same" else temp_audio, min_duration=min_duration, max_duration=max_duration,
+                action_audio if analysis_audio_tracks != "same" else temp_audio, min_duration=max(15.0, min_duration) if auto_clip_count else min_duration, max_duration=max_duration,
                 top_k=None if auto_clip_count else max_clips, video_path=video_path,
             )
             # Action windows may contain speech too. Preserve those words for
             # captions, transcript review, and grounded AI ranking.
             from server.core.highlight_detector import align_action_window
             for clip in action_clips:
-                align_action_window(clip, segments, max_duration=max_duration)
+                align_action_window(clip, segments, max_shift=max_duration if auto_clip_count else 2.0, max_duration=max_duration)
                 matching = [seg for seg in segments if seg.end > clip.start_time and seg.start < clip.end_time]
                 clip.words = [word for seg in matching for word in (seg.words or [])
                               if word.start >= clip.start_time and word.end <= clip.end_time]
@@ -397,12 +406,13 @@ class VideoClipperEngine:
         from server.core import proc
         proc.raise_if_cancelled()
 
-        # Text AI may reject weak speech clips; it cannot judge silent visual events.
-        if auto_clip_count and use_llm:
+        if auto_clip_count:
             before_filter = list(candidates)
-            candidates = [c for c in candidates if c.ai_score is None or c.ai_score >= 5
-                          or c.id.startswith("action_")]
-            trace_filter("Auto: AI speech score below 5", before_filter, candidates)
+            candidates = filter_auto_evidence(candidates, require_ai=use_llm,
+                                              include_unreviewed_action=include_unreviewed_action)
+            trace_filter("Auto evidence: incomplete speech, rejected AI or unreviewed action", before_filter, candidates)
+            if not candidates:
+                report("Auto found no supported highlights. Check Game/Chat/Mic speech tracks, or enable unreviewed action suggestions to inspect activity peaks.", 49)
 
         # #16.2 Speaker-aware selection: gently boost candidates that stay on one
         # speaker or a clean two-way exchange, and dampen messy 3+ speaker /
@@ -417,8 +427,8 @@ class VideoClipperEngine:
 
         # Deduplicate overlapping moments. Repeated titles are repaired after copywriting;
         # they must not discard distinct footage.
-        if auto_clip_count:
-            candidates.sort(key=lambda candidate: candidate.score, reverse=True)
+        # Deduplication keeps the first overlapping window in either mode.
+        candidates.sort(key=lambda candidate: candidate.score, reverse=True)
         before_filter = list(candidates)
         candidates = self.detector._deduplicate(candidates)
         trace_filter("overlapping windows", before_filter, candidates)
@@ -576,9 +586,10 @@ class VideoClipperEngine:
             clip_segs = [s for s in segments if s.start < clip.end_time and s.end > clip.start_time]
             # Auto-generate the intro hook from THIS clip's own hook/title when
             # the intro toggle is on but the optional custom text was left blank.
-            effective_intro = intro_caption
-            if not (intro_caption and str(intro_caption).strip()) and intro_enabled:
-                effective_intro = (clip.hook_text or clip.title or raw_title or "").strip() or None
+            effective_intro = resolve_intro_caption(clip, intro_caption, intro_enabled)
+            # Keep the editable word list consistent with the captions actually rendered.
+            clip.words = [word for seg in clip_segs for word in (seg.words or [])
+                          if word.end > clip.start_time and word.start < clip.end_time]
             if clip_segs:
                 generate_srt(clip_segs, clip_srt)
                 try:
@@ -607,8 +618,12 @@ class VideoClipperEngine:
                     trace.event("stage.failed", stage=current_stage[0], error_type=type(stage_error).__name__, error=str(stage_error))
                     clip_ass = None
             else:
-                clip_srt = srt_path
-                clip_ass = ass_path
+                # Silent windows must not reuse the full-video captions or its hook.
+                generate_srt([], clip_srt)
+                from server.core.caption_styler import generate_karaoke_captions
+                generate_karaoke_captions([], clip_ass, style_preset=caption_style,
+                    intro_caption=effective_intro, intro_caption_duration=intro_caption_duration,
+                    intro_font_size=intro_font_size, intro_style=intro_style)
 
             report(f"Rendering clip {idx}/{total}...", clip_progress + int(35 / max(1, total)))
             sub_to_burn = clip_ass if (clip_ass and os.path.exists(clip_ass)) else (clip_srt if os.path.exists(clip_srt) else None)
@@ -683,6 +698,7 @@ class VideoClipperEngine:
                 ClipResult(
                     clip_id=clip.id,
                     visual_review=clip.visual_review,
+                    ai_score=clip.ai_score,
                     title=clip.title,
                     score=clip.score,
                     start_time=clip.start_time,
@@ -691,6 +707,9 @@ class VideoClipperEngine:
                     hook_text=clip.hook_text,
                     output_file=output_clip_path,
                     source_file=video_path,
+                    intro_caption=effective_intro or "",
+                    captions_burned=bool(burn_captions and sub_to_burn and clip_segs),
+                    aspect_ratio=aspect_ratio,
                     description=getattr(clip, "description", "") or "",
                     full_text=getattr(clip, "full_text", "") or "",
                     virality=clip.virality,
@@ -718,7 +737,7 @@ class VideoClipperEngine:
         # instead of staying reserved by Whisper/YOLO/PyTorch cache + the LLM.
         self._free_gpu_memory(unload_llm_model=llm_model if use_llm else None)
 
-        report("Done!", 100)
+        report("Done!" if results else "Analysis finished: no clips selected. Review speech tracks or enable unreviewed gameplay suggestions, then retry.", 100)
         trace.event("pipeline.completed", outputs=[c.output_file for c in results])
         if diagnostic_job_id is None:
             trace.unbind()
@@ -732,3 +751,37 @@ def select_auto_candidates(candidates, limit=None):
     threshold = max(5.0, ordered[0].score * 0.65)
     selected = [candidate for candidate in ordered if candidate.score >= threshold]
     return selected if limit is None else selected[:limit]
+
+
+def filter_auto_evidence(candidates, require_ai=False, include_unreviewed_action=False):
+    """Avoid filling Auto results with unreviewed motion peaks or tiny speech fragments."""
+    selected=[]
+    for candidate in candidates:
+        spoken=len(re.findall(r"\w+", candidate.full_text or '')) >= 6
+        action=candidate.id.startswith('action_')
+        if candidate.ai_score is not None and candidate.ai_score < 5:
+            continue  # Action-origin windows do not bypass an explicit AI rejection.
+        if not spoken:
+            if action and include_unreviewed_action:
+                selected.append(candidate)
+            continue
+        if require_ai and candidate.ai_score is None:
+            if not (action and include_unreviewed_action):
+                continue
+        selected.append(candidate)
+    return selected
+
+
+def resolve_intro_caption(clip, custom, enabled):
+    """Detector labels are metadata, never publishable opening copy."""
+    if not enabled:
+        return None
+    if custom and custom.strip():
+        return custom.strip()
+    hook = (clip.hook_text or '').strip()
+    generic = r"^(?:(?:motion|action|high.energy) (?:highlight|moment|peak)|audio\s*/\s*motion peak)\b"
+    if hook and not re.match(generic, hook, re.I):
+        return hook
+    # A silent action candidate has no grounded automatic headline.
+    text = (clip.full_text or '').strip()
+    return re.split(r'(?<=[.!?])\s+', text)[0][:90] or None

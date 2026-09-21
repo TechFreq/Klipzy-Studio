@@ -80,9 +80,13 @@ def _apply_llm_rankings(
     for r in rankings:
         if not isinstance(r, dict):
             continue
+        raw_id = r.get("id")
+        # Do not truncate fractional IDs or interpret JSON booleans as indices.
+        if isinstance(raw_id, bool) or not isinstance(raw_id, (int, str)):
+            continue
         try:
-            idx = int(r.get("id"))
-        except (TypeError, ValueError):
+            idx = int(raw_id)
+        except (TypeError, ValueError, OverflowError):
             continue
         if 0 <= idx < len(candidates):
             by_id[idx] = r

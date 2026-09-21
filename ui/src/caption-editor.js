@@ -310,6 +310,10 @@ function refreshPortraitCaptionPreview() {
 function refreshIntroPreview() {
   const el = document.getElementById('portrait-intro-preview');
   if (!el) return;
+  const boxed = document.getElementById('intro-box')?.checked;
+  const savedBoxColor = document.getElementById('intro-box-color')?.value;
+  const look = !boxed ? 'plain' : ({'#ffffff':'light', '#111111':'dark', '#ffe600':'accent'}[savedBoxColor] || 'custom');
+  document.querySelectorAll('[data-headline-look]').forEach(tile => tile.setAttribute('aria-pressed', String(tile.dataset.headlineLook === look)));
   const enabled = document.getElementById('caption-intro-enabled')?.checked;
   if (!enabled) { el.classList.add('hidden'); return; }
   el.classList.remove('hidden');
@@ -416,7 +420,7 @@ window.openCaptionEditor = function(clipIndex) {
   const titleInput = document.getElementById('edit-clip-title');
   if (titleInput) titleInput.value = clip.title || clip.hook_text || '';
   const hookInput = document.getElementById('edit-intro-hook');
-  if (hookInput) hookInput.value = clip.intro_caption || clip.hook_text || '';
+  if (hookInput) hookInput.value = clip.intro_caption ?? (/^(motion|action|high.energy|audio\s*\/) /i.test(clip.hook_text || '') ? '' : clip.hook_text || '');
   const hookSizeInput = document.getElementById('intro-hook-font-size');
   if (hookSizeInput) {
     hookSizeInput.value = clip.intro_font_size || 64;
@@ -433,7 +437,8 @@ window.openCaptionEditor = function(clipIndex) {
   const chipsContainer = document.getElementById('word-chips');
   chipsContainer.innerHTML = '';
 
-  const words = clip.words && clip.words.length ? clip.words : (clip.hook_text || '').split(' ').map((w, i) => ({ word: w, start: i * 0.4, end: (i + 1) * 0.4 }));
+  const words = clip.words || [];
+  if (!words.length) chipsContainer.textContent = 'No timed transcript is available. You can still edit or remove the opening hook; captions require transcription.';
 
   words.forEach((w) => {
     // Coerce timings defensively: backend word entries occasionally omit
@@ -603,6 +608,9 @@ document.getElementById('save-captions-btn')?.addEventListener('click', async ()
     return;
   }
 
+  const editingClip = currentEditingClip;
+  const savedHook = (document.getElementById('edit-intro-hook')?.value || '').trim();
+  const savedTitle = (document.getElementById('edit-clip-title')?.value || '').trim();
   const saveBtn = document.getElementById('save-captions-btn');
   const originalText = saveBtn ? saveBtn.textContent : '💾 Save & Apply Subtitles';
   if (saveBtn) {
@@ -625,19 +633,10 @@ document.getElementById('save-captions-btn')?.addEventListener('click', async ()
     editedWords.push({ word, start, end });
   });
 
-  if (!editedWords.length) {
-    if (saveBtn) {
-      saveBtn.disabled = false;
-      saveBtn.textContent = originalText;
-    }
-    showAlert('No editable words found.');
-    return;
-  }
-
   const captionOpts = collectCaptionOptions();
-  const outputPath = currentEditingClip.ass_path
-    ? currentEditingClip.ass_path.replace(/\.ass$/i, '.srt')
-    : `${currentEditingClip.output_file}.srt`;
+  const outputPath = editingClip.ass_path
+    ? editingClip.ass_path.replace(/\.ass$/i, `.edit-${Date.now()}.srt`)
+    : `${editingClip.output_file}.edit-${Date.now()}.srt`;
 
   try {
     const res = await fetch(`${serverUrl}/export/subtitles`, {
@@ -658,11 +657,17 @@ document.getElementById('save-captions-btn')?.addEventListener('click', async ()
         uppercase: captionOpts.uppercase,
         bold: captionOpts.bold,
         italic: captionOpts.italic,
-        source_video: selectedVideo,
-        clip_output_file: currentEditingClip.output_file,
-        start_seconds: currentEditingClip.start_time,
-        end_seconds: currentEditingClip.end_time,
-        aspect_ratio: document.getElementById('clip-aspect-ratio')?.value || '9:16',
+        source_video: editingClip.source_file || selectedVideo,
+        clip_output_file: editingClip.output_file,
+        start_seconds: editingClip.start_time,
+        end_seconds: editingClip.end_time,
+        aspect_ratio: editingClip.aspect_ratio || (editingClip.layout === 'full' ? 'full' : document.getElementById('clip-aspect-ratio')?.value || '9:16'),
+        layout: editingClip.layout || '',
+        cam_video: editingClip.cam_video,
+        cam_scale: editingClip.cam_scale,
+        cam_position: editingClip.cam_position,
+        crop_x_offset: editingClip.crop_x_offset,
+        intro_style: collectIntroStyle(),
         // Burn the (possibly edited/rotated) intro hook for this clip.
         intro_caption: (document.getElementById('edit-intro-hook')?.value || '').trim() || undefined,
         intro_enabled: !!(document.getElementById('edit-intro-hook')?.value || '').trim(),
@@ -672,45 +677,36 @@ document.getElementById('save-captions-btn')?.addEventListener('click', async ()
       })
     });
     const data = await res.json();
-    if (res.ok) {
+    if (res.ok && data.re_rendered && data.rendered_path) {
+      editingClip.output_file = data.rendered_path;
+      editingClip.thumbnail_path = null;
+      editingClip.ass_path = data.ass_path || editingClip.ass_path;
+      editingClip.captions_burned = editedWords.length > 0;
+      editingClip.full_text = editedWords.map(w => w.word).join(' ');
       // Update in-memory clip state
-      currentEditingClip.words = editedWords;
-      if (data.export_path) currentEditingClip.srt_path = data.export_path;
+      editingClip.words = editedWords;
+      if (data.export_path) editingClip.srt_path = data.export_path;
       // Persist the chosen intro hook so it's reflected on the card and re-used.
-      const newHook = (document.getElementById('edit-intro-hook')?.value || '').trim();
-      currentEditingClip.intro_caption = newHook;
-      if (newHook) currentEditingClip.hook_text = newHook;
-      currentEditingClip.intro_font_size = parseInt(document.getElementById('intro-hook-font-size')?.value || '', 10) || undefined;
+      const newHook = savedHook;
+      editingClip.intro_caption = newHook;
+      editingClip.hook_text = newHook;
+      editingClip.intro_font_size = parseInt(document.getElementById('intro-hook-font-size')?.value || '', 10) || undefined;
       // Editable clip title (used for the export file name + the card label).
-      const newTitle = (document.getElementById('edit-clip-title')?.value || '').trim();
-      if (newTitle) currentEditingClip.title = newTitle;
+      const newTitle = savedTitle;
+      if (newTitle) editingClip.title = newTitle;
 
-      // Reload the matching clip card so it plays the freshly burned captions.
-      // Match on the card's own index rather than fuzzy src string-matching,
-      // which was both fragile and mis-grouped (&& binds tighter than ||, so
-      // the old condition reloaded the wrong card or none at all).
-      const targetIdx = generatedClips.indexOf(currentEditingClip);
-      if (targetIdx !== -1) {
-        const card = document.querySelector(`.clip-card[data-clip-idx="${targetIdx}"]`);
-        const vid = card && card.querySelector('video');
-        if (vid) {
-          vid.src = fileUrl(currentEditingClip.output_file, true);
-          vid.load();
-        }
-        // Reflect the edited hook + title on the card immediately. Prefer the
-        // AI-written description for the card blurb (matches buildClipCard),
-        // falling back to the hook line when there's no description.
-        const descEl = card && card.querySelector('.clip-desc');
-        const cardBlurb = (currentEditingClip.description || newHook || '').trim();
-        if (descEl && cardBlurb) descEl.textContent = cardBlurb;
-        const titleEl = card && card.querySelector('.clip-title');
-        if (titleEl && newTitle) titleEl.textContent = newTitle;
-      }
+      // Rebuild the card so playback, transcript and export all use the same revision.
+      const targetIdx = generatedClips.indexOf(editingClip);
+      renderClipsGrid();
+      if (typeof renderEditorLibrary === 'function') renderEditorLibrary();
+      const freshVideo = document.querySelector(`.clip-card[data-clip-idx="${targetIdx}"] video`);
+      if (freshVideo) { freshVideo.load(); freshVideo.play().catch(() => {}); }
+      document.getElementById('caption-modal').classList.add('hidden');
       saveCurrentProjectSilently();
       playSuccessSound();
       showAlert(`✅ Captions updated and applied to clip!`);
     } else {
-      showAlert(`Save failed: ${data.detail || 'Unknown error'}`);
+      showAlert(`Video was not updated: ${data.detail || data.message || 'Rendering did not complete. Please retry.'}`);
     }
   } catch (err) {
     showAlert(`Save error: ${err.message}`);
@@ -719,7 +715,6 @@ document.getElementById('save-captions-btn')?.addEventListener('click', async ()
       saveBtn.disabled = false;
       saveBtn.textContent = originalText;
     }
-    document.getElementById('caption-modal').classList.add('hidden');
   }
 });
 

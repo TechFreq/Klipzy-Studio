@@ -863,6 +863,28 @@ def ollama_model_health(model: str) -> str:
         return "unknown"
 
 
+# Cache only catalog probes; direct health verification stays fresh after installs.
+import threading as _threading
+import time as _time
+_MODEL_HEALTH_CACHE = {}
+_MODEL_HEALTH_LOCK = _threading.RLock()
+
+def invalidate_model_health(model=None):
+    with _MODEL_HEALTH_LOCK:
+        if model is None:
+            _MODEL_HEALTH_CACHE.clear()
+        else:
+            _MODEL_HEALTH_CACHE.pop(model, None)
+
+def cached_model_health(model):
+    with _MODEL_HEALTH_LOCK:
+        cached = _MODEL_HEALTH_CACHE.get(model)
+        if cached and _time.monotonic() < cached[0]:
+            return cached[1]
+        health = ollama_model_health(model)
+        _MODEL_HEALTH_CACHE[model] = (_time.monotonic() + (30 if health == "ready" else 3), health)
+        return health
+
 def ollama_model_catalog(preset: str = "") -> Dict:
     """Catalog + which models are installed + the recommended pick.
 
@@ -877,7 +899,7 @@ def ollama_model_catalog(preset: str = "") -> Dict:
     models = []
     for m in OLLAMA_MODEL_CATALOG:
         present = m["name"] in installed_set
-        health = ollama_model_health(m["name"]) if present else "not_installed"
+        health = cached_model_health(m["name"]) if present else "not_installed"
         models.append({
             **m,
             "installed": present and health != "repair_needed",
@@ -896,20 +918,20 @@ def ollama_model_catalog(preset: str = "") -> Dict:
 
 
 def list_ollama_models() -> List[str]:
-    """Names of locally-installed Ollama models (via `ollama list`), best-effort."""
-    exe = shutil.which("ollama")
-    if not exe:
-        info = detect_ollama()
-        exe = info.get("executable") or "ollama"
-    out = _run([exe, "list"], timeout=6)
-    if not out:
+    """Verified inventory from the running local Ollama service, without CLI startup."""
+    import json
+    import urllib.request
+    try:
+        request = urllib.request.Request("http://127.0.0.1:11434/api/tags")
+        with urllib.request.urlopen(request, timeout=2) as response:
+            payload = json.load(response)
+        return sorted({item["name"] for item in payload.get("models", [])
+                       if isinstance(item, dict) and isinstance(item.get("name"), str)})
+    except Exception:
+        # `ollama list` may launch a background service that inherits stdout on
+        # Windows, keeping subprocess pipes open after the timeout. Never start
+        # services merely to populate a dropdown; an unavailable inventory is empty.
         return []
-    models = []
-    for line in out.splitlines()[1:]:  # skip the header row
-        parts = line.split()
-        if parts and parts[0] and parts[0].upper() != "NAME":
-            models.append(parts[0])
-    return models
 
 
 def resolve_default_ollama_model(preset: str = "") -> str:

@@ -260,6 +260,9 @@ def detect_highlights_auto(segments):
         text, words = [], []
         for j in range(i, len(segments)):
             seg = segments[j]
+            # Do not glue separate conversations together across long quiet gaps.
+            if j > i and seg.start - segments[j-1].end > 5.0:
+                break
             duration = seg.end - first.start
             if duration > 120:
                 break

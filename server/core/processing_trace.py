@@ -9,7 +9,10 @@ from pathlib import Path
 
 _LOCAL=threading.local()
 _LOG=logging.getLogger('klipzy.processing')
-_SECRET=re.compile(r'(token|password|secret|authorization|api[_-]?key)',re.I)
+_SECRET=re.compile(r'(token|password|secret|authorization|api[_-]?key|signature|^sig$)',re.I)
+_ASSIGNMENT = re.compile(
+    r'''(?i)((?:api[_-]?key|token|password|secret|authorization|signature|sig)["']?\s*[=:]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s&,;}]+)'''
+)
 
 def clean(value,key=''):
     if _SECRET.search(key):return '[REDACTED]'
@@ -22,9 +25,18 @@ def clean(value,key=''):
         return result
     if isinstance(value,float) and not math.isfinite(value):return str(value)
     if isinstance(value,str):
+        # AI responses and subprocess output can contain serialized credentials.
+        if value.lstrip().startswith(("{", "[")):
+            try:
+                parsed = json.loads(value)
+            except (ValueError, RecursionError):
+                pass
+            else:
+                if isinstance(parsed, (dict, list)):
+                    return json.dumps(clean(parsed), ensure_ascii=True)
         value=re.sub(r'(?i)(bearer\s+)\S+',r'\1[REDACTED]',value)
-        value=re.sub(r'(?i)([?&](?:token|api_key|key|access_token)=)[^&\s]+',r'\1[REDACTED]',value)
-        value=re.sub(r'(?i)((?:api[_-]?key|token|password|secret)\s*[=:]\s*)[^\s&,;]+',r'\1[REDACTED]',value)
+        value=re.sub(r'(?i)([?&](?:token|api_key|key|access_token|sig|x-amz-signature|x-goog-signature)=)[^&\s]+',r'\1[REDACTED]',value)
+        value=_ASSIGNMENT.sub(r'\1[REDACTED]',value)
         value=re.sub(r'(https?://)[^/\s@]+@',r'\1[REDACTED]@',value)
         return value
     return value

@@ -11,13 +11,14 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: file:; media-src 'self' blob: file:; object-src 'none'; base-uri 'none'; form-action 'none';">
   <title>Klipzy Studio</title>
   <link rel="stylesheet" href="src/styles.css" />
+  <link rel="stylesheet" href="src/studio.css" />
 </head>
 <body>
   <div id="app">
     <!-- Sidebar -->
     <aside class="sidebar">
       <div class="logo">
-        <span class="logo-icon">🎬</span>
+        <span class="studio-mark" aria-hidden="true">K</span>
         <span class="logo-text">Klipzy Studio</span>
       </div>
       <div class="sidebar-projects">
@@ -28,23 +29,24 @@
         <div id="sidebar-current-project" class="sidebar-current-project hidden" title="Current project"></div>
       </div>
       <nav class="nav">
-        <button class="nav-item active" data-view="projects">🏠 Projects</button>
-        <button class="nav-item" data-view="clipper">✂️ Long Form to Shorts</button>
-        <button class="nav-item" data-view="editor">🎞️ Clip Editor</button>
-        <button class="nav-item" data-view="chat">💬 AI Edit Chat</button>
+        <button class="nav-item active" data-view="projects"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Projects</span></button>
+        <button class="nav-item" data-view="clipper"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 4 12 8-12 8z"/><path d="M3 4v16"/></svg><span>Long Form to Shorts</span></button>
+        <button class="nav-item" data-view="editor"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M3 20h18M8 18v4M16 18v4"/></svg><span>Clip Editor</span></button>
+        <button class="nav-item" data-view="chat"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v12H9l-5 4z"/><path d="M8 8h8M8 12h5"/></svg><span>AI Edit Chat</span></button>
       </nav>
       <div class="sidebar-models">
         <label for="sidebar-ai-model">Local AI model</label>
         <select id="sidebar-ai-model" disabled><option>Loading models…</option></select>
+        <button id="sidebar-refresh-models" class="btn btn-small" type="button">Refresh models</button>
         <label for="sidebar-whisper-model">Transcription quality</label>
         <select id="sidebar-whisper-model"><option value="tiny">Tiny · fastest</option><option value="base">Base · fast</option><option value="small">Small · balanced</option><option value="medium">Medium · detailed</option><option value="large-v3">Large v3 · highest capacity</option></select>
         <small id="sidebar-model-status" role="status">Choose the model for upcoming AI requests and transcription for new jobs.</small>
       </div>
       <div class="sidebar-footer">
         <div class="sidebar-quick-actions">
-          <button id="sidebar-settings-btn" class="sidebar-action-btn nav-item" data-view="setup" title="Open Settings — dependencies, models, queue & support">⚙️ Settings</button>
-          <button id="sidebar-queue-btn" class="sidebar-action-btn" title="Open the background rendering queue">📋 Queue <span id="sidebar-queue-badge" class="badge-count hidden">0</span></button>
-          <button id="sidebar-support-btn" class="sidebar-action-btn support" title="Support TechFreq — donate, links & GitHub">💙 Support TechFreq</button>
+          <button id="sidebar-settings-btn" class="sidebar-action-btn nav-item" data-view="setup" title="Open Settings — dependencies, models, queue & support">Settings</button>
+          <button id="sidebar-queue-btn" class="sidebar-action-btn" title="Open the background rendering queue">Queue <span id="sidebar-queue-badge" class="badge-count hidden">0</span></button>
+          <button id="sidebar-support-btn" class="sidebar-action-btn support" title="Support TechFreq — donate, links & GitHub">Support TechFreq</button>
         </div>
         <button id="health-status-btn" class="health-status-btn" title="Open Setup &amp; diagnostics — check dependencies, models, and what's best for your hardware" aria-label="Server status. Open Setup and diagnostics.">
           <span id="health-status" class="health-status" role="status" aria-live="polite">
@@ -67,17 +69,22 @@
       <section id="view-projects" class="view active">
         <header class="projects-hero">
           <div class="projects-hero-text">
-            <h1>🎬 Your Klipzy Projects</h1>
-            <p class="subtitle">Kick off a new clip project or jump back into a saved one — every step runs locally on your own machine.</p>
+            <h1>Your creative workspace</h1>
+            <p class="subtitle">Create something worth watching. Your projects, media, and AI stay on your machine.</p>
           </div>
           <div class="projects-hero-actions">
-            <button class="btn btn-primary btn-large" id="projects-new-btn">➕ New Project</button>
-            <button class="btn btn-secondary" id="projects-open-output-btn" title="Open the folder where generated clips are saved">📂 Output folder</button>
+            <button class="btn btn-primary btn-large" id="projects-new-btn">New Project</button>
+            <button class="btn btn-secondary" id="projects-open-output-btn" title="Open the folder where generated clips are saved">Output folder</button>
           </div>
         </header>
+        <div class="studio-launchers" aria-label="Create and edit">
+          <button class="studio-launcher" data-studio-action="new"><span class="launcher-symbol" aria-hidden="true">＋</span><strong>Create a project</strong><span>Import a video and find your next highlight.</span><span class="launcher-link">Start creating →</span></button>
+          <button class="studio-launcher" data-studio-action="editor"><span class="launcher-symbol" aria-hidden="true">▤</span><strong>Refine your clips</strong><span>Frame, trim, and style your generated clips.</span><span class="launcher-link">Open editor library →</span></button>
+          <button class="studio-launcher" data-studio-action="chat"><span class="launcher-symbol" aria-hidden="true">✧</span><strong>Edit with AI</strong><span>Explore ideas with your local AI assistant.</span><span class="launcher-link">Open AI chat →</span></button>
+        </div>
         <div class="projects-home-body">
           <div class="projects-home-head-row">
-            <h3>📁 Your Projects</h3>
+            <h3>Recent projects</h3>
             <span class="muted small" id="projects-home-count"></span>
           </div>
           <div id="projects-home-grid" class="projects-home-grid"></div>
@@ -94,10 +101,10 @@
       <section id="view-clipper" class="view">
         <header class="view-header">
           <h1>Long Form to Shorts <span class="header-actions">
-            <button class="btn btn-small btn-secondary" id="open-queue-btn" title="View background rendering queue">📋 Queue <span id="queue-badge" class="badge-count hidden">0</span></button>
-            <button class="btn btn-small btn-secondary" id="open-logs-folder" title="Open the logs folder where Klipzy writes server logs">📜 Logs</button>
+            <button class="btn btn-small btn-secondary" id="open-queue-btn" title="View background rendering queue">Queue <span id="queue-badge" class="badge-count hidden">0</span></button>
+            <button class="btn btn-small btn-secondary" id="open-logs-folder" title="Open the logs folder where Klipzy writes server logs">Logs</button>
           </span></h1>
-          <p class="subtitle">Local Long Form to Shorts studio by TechFreq — turn long videos into viral vertical shorts, 100% on your machine.</p>
+          <p class="subtitle">Import your footage, choose a style, and review the moments that matter.</p>
           <div id="active-project-label" class="active-project-label hidden">📁 Current project: <strong id="active-project-name"></strong></div>
         </header>
 
@@ -135,6 +142,61 @@
             <input type="file" id="file-input" accept="video/*" multiple hidden aria-hidden="true" tabindex="-1" />
           </div>
 
+          <details class="card url-import-panel">
+            <summary>Import a video link</summary>
+            <p class="muted small">Paste an authorized direct HTTPS video-file link (up to 10 GiB). Downloads stay on this computer.</p>
+            <div class="import-controls"><input id="import-url" type="url" placeholder="https://example.com/my-video.mp4" aria-label="Direct video URL" autocomplete="off" /><button id="import-start" class="btn btn-primary">Import link</button></div>
+            <label class="import-consent"><input id="import-rights" type="checkbox" /> I have permission to download and edit this media, and the source service permits this download.</label>
+            <details class="import-notice"><summary>Import rules &amp; platform help</summary>
+              <p>Public availability does not grant permission. Respect copyright, privacy and source-service terms. Do not bypass DRM, paywalls or access controls. Klipzy does not grant rights to imported media or guarantee that an export is cleared for publication.</p>
+              <p>YouTube: export your own uploads from <a href="https://support.google.com/youtube/answer/56100?hl=en" target="_blank" rel="noopener">YouTube Studio or Takeout</a>, then upload the file here. YouTube page/playback links are not supported.</p>
+              <p>Twitch: use the authorized download in <a href="https://help.twitch.tv/s/article/how-to-use-clips" target="_blank" rel="noopener">Creator Dashboard</a>, then upload the file or paste its authorized direct download link. Account connection is not configured.</p>
+              <details class="import-full-terms"><summary>Full use &amp; import terms</summary><pre># Klipzy Studio - use and content-import terms
+
+Version 2026-09-18. Klipzy Studio is a local media-editing tool by TechFreq Developments. These terms explain the intended use of the application&#x27;s import and editing features. The software rights and attribution requirements in [LICENSE.md](LICENSE.md) continue to apply.
+
+## Your media and permissions
+
+You retain your rights in your media. Klipzy does not acquire ownership of imported videos or grant you rights to another person&#x27;s videos, music, performances, likeness or other material. Before downloading, editing, sharing or publishing, obtain the permissions required for the material and your intended use, including applicable privacy and publicity rights.
+
+Use a remote import only when you have the necessary download/edit permissions and the source service permits the download method. A public link, an attribution credit, a paid subscription or the availability of a third-party downloader does not by itself establish those permissions. Rights in embedded music and other third-party material may differ from rights in the video.
+
+## Supported import methods
+
+The direct-link importer supports public HTTPS video-file responses within its displayed limits. It is not a universal website downloader. YouTube watch/playback URLs and Twitch watch/clip pages are not resolved into media by this release. Use authorized export/download tools supplied by the platform, then import the resulting local file; authorized direct media-file links may also be imported where supported.
+
+Source-service terms apply independently. Klipzy&#x27;s terms and the import acknowledgment do not override them. Do not use the application to bypass DRM, paywalls, authentication, geographic restrictions or other access controls, or to obtain material using stolen credentials. Klipzy does not extract browser cookies or provide an access-control bypass.
+
+## Local processing and network use
+
+Imports contact the specified source host and validated redirect destinations; the source can observe your IP address and request. Signed download URLs are used in memory for the transfer and are not intentionally stored in job metadata or logs. The app records the source host, local output path, import status, permission-acknowledgment version and time. Current import-job metadata is session-local; downloaded media remains on disk.
+
+Detailed processing diagnostics can contain transcripts, local paths, prompts and model responses. Review logs before sharing them. Optional remote AI endpoints send data to the endpoint you configure and are subject to that provider&#x27;s terms and privacy practices. Local-first does not mean that all optional features operate offline.
+
+## Review before publishing
+
+AI-selected moments, captions, descriptions and scores can be inaccurate, incomplete or misleading. Preview and verify the exported media, titles, subtitles and rights before publication. Quality ratings record a user&#x27;s assessment; selection scores do not guarantee popularity or suitability.
+
+## Limits and changes
+
+Downloads can fail, expire or become unsupported as source services change. Keep backups of original media. To the extent permitted by applicable law, the software is provided without warranties as described in LICENSE.md; nothing in this document excludes rights or liabilities that cannot legally be excluded. No statement here promises immunity from copyright, privacy or contractual claims for users or developers.
+
+Updated import notices use a version identifier and require a fresh acknowledgment for each import. Do not interpret a software update as permission to use a source in a way its terms prohibit.
+
+## Questions and concerns
+
+Use the project&#x27;s existing [support page](https://beacons.ai/techfreq) or [issue tracker](https://github.com/TechFreq/Klipzy-Studio/issues) for product questions and concerns. Do not post private credentials or copyrighted source footage in a public issue. This is not a claim of registered-agent status or statutory safe-harbor eligibility.
+
+## Release note
+
+This is a practical product policy, not a legal opinion or a guarantee of enforceability. Operator legal identity, a private rights-complaint contact and jurisdiction-specific review remain release-policy work; no identity, address or governing jurisdiction has been invented here. It should not be advertised as legal clearance for arbitrary platform downloads.
+</pre></details>
+              <p class="muted small">Import notice version: 2026-09-18. URLs contact the source host; signed links stay in memory during download. Diagnostics retain the host, job status and local media path, not the signed URL.</p>
+            </details>
+            <p id="import-message" class="muted small" role="status" aria-live="polite"></p>
+            <div id="import-jobs"></div>
+          </details>
+
           <div id="file-info" class="file-info hidden">
             <span id="file-name"></span>
             <button class="btn btn-small" id="change-file">Change</button>
@@ -145,16 +207,16 @@
                projects as a browsable list underneath (OpenClipper-style). -->
           <div id="project-grid-wrap" class="project-grid-wrap hidden">
             <div class="card-head-row">
-              <h3>📁 Recent Projects</h3>
+              <h3>Recent Projects</h3>
               <span class="muted small">Pick up where you left off</span>
             </div>
             <div id="project-grid" class="project-grid"></div>
           </div>
           <div id="project-bar" class="project-bar hidden">
             <input id="project-name" type="text" placeholder="Project name" maxlength="80" aria-label="Project name" />
-            <button class="btn btn-small btn-primary" id="save-project">💾 Save Project</button>
+            <button class="btn btn-small btn-primary" id="save-project">Save Project</button>
             <select id="project-list" title="Open saved project"><option value="">Open saved project…</option></select>
-            <button class="btn btn-small btn-danger" id="delete-project">🗑 Delete Project</button>
+            <button class="btn btn-small btn-danger" id="delete-project">Delete Project</button>
           </div>
 
           <!-- Output folder picker -->
@@ -162,14 +224,14 @@
             <label for="output-folder-input" class="output-folder-label">📁 Default export folder:</label>
             <div class="output-folder-controls">
               <input id="output-folder-input" type="text" placeholder="Loading export folder…" readonly />
-              <button class="btn btn-small btn-secondary" id="browse-output-folder">📂 Browse…</button>
+              <button class="btn btn-small btn-secondary" id="browse-output-folder">Browse…</button>
               <button class="btn btn-small" id="reset-output-folder" title="Restore the built-in output folder">↺ Reset</button>
             </div>
             <p class="muted small">New renders and exports use this folder. The selected path is included when you save a project.</p>
           </div>
 
           <section id="source-preview" class="card hidden">
-<div class="source-preview-header"><h3>Video &amp; output preview</h3><div class="source-preview-actions"><label class="option"><span>Output format</span><select id="source-aspect"><option value="9:16">Vertical · 9:16</option><option value="16:9">Wide · 16:9</option><option value="1:1">Square · 1:1</option><option value="4:5">Portrait · 4:5</option><option value="full">Original · No crop</option></select></label><button id="manual-trim-toggle" class="btn btn-secondary" aria-expanded="false">✂️ Trim manually</button></div></div><div id="source-library" class="source-library"></div>
+<div class="source-preview-header"><h3>Video &amp; output preview</h3><div class="source-preview-actions"><label class="option"><span>Output format</span><select id="source-aspect"><option value="9:16">Vertical · 9:16</option><option value="16:9">Wide · 16:9</option><option value="1:1">Square · 1:1</option><option value="4:5">Portrait · 4:5</option><option value="full">Original · No crop</option></select></label><button id="manual-trim-toggle" class="btn btn-secondary" aria-expanded="false">Trim manually</button></div></div><div id="source-library" class="source-library"></div>
 <div class="source-comparison">
 <div><h4>Original video</h4><video id="trim-sideby-orig-vid" controls playsinline preload="auto"></video></div>
 <div><h4 id="trim-sideby-out-label">Output preview · 9:16</h4><video id="trim-sideby-out-vid" muted playsinline preload="auto"></video></div>
@@ -182,7 +244,7 @@
         <!-- Manual Clip Trimmer -->
         <div id="trim-panel" class="card trim-panel hidden">
           <div class="trim-header">
-            <h3>✂️ Manual Clip Trimmer</h3>
+            <h3>Manual Clip Trimmer</h3>
             <p class="muted">Pick your exact in/out points, choose a layout, then add the clip.</p>
           </div>
 
@@ -229,7 +291,7 @@
                   <span>Reaction camera clip</span>
                   <div class="cam-row">
                     <input type="text" id="cam-path" placeholder="No camera clip selected" readonly />
-                    <button class="btn btn-small" id="pick-cam-btn">📹 Choose</button>
+                    <button class="btn btn-small" id="pick-cam-btn">Choose</button>
                   </div>
                 </label>
                 <label class="option" id="cam-scale-row">
@@ -244,7 +306,7 @@
                 <p class="muted small hidden" id="cam-none-hint">No facecam: the clip renders as full-frame gameplay with no picture-in-picture overlay.</p>
               </div>
               <div class="trim-actions">
-                <button class="btn btn-primary" id="add-trim-btn">➕ Add Trimmed Clip</button>
+                <button class="btn btn-primary" id="add-trim-btn">Add Trimmed Clip</button>
                 <button class="btn btn-secondary" id="trim-preview-btn">▶ Preview Selection</button>
               </div>
 
@@ -252,7 +314,7 @@
               <div id="suggested-moments" class="suggested-moments hidden">
                 <div class="suggested-moments-head">
                   <span>🎯 Suggested action moments</span>
-                  <button class="btn btn-small btn-secondary" id="suggest-moments-btn" title="Detect gunfights, big plays & high-motion moments">✨ Detect moments</button>
+                  <button class="btn btn-small btn-secondary" id="suggest-moments-btn" title="Detect gunfights, big plays & high-motion moments">Detect moments</button>
                 </div>
                 <p class="muted small" id="suggested-moments-hint">Auto-find the most clippable moments (loud + high-motion) so you don't have to hunt for them.</p>
                 <div id="suggested-moments-list" class="suggested-moments-list"></div>
@@ -271,7 +333,7 @@
       <div id="step-panel-2" class="wizard-panel">
         <div class="card options-card">
           <div class="panel-header-row">
-            <h3>✂️ Clipping Options</h3>
+            <h3>Clipping Options</h3>
             <button class="btn btn-small btn-secondary" id="step2-back-btn">⬅️ Back to Project/Video</button>
           </div>
 <details id="output-options-section" class="options-section" open><summary>Output mode &amp; clipping options</summary>
@@ -291,7 +353,7 @@
             </label>
             <p class="output-mode-hint muted small" id="output-mode-hint">Or fine-tune everything manually below.</p>
           </div>
-<div class="discovery-mode"><label class="toggle"><input type="checkbox" id="auto-clip-count" /><span><strong>Auto highlights</strong> · let the footage decide</span></label>
+<div class="discovery-mode"><label class="toggle"><input type="checkbox" id="auto-clip-count" /><span><strong>Auto highlights</strong> · let the footage decide</span></label><label class="toggle"><input type="checkbox" id="include-unreviewed-action" /><span>Gaming / action footage · include gameplay suggestions</span></label><p class="muted small">Optional activity peaks can catch nonverbal gameplay, but are not verified highlights. Auto otherwise requires usable speech evidence, and AI scores when AI is enabled.</p>
 <p class="muted small" id="auto-highlight-hint">Auto finds and ranks speech and audio moments, chooses their lengths, and returns the strong distinct highlights. No fixed clip count. Your caption and layout selections still apply.</p></div>
           <div class="options-grid">
             <label class="option">
@@ -359,6 +421,7 @@
             <div class="toggle-group">
               <div class="toggle-group-title"><span class="tg-icon">🔊</span> Audio &amp; Cleanup</div>
               <details class="audio-routing"><summary>Audio tracks &amp; mix balance</summary>
+              <div class="source-track-tools"><button id="inspect-audio-tracks" class="btn btn-small" type="button">Identify &amp; listen to audio tracks</button><label>Preview from (seconds) <input id="audio-preview-start" type="number" min="0" value="0" step="1" /></label><div id="source-track-list" role="status"></div><audio id="source-track-audition" controls class="hidden"></audio><p class="muted small">Game audio often excludes your microphone. Choose speech tracks explicitly; your export mix stays separate.</p></div>
               <label for="source-audio-tracks">Export audio tracks</label>
               <input id="source-audio-tracks" type="text" value="default" placeholder="default, 3, 1,3, or all" pattern="default|all|[1-9][0-9]*(,[1-9][0-9]*)*" aria-describedby="source-audio-help" />
               <p id="source-audio-help" class="muted">default, one track, a mix such as 1,3, or all. Generated clips and editor playback use this audio. Original input preview remains unchanged. Avoid mixing a complete mix with its component tracks.</p>
@@ -447,9 +510,9 @@
 
           <!-- Background music (optional, mixed under the speech + auto-ducked) -->
           <div class="music-picker-row">
-            <button type="button" class="btn btn-small" id="pick-music-btn" title="Choose a background music track">🎵 Background music…</button>
+            <button type="button" class="btn btn-small" id="pick-music-btn" title="Choose a background music track">Background music…</button>
             <input type="text" id="music-path" placeholder="No music selected (optional)" readonly />
-            <button type="button" class="btn btn-small" id="clear-music-btn" title="Remove the background track" style="display:none;">✕</button>
+            <button type="button" class="btn btn-small" id="clear-music-btn" title="Remove the background track" style="display:none;">Remove</button>
             <label class="music-vol-label" for="music-volume" title="Music volume relative to speech">
               Vol <input type="range" id="music-volume" min="0.02" max="0.5" step="0.01" value="0.12" />
             </label>
@@ -475,8 +538,8 @@
                 <select id="brand-kit-select" title="Apply a saved brand kit">
                   <option value="">Choose a saved kit…</option>
                 </select>
-                <button type="button" class="btn btn-small btn-primary" id="brand-kit-save" title="Save the current caption style + layout as a reusable kit">💾 Save current</button>
-                <button type="button" class="btn btn-small btn-danger" id="brand-kit-delete" title="Delete the selected kit">🗑</button>
+                <button type="button" class="btn btn-small btn-primary" id="brand-kit-save" title="Save the current caption style + layout as a reusable kit">Save current</button>
+                <button type="button" class="btn btn-small btn-danger" id="brand-kit-delete" title="Delete the selected kit">Delete</button>
               </div>
 
               <div class="caption-settings-layout">
@@ -627,7 +690,7 @@
 
 </details>
           <div class="step-actions">
-            <button class="btn btn-primary btn-large" id="start-clipping">🚀 Start Clipping & Transcribing</button>
+            <button class="btn btn-primary btn-large" id="start-clipping">Start Clipping & Transcribing</button>
             <button class="btn btn-secondary btn-large" id="batch-process-btn" title="Process every video already added to this project" hidden>Process all project videos</button>
           </div>
         </div>
@@ -639,7 +702,7 @@
           <div class="processing-header">
             <div class="spinner-large" id="processing-spinner"></div>
             <div>
-              <h2>⚡ AI Video Processing & Transcription</h2>
+              <h2>AI Video Processing & Transcription</h2>
               <p class="muted" id="processing-video-title">Analyzing audio tracks, extracting transcriptions, and scoring viral clips...</p>
             </div>
           </div>
@@ -652,13 +715,13 @@
             <h3 id="progress-step" class="processing-step-text">Initializing AI models...</h3>
             <div class="progress-bar" role="progressbar" id="progress-bar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-labelledby="progress-step"><div id="progress-fill" class="progress-fill"></div></div>
             <div class="progress-actions" style="margin-top: 14px; display: flex; justify-content: flex-end;">
-              <button class="btn btn-danger btn-small" id="cancel-active-job-btn">🛑 Cancel Processing Job</button>
+              <button class="btn btn-danger btn-small" id="cancel-active-job-btn">Cancel Processing Job</button>
             </div>
           </div>
 
           <div class="live-transcription-box">
             <div class="activity-log-header">
-              <h4>📋 Activity Log</h4>
+              <h4>Activity Log</h4>
               <button type="button" id="clear-activity-log-btn" class="btn btn-small btn-secondary" title="Clear the activity log">Clear</button>
             </div>
             <div id="transcription-log" class="transcription-log" role="log" aria-live="polite" aria-label="Activity log">
@@ -673,12 +736,12 @@
         <div id="results">
           <div class="results-header">
             <div>
-              <h2>🔥 Viral Clips Generated</h2>
-              <p class="muted" id="results-summary">AI-scored and cropped ready for TikTok, Reels & YouTube Shorts</p>
+              <h2>Generated Clips</h2>
+              <p class="muted" id="results-summary">Review selected moments before publishing</p>
             </div>
             <div class="export-actions">
               <div class="export-group export-group-new">
-                <button class="btn btn-secondary" id="step4-restart-btn">➕ New Clipping Project</button>
+                <button class="btn btn-secondary" id="step4-restart-btn">New Clipping Project</button>
               </div>
 
               <div class="export-group">
@@ -686,7 +749,7 @@
                 <div class="export-group-controls">
                   <button class="btn btn-secondary btn-small" id="export-premiere">Premiere Pro (XML)</button>
                   <button class="btn btn-secondary btn-small" id="export-davinci">DaVinci (EDL)</button>
-                  <button class="btn btn-secondary btn-small" id="export-capcut">✂️ CapCut</button>
+                  <button class="btn btn-secondary btn-small" id="export-capcut">CapCut</button>
                 </div>
               </div>
 
@@ -700,7 +763,7 @@
                     <option value="audio_aac">AAC (256k)</option>
                     <option value="audio_m4a">M4A</option>
                   </select>
-                  <button class="btn btn-secondary btn-small" id="export-audio-btn" data-select="standalone-audio">💾 Export audio</button>
+                  <button class="btn btn-secondary btn-small" id="export-audio-btn" data-select="standalone-audio">Export audio</button>
                 </div>
               </div>
 
@@ -711,7 +774,7 @@
                     <option value="sub_srt">SRT</option>
                     <option value="sub_vtt">VTT</option>
                   </select>
-                  <button class="btn btn-secondary btn-small" id="export-subs-btn" data-select="standalone-subs">💾 Export captions</button>
+                  <button class="btn btn-secondary btn-small" id="export-subs-btn" data-select="standalone-subs">Export captions</button>
                 </div>
               </div>
 
@@ -726,11 +789,12 @@
                     <option value="mkv">MKV Reel</option>
                     <option value="gif">GIF Reel</option>
                   </select>
-                  <button class="btn btn-primary btn-small" id="export-compile">🎬 Export All as Reel</button>
+                  <button class="btn btn-primary btn-small" id="export-compile">Export All as Reel</button>
                 </div>
               </div>
             </div>
           </div>
+          <div class="clip-review-toolbar"><label>View <select id="clip-density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label><button id="export-quality-ratings" class="btn btn-small">Export quality ratings</button><span class="muted small">Your ratings measure usefulness, not predicted popularity.</span></div>
           <div id="clips-grid" class="clips-grid"></div>
         </div>
       </div>
@@ -740,7 +804,7 @@
       <div id="caption-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="caption-modal-title">
         <div class="modal-content">
           <div class="modal-header">
-            <h3 id="caption-modal-title">📝 Interactive Caption & Subtitle Editor</h3>
+            <h3 id="caption-modal-title">Interactive Caption & Subtitle Editor</h3>
             <button class="modal-close" id="close-caption-modal" aria-label="Close caption editor">&times;</button>
           </div>
           <div class="modal-body">
@@ -763,10 +827,10 @@
                 <span>🎣 Intro hook (burned over the first few seconds)</span>
                 <div class="hook-editor-row">
                   <input id="edit-intro-hook" type="text" maxlength="90" placeholder="Type your own, or rotate suggestions →" />
-                  <button type="button" class="btn btn-small btn-secondary" id="suggest-hook-btn" title="Rotate hooks drawn from this clip's transcript (offline)">🔄 Suggest another</button>
-                  <button type="button" class="btn btn-small btn-secondary" id="ai-rewrite-hook-btn" title="Rewrite the hook with your local AI model (Ollama). Falls back to offline suggestions if Ollama isn't running.">✨ AI rewrite</button>
-                  <button type="button" class="btn btn-small btn-secondary" id="hook-variants-btn" title="Show several hook options at once to compare and pick">⚖️ Variants</button>
-                  <button type="button" class="btn btn-small btn-danger" id="remove-hook-btn" title="Remove the intro hook from this clip (no hook will be burned on export)">🚫 Remove hook</button>
+                  <button type="button" class="btn btn-small btn-secondary" id="suggest-hook-btn" title="Rotate hooks drawn from this clip's transcript (offline)">Suggest another</button>
+                  <button type="button" class="btn btn-small btn-secondary" id="ai-rewrite-hook-btn" title="Rewrite the hook with your local AI model (Ollama). Falls back to offline suggestions if Ollama isn't running.">AI rewrite</button>
+                  <button type="button" class="btn btn-small btn-secondary" id="hook-variants-btn" title="Show several hook options at once to compare and pick">Variants</button>
+                  <button type="button" class="btn btn-small btn-danger" id="remove-hook-btn" title="Remove the intro hook from this clip (no hook will be burned on export)">Remove hook</button>
                 </div>
                 <div id="hook-variants" class="hook-variants hidden"></div>
                 <span class="muted small">Leave blank for no intro hook. “Suggest another” is offline; “AI rewrite” uses your local Ollama model when it's running.</span>
@@ -783,7 +847,7 @@
                   <!-- Options are populated from /caption-presets at startup -->
                 </select>
               </label>
-              <button class="btn btn-primary" id="save-captions-btn">💾 Save & Apply Subtitles</button>
+              <button class="btn btn-primary" id="save-captions-btn">Save & Apply Subtitles</button>
             </div>
           </div>
         </div>
@@ -792,13 +856,13 @@
       <div id="editor-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="editor-modal-title">
         <div class="modal-content editor-modal-content">
           <div class="modal-header">
-            <h3 id="editor-modal-title">✂️ Edit Clip</h3>
+            <h3 id="editor-modal-title">Edit Clip</h3>
             <div class="editor-header-actions">
               <span id="editor-draft-status" class="muted small" role="status"></span>
               <button class="btn btn-small btn-secondary" id="editor-save-draft">Save draft</button>
               <button class="btn btn-small btn-secondary" id="editor-undo" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
               <button class="btn btn-small btn-secondary" id="editor-redo" title="Redo (Ctrl+Shift+Z)" disabled>↷ Redo</button>
-              <button class="btn btn-small btn-secondary" id="editor-tutorial-btn" title="Show a quick step-by-step walkthrough">❓ Tutorial</button>
+              <button class="btn btn-small btn-secondary" id="editor-tutorial-btn" title="Show a quick step-by-step walkthrough">Tutorial</button>
               <button class="modal-close" id="close-editor-modal" aria-label="Close editor">&times;</button>
             </div>
           </div>
@@ -819,8 +883,8 @@
                   <button class="btn btn-small" id="editor-frame-next" title="Step forward 1/30 second">›</button>
                   <span class="editor-time" id="editor-time">0:00 / 0:00</span>
                   <span class="editor-transport-spacer"></span>
-                  <button class="btn btn-primary btn-small" id="editor-export-btn" title="Render your edit locally using the available hardware.">🚀 Export</button>
-                  <button class="btn btn-danger btn-small hidden" id="editor-cancel-btn">🛑 Cancel</button>
+                  <button class="btn btn-primary btn-small" id="editor-export-btn" title="Render your edit locally using the available hardware.">Export</button>
+                  <button class="btn btn-danger btn-small hidden" id="editor-cancel-btn">Cancel</button>
                 </div>
                 <div class="editor-progress hidden" id="editor-progress">
                   <div class="progress-header-row">
@@ -913,15 +977,15 @@
                   </div>
                   <p class="muted small">Add independent text over this clip. Existing burned text remains in Rendered mode.</p><button class="btn btn-small btn-secondary" id="editor-add-hook">Add opening headline (3 seconds)</button>
                   <div class="editor-add-btn-row">
-                    <button class="btn btn-small btn-secondary" id="editor-add-sticker">🖼 Image</button>
-                    <button class="btn btn-small btn-secondary" id="editor-add-sfx">🔊 SFX</button>
+                    <button class="btn btn-small btn-secondary" id="editor-add-sticker">Image</button>
+                    <button class="btn btn-small btn-secondary" id="editor-add-sfx">SFX</button>
                   </div>
                   <label class="editor-check">
                     <input type="checkbox" id="editor-music-enabled" /> 🎵 Background music
                   </label>
                   <div class="input-row">
                     <input type="text" id="editor-music-path" placeholder="No music selected" readonly />
-                    <button class="btn btn-secondary btn-small" id="editor-pick-music">📂</button>
+                    <button class="btn btn-secondary btn-small" id="editor-pick-music">Browse</button>
                   </div>
                   <label class="editor-field"><span>Music volume</span>
                     <input type="range" id="editor-music-volume" min="0" max="1" step="0.01" value="0.12" />
@@ -1002,14 +1066,14 @@
       <div id="queue-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="queue-modal-title">
         <div class="modal-content queue-modal-content">
           <div class="modal-header">
-            <h3 id="queue-modal-title">📋 Job Queue Manager</h3>
+            <h3 id="queue-modal-title">Job Queue Manager</h3>
             <button class="modal-close" id="close-queue-modal" aria-label="Close job queue">&times;</button>
           </div>
           <div class="modal-body">
             <div class="queue-toolbar">
               <span class="muted small" id="queue-summary-text">0 jobs running</span>
               <div class="queue-toolbar-actions">
-                <button class="btn btn-small btn-secondary" id="refresh-queue-btn">🔄 Refresh</button>
+                <button class="btn btn-small btn-secondary" id="refresh-queue-btn">Refresh</button>
               </div>
             </div>
             <div id="queue-list" class="queue-list">
@@ -1023,7 +1087,7 @@
       <div id="overlay-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="overlay-modal-title">
         <div class="modal-content overlay-modal-content">
           <div class="modal-header">
-            <h3 id="overlay-modal-title">🎭 B-Roll & Visual Overlays</h3>
+            <h3 id="overlay-modal-title">B-Roll & Visual Overlays</h3>
             <button class="modal-close" id="close-overlay-modal" aria-label="Close B-Roll overlay editor">&times;</button>
           </div>
           <div class="modal-body">
@@ -1032,7 +1096,7 @@
               <label>B-Roll / Sticker File (PNG, JPG, MP4):
                 <div class="input-row">
                   <input type="text" id="overlay-broll-path" placeholder="Select image or video..." readonly />
-                  <button class="btn btn-secondary btn-small" id="pick-broll-btn">📂 Choose Asset</button>
+                  <button class="btn btn-secondary btn-small" id="pick-broll-btn">Choose Asset</button>
                 </div>
               </label>
               <div class="form-row-duo">
@@ -1071,8 +1135,8 @@
               <p class="muted small">When enabled, the overlay render will add contextual emoji punch-ups (🔥, 💰, 🤯...) into this clip's burned captions wherever hook keywords appear.</p>
             </div>
             <div class="overlay-actions">
-              <button class="btn btn-primary" id="apply-overlay-btn">✨ Burn B-Roll Overlay</button>
-              <button class="btn btn-secondary" id="suggest-emojis-btn">💡 Auto-Suggest Emojis</button>
+              <button class="btn btn-primary" id="apply-overlay-btn">Burn B-Roll Overlay</button>
+              <button class="btn btn-secondary" id="suggest-emojis-btn">Auto-Suggest Emojis</button>
             </div>
           </div>
         </div>
@@ -1088,7 +1152,7 @@
           <div class="modal-body">
             <p id="dialog-message" class="dialog-message"></p>
             <div class="dialog-actions">
-              <button class="btn btn-secondary hidden" id="dialog-open-folder-btn">📂 Open folder</button>
+              <button class="btn btn-secondary hidden" id="dialog-open-folder-btn">Open folder</button>
               <button class="btn btn-secondary hidden" id="dialog-cancel-btn">Cancel</button>
               <button class="btn btn-primary" id="dialog-confirm-btn">OK</button>
             </div>
@@ -1148,7 +1212,7 @@
       <div id="translate-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="translate-title">
         <div class="modal-content dialog-modal-content">
           <div class="modal-header">
-            <h3 id="translate-title">🌐 Translate captions</h3>
+            <h3 id="translate-title">Translate captions</h3>
             <button class="modal-close" id="translate-close" aria-label="Close dialog">&times;</button>
           </div>
           <div class="modal-body">
@@ -1177,7 +1241,7 @@
       <div id="multi-aspect-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="multi-aspect-title">
         <div class="modal-content">
           <div class="modal-header">
-            <h3 id="multi-aspect-title">📐 Multi-Aspect Export</h3>
+            <h3 id="multi-aspect-title">Multi-Aspect Export</h3>
             <button class="modal-close" id="multi-aspect-close" aria-label="Close dialog">&times;</button>
           </div>
           <div class="modal-body">
@@ -1185,7 +1249,7 @@
             <div id="multi-aspect-previews" class="multi-aspect-previews"></div>
             <div class="multi-aspect-actions">
               <button class="btn btn-secondary" id="multi-aspect-cancel">Cancel</button>
-              <button class="btn btn-primary" id="multi-aspect-export">📂 Choose folder &amp; Export</button>
+              <button class="btn btn-primary" id="multi-aspect-export">Choose folder &amp; Export</button>
             </div>
           </div>
         </div>
@@ -1195,7 +1259,7 @@
       <div id="thumb-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="thumb-title">
         <div class="modal-content">
           <div class="modal-header">
-            <h3 id="thumb-title">🖼️ Pick a Thumbnail Frame</h3>
+            <h3 id="thumb-title">Pick a Thumbnail Frame</h3>
             <button class="modal-close" id="thumb-close" aria-label="Close dialog">&times;</button>
           </div>
           <div class="modal-body">
@@ -1209,7 +1273,7 @@
                   <option value="webp">WebP</option>
                 </select>
               </label>
-              <button class="btn btn-secondary" id="thumb-set-poster">🖼️ Set as poster</button>
+              <button class="btn btn-secondary" id="thumb-set-poster">Set as poster</button>
               <button class="btn btn-primary" id="thumb-download">⬇️ Download image</button>
             </div>
           </div>
@@ -1243,13 +1307,14 @@
       <!-- Setup View -->
       <section id="view-setup" class="view">
         <header class="view-header">
-          <h1>⚙️ Settings</h1>
+          <h1>Settings</h1>
           <p class="subtitle">Check dependencies, install what's missing, and choose the best-to-lightest models for your hardware.</p>
         </header>
+        <details class="card media-cache-panel"><summary>Media cache &amp; storage</summary><p id="media-cache-status" class="muted small">Reusable audio mixes and audition previews.</p><button id="media-cache-refresh" class="btn btn-small">Check storage</button><button id="media-cache-clear" class="btn btn-small">Clear disposable media cache</button><p class="muted small">Originals, imports, rendered clips, transcripts and project sources are kept. A project may still reference the same underlying disk data, so clearing the cache may not reclaim all displayed bytes.</p></details>
 
         <!-- Hardware card -->
         <div class="card">
-          <h3>🖥️ Your Hardware</h3>
+          <h3>Your Hardware</h3>
           <div id="setup-hardware" class="setup-hardware">
             <span class="muted">Detecting...</span>
           </div>
@@ -1258,7 +1323,7 @@
         <!-- GPU acceleration card (hardware-aware, guided) -->
         <div class="card">
           <div class="card-head-row">
-            <h3>⚡ GPU Acceleration</h3>
+            <h3>GPU Acceleration</h3>
             <span class="muted small">PyTorch — powers Whisper &amp; face-tracking</span>
           </div>
           <div id="gpu-accel" class="gpu-accel">
@@ -1269,7 +1334,7 @@
         <!-- Recommended models card -->
         <div class="card">
           <div class="card-head-row">
-            <h3>🎯 Recommended Models for Your Setup</h3>
+            <h3>Recommended Models for Your Setup</h3>
             <span class="muted small">Based on your GPU / RAM</span>
           </div>
           <div id="setup-recommendations" class="setup-rec-grid">
@@ -1280,8 +1345,8 @@
         <!-- Dependency checklist card -->
         <div class="card">
           <div class="card-head-row">
-            <h3>🔧 Dependency Checker</h3>
-            <button class="btn btn-small btn-primary" id="install-all-btn" title="Install every missing dependency in one pass">⚡ Install All Recommended</button>
+            <h3>Dependency Checker</h3>
+            <button class="btn btn-small btn-primary" id="install-all-btn" title="Install every missing dependency in one pass">Install All Recommended</button>
           </div>
           <p class="muted">Ollama is Klipzy's local AI provider. You do not need to build or configure your own server: install Ollama once, and Klipzy connects to its local service when AI analysis or chat is enabled. LM Studio is optional only if you prefer another local provider.</p>
           <p class="muted">Missing something? Click <strong>Install</strong> for one item, or <strong>Install All Recommended</strong> to set up everything missing at once (winget / Homebrew / pip). This can take several minutes.</p>
@@ -1303,7 +1368,7 @@
         <!-- Optional AI add-ons card -->
         <div class="card">
           <div class="card-head-row">
-            <h3>🧩 Optional AI add-ons</h3>
+            <h3>Optional AI add-ons</h3>
             <span class="muted small">Heavy extras — install only if you want them</span>
           </div>
           <div class="optional-addon">
@@ -1328,7 +1393,7 @@
         <!-- Change AI models card -->
         <div class="card">
           <div class="card-head-row">
-            <h3>🧠 AI Models</h3>
+            <h3>AI Models</h3>
             <span class="muted small">Pick what runs on your machine</span>
           </div>
           <p class="muted">Choose the transcription and local-LLM models. The recommended picks above are matched to your hardware; you're free to change them.</p>
@@ -1354,7 +1419,7 @@
 
           <!-- AI backend: built-in Ollama, or any OpenAI-compatible server -->
           <div class="card-head-row" style="margin-top:18px;">
-            <h3>🔌 AI engine</h3>
+            <h3>AI engine</h3>
             <span class="muted small">Use the built-in Ollama, or point Klipzy at your own AI server</span>
           </div>
           <div class="llm-backend-block">
@@ -1391,8 +1456,8 @@
             </div>
 
             <div class="llm-backend-actions">
-              <button class="btn btn-secondary btn-small" id="llm-test-btn">🔍 Test connection</button>
-              <button class="btn btn-primary btn-small" id="llm-save-btn">💾 Save AI engine</button>
+              <button class="btn btn-secondary btn-small" id="llm-test-btn">Test connection</button>
+              <button class="btn btn-primary btn-small" id="llm-save-btn">Save AI engine</button>
               <span class="muted small" id="llm-backend-status">Checking…</span>
             </div>
             <p class="muted small">Everything stays local unless you deliberately point this at a cloud address. Ollama remains the default, and every AI feature falls back to offline heuristics if no engine is reachable.</p>
@@ -1400,7 +1465,7 @@
 
           <!-- Transcription engine: local Whisper, or a remote OpenAI-compatible ASR server -->
           <div class="card-head-row" style="margin-top:18px;">
-            <h3>🎙️ Subtitle engine</h3>
+            <h3>Subtitle engine</h3>
             <span class="muted small">Transcribe on this machine, or send audio to your own speech-to-text server</span>
           </div>
           <div class="llm-backend-block">
@@ -1437,15 +1502,15 @@
             </div>
 
             <div class="llm-backend-actions">
-              <button class="btn btn-secondary btn-small" id="asr-test-btn">🔍 Test connection</button>
-              <button class="btn btn-primary btn-small" id="asr-save-btn">💾 Save subtitle engine</button>
+              <button class="btn btn-secondary btn-small" id="asr-test-btn">Test connection</button>
+              <button class="btn btn-primary btn-small" id="asr-save-btn">Save subtitle engine</button>
               <span class="muted small" id="asr-backend-status">Checking…</span>
             </div>
             <p class="muted small">Karaoke captions need word-level timings. Servers that don't return them still work, but the highlight is spread evenly across each line instead of matching each spoken word — the connection test tells you which you're getting. If the server can't be reached during a run, Klipzy falls back to local Whisper automatically.</p>
           </div>
 
           <div class="model-catalog-head card-head-row" style="margin-top:18px;">
-            <h3>🧠 Local AI model catalog</h3>
+            <h3>Local AI model catalog</h3>
             <span class="muted small">Download bigger models for sharper hooks — pick to match your hardware</span>
           </div>
           <p class="muted small">These are local LLMs (via Ollama). Bigger models write better hooks/titles but need more RAM and disk. The ⭐ pick is recommended for your machine.</p>
@@ -1481,7 +1546,7 @@
         <!-- Maintenance card -->
         <div class="card">
           <div class="card-head-row">
-            <h3>🧹 Maintenance</h3>
+            <h3>Maintenance</h3>
             <button class="btn btn-small btn-secondary" id="clear-cache-btn" title="Delete cached transcripts (safe — only forces the next run to re-transcribe)">Clear transcript cache</button>
           </div>
           <p class="muted small">Klipzy caches transcripts so re-processing the same video is instant. Clearing it frees space and forces a fresh transcription next time. Rendered clips are never touched. Deleting a project also removes its rendered clips automatically.</p>
@@ -1489,7 +1554,7 @@
 
         <!-- Support card -->
         <div class="card">
-          <h3>💙 Support & Share</h3>
+          <h3>Support & Share</h3>
           <p class="muted">Enjoying Klipzy Studio? Here's how to keep it going:</p>
           <div class="support-links">
             <a id="support-paypal" class="support-link" href="#" target="_blank" rel="noopener">💸 Buy me a coffee (PayPal)</a>
@@ -1515,11 +1580,15 @@
   <script src="src/caption-preview-math.js"></script>
   <script src="src/editor-spec.js"></script>
   <script src="src/renderer.js"></script>
+  <script src="src/url-import.js"></script>
+  <script src="src/media-tools.js"></script>
+  <script src="src/quality-review.js"></script>
   <script src="src/caption-editor.js"></script>
   <script src="src/preset-gallery.js"></script>
   <script src="src/exports.js"></script>
   <script src="src/editor.js"></script>
   <script src="src/install-activity.js"></script>
   <script src="src/setup-panel.js"></script>
+  <script src="src/studio-layout.js"></script>
 </body>
 </html>

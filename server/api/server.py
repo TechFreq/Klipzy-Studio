@@ -94,6 +94,10 @@ if auth_disabled():
 # this file manageable. Mounted here; behaviour is identical to before the split.
 from server.api import editor as _editor_api  # noqa: E402
 app.include_router(_editor_api.router)
+from server.api import imports as _imports_api  # noqa: E402
+app.include_router(_imports_api.router)
+from server.api import media as _media_api
+app.include_router(_media_api.router)
 
 # In-memory job store. To avoid unbounded growth over a long session (each
 # /process stores full clip metadata + words), keep only the most recent jobs
@@ -360,6 +364,7 @@ def _run_job(job_id: str) -> None:
             aspect_ratio=req.aspect_ratio,
             max_clips=req.max_clips,
             auto_clip_count=req.auto_clip_count,
+            include_unreviewed_action=req.include_unreviewed_action,
             min_duration=req.min_duration,
             max_duration=req.max_duration,
             whisper_model=req.whisper_model,
@@ -941,15 +946,12 @@ def regenerate_subtitles(req: SubtitleRegenRequest):
         WordTimestamp(word=w.get("word", ""), start=float(w.get("start", 0)), end=float(w.get("end", 0)))
         for w in req.words if w.get("word")
     ]
-    if not words:
-        raise HTTPException(status_code=400, detail="No words provided for subtitle regeneration")
-
+    if not words and not (req.re_render and req.start_seconds is not None and req.end_seconds is not None):
+        raise HTTPException(status_code=400, detail="No timed words available for subtitles")
     seg = TranscriptSegment(
-        id=0,
-        start=words[0].start,
-        end=words[-1].end,
-        text=" ".join(w.word for w in words),
-        words=words,
+        id=0, start=words[0].start if words else req.start_seconds,
+        end=words[-1].end if words else req.end_seconds,
+        text=" ".join(w.word for w in words), words=words,
     )
     generate_srt([seg], req.output_path)
 
@@ -985,64 +987,34 @@ def regenerate_subtitles(req: SubtitleRegenRequest):
         intro_style=req.intro_style,
     )
 
-    # If requested and video context is provided, re-render the clip to burn updated captions.
-    re_rendered = False
-    if req.re_render and req.clip_output_file and os.path.exists(req.clip_output_file):
+    # Write a new revision: replacing an MP4 open in Chromium can fail on Windows
+    # and a fragment-only cache key does not guarantee a fresh media resource.
+    rendered_path = None
+    if req.re_render:
+        if not req.source_video or not os.path.isfile(req.source_video):
+            raise HTTPException(status_code=409, detail="Original source video is unavailable. Restore it before changing burned captions or removing a hook.")
+        if not req.clip_output_file or req.start_seconds is None or req.end_seconds is None or req.end_seconds <= req.start_seconds:
+            raise HTTPException(status_code=400, detail="Clip path and valid source bounds are required")
+        if Path(req.source_video).resolve() == Path(req.clip_output_file).resolve():
+            raise HTTPException(status_code=409, detail="A clean original source is required to replace burned text.")
+        target = Path(req.clip_output_file).expanduser().resolve()
+        revision = str(target.with_name(f"{target.stem}.captions-{uuid.uuid4().hex[:8]}.mp4"))
         try:
-            target_file = str(Path(req.clip_output_file).expanduser().resolve())
-            temp_target = str(Path(target_file).with_suffix(f".new.{uuid.uuid4().hex[:6]}.mp4"))
-
-            # Determine input source & segment bounds
-            input_video = req.source_video if (req.source_video and os.path.exists(req.source_video)) else target_file
-            if input_video == target_file or req.start_seconds is None or req.end_seconds is None:
-                # Re-rendering the rendered clip itself: timeline starts at 0
-                render_clip(
-                    input_video=target_file,
-                    output_video=temp_target,
-                    start_time=0.0,
-                    end_time=words[-1].end - words[0].start + 1.0,
-                    aspect_ratio=req.aspect_ratio or "9:16",
-                    burn_captions=True,
-                    subtitle_path=ass_path,
-                    layout=req.layout or "",
-                    cam_video=req.cam_video,
-                    cam_scale=req.cam_scale,
-                    cam_position=req.cam_position,
-                )
-            else:
-                # Re-rendering from original source video with preserved layout/cam
-                render_clip(
-                    input_video=input_video,
-                    output_video=temp_target,
-                    start_time=req.start_seconds,
-                    end_time=req.end_seconds,
-                    aspect_ratio=req.aspect_ratio or "9:16",
-                    burn_captions=True,
-                    subtitle_path=ass_path,
-                    layout=req.layout or "",
-                    cam_video=req.cam_video,
-                    cam_scale=req.cam_scale,
-                    cam_position=req.cam_position,
-                    crop_x_offset=req.crop_x_offset,
-                )
-
-            if os.path.isfile(temp_target) and os.path.getsize(temp_target) > 0:
-                shutil.move(temp_target, target_file)
-                re_rendered = True
-        except Exception as e:
-            # Fall back gracefully to saving subtitle files without crashing the response
-            pass
-
-    msg = f"Regenerated subtitles at {req.output_path}"
-    if re_rendered:
-        msg += " and updated burned clip"
-
-    return ExportProjectResponse(
-        export_path=req.output_path,
-        format="srt",
-        message=msg,
-        re_rendered=re_rendered,
-    )
+            render_clip(input_video=req.source_video, output_video=revision,
+                        start_time=req.start_seconds, end_time=req.end_seconds,
+                        aspect_ratio=req.aspect_ratio or "full", burn_captions=True,
+                        subtitle_path=ass_path, layout=req.layout or "",
+                        cam_video=req.cam_video, cam_scale=req.cam_scale,
+                        cam_position=req.cam_position, crop_x_offset=req.crop_x_offset)
+            if not os.path.isfile(revision) or os.path.getsize(revision) == 0:
+                raise RuntimeError("Renderer produced no video")
+            rendered_path = revision
+        except Exception as exc:
+            Path(revision).unlink(missing_ok=True)
+            raise HTTPException(status_code=500, detail=f"Subtitle files saved, but updating the video failed: {exc}") from exc
+    return ExportProjectResponse(export_path=req.output_path, format="srt",
+        message="Captions applied to a new video revision" if rendered_path else "Subtitle files saved",
+        re_rendered=bool(rendered_path), rendered_path=rendered_path, ass_path=ass_path)
 
 @app.get("/caption-presets")
 def get_caption_presets():
@@ -2115,6 +2087,8 @@ def setup_status():
         "torch": sc.detect_torch(),
         "install_commands": sc.get_install_commands(),
         "uninstall_commands": sc.get_uninstall_commands(),
+        "uninstall_shell_commands": {key: sc.format_shell_command(cmd) for key, cmd in sc.get_uninstall_commands().items()} if sc.sys.prefix != sc.sys.base_prefix else {},
+        "uninstall_environment_isolated": sc.sys.prefix != sc.sys.base_prefix,
         "recommendations": sc.recommend_models(),
         "output_dir": str(_ensure_output_root()),
     }
@@ -2220,6 +2194,8 @@ def _pull_progress_fields(prog) -> tuple:
 
 
 def _pull_worker(model: str):
+    from server.core.system_check import invalidate_model_health
+    invalidate_model_health(model)
     try:
         import ollama
         for prog in ollama.pull(model, stream=True):
@@ -2242,6 +2218,7 @@ def _pull_worker(model: str):
                 job["state"] = "error"
                 job["done"] = True
         return
+    invalidate_model_health(model)
     # Finalize (success vs cancelled).
     with _PULL_LOCK:
         job = _PULL_JOBS.get(model)
@@ -2522,6 +2499,12 @@ def set_ai_model(req: AIModelRequest):
     if not model:
         raise HTTPException(status_code=400, detail="model is required")
     if req.kind == "ollama":
+        from server.core import system_check as sc
+        installed = sc.list_ollama_models()
+        resolved = next((name for name in installed if name == model or name == model + ":latest"), None)
+        if not resolved:
+            raise HTTPException(status_code=409, detail="This model is not downloaded or Ollama is unavailable. Download it in Settings, wait for completion, then refresh and select it.")
+        model = resolved
         PREFERRED_OLLAMA_MODEL = model
         _save_preferred_model(model)  # remember it across restarts
         return {"ok": True, "ollama": PREFERRED_OLLAMA_MODEL}
