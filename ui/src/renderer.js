@@ -959,7 +959,12 @@ function bindEvents() {
     }
   });
   document.getElementById('auto-clip-count')?.addEventListener('change', event => {
+    syncAutoHighlightControls(event.target.checked);
+    saveCurrentProjectSilently();
+  });
+  document.getElementById('burn-captions')?.addEventListener('change', () => {
     syncAutoHighlightControls();
+    saveCurrentProjectSilently();
   });
 
   const step4Restart = document.getElementById('step4-restart-btn');
@@ -1543,14 +1548,17 @@ function saveEditProject() {
   showToast('Project updated', 'success');
 }
 
-function syncAutoHighlightControls() {
+function syncAutoHighlightControls(enableCaptions = false) {
   const automatic = document.getElementById('auto-clip-count').checked;
+  const captions = document.getElementById('burn-captions');
+  // Only an explicit Auto selection enables captions; restoring saved options must not.
+  if (automatic && enableCaptions && captions) captions.checked = true;
   for (const id of ['max-clips', 'min-duration', 'max-duration', 'audio-energy']) {
     const el = document.getElementById(id); el.disabled = automatic;
     el.closest('label')?.classList.toggle('auto-managed', automatic);
   }
   document.getElementById('auto-highlight-hint').textContent = automatic
-    ? 'Auto is choosing count and duration from the footage using speech and audio analysis. Manual limits are ignored. Your selected captions and layout are kept.'
+    ? 'Auto chooses clip count and duration. ' + (captions?.checked ? 'Captions will be included using your selected style. Edit them before exporting.' : 'Captions are off. Enable Include captions in video in Captions & headline settings to add them.')
     : 'Enable Auto to choose count and duration from the footage. Otherwise use your manual limits below.';
 }
 function updateProjectBatchAction() {
@@ -1562,7 +1570,7 @@ function updateProjectBatchAction() {
 
 function collectProcessingOptions() {
   const settings = {};
-  document.querySelectorAll('#output-options-section input[id], #output-options-section select[id]').forEach(el => {
+  document.querySelectorAll('#output-options-section input[id], #output-options-section select[id], #burn-captions').forEach(el => {
     settings[el.id] = el.type === 'checkbox' ? el.checked : el.value;
   });
   return settings;
@@ -1570,7 +1578,7 @@ function collectProcessingOptions() {
 function restoreProcessingOptions(settings) {
   Object.entries(settings || {}).forEach(([id, value]) => {
     const el = document.getElementById(id);
-    if (!el || !el.closest('#output-options-section')) return;
+    if (!el || (!el.closest('#output-options-section') && id !== 'burn-captions')) return;
     if (el.type === 'checkbox') el.checked = value; else el.value = value;
   });
 }

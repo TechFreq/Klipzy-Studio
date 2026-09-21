@@ -172,3 +172,5 @@ h2 { font-size:20px; letter-spacing:-.3px; } h3 { font-size:15px; font-weight:60
 .clip-play-btn { position:absolute; bottom:42px; left:10px; z-index:4; background:#15191ee6; color:white; border:1px solid #727984; border-radius:6px; min-width:54px; padding:6px 10px; cursor:pointer; font-size:11px; }
 .clip-play-btn:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .clip-seek-row { opacity:1; }
+.caption-inclusion { padding:14px; background:#1b2b29; border:1px solid #30443e; border-radius:8px; }
+.caption-inclusion p { margin-top:8px; line-height:1.6; }
